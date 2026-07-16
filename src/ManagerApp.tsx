@@ -184,13 +184,74 @@ function cellKey(rowId: string, group: number) {
 }
 
 const ARRIVAL_DAYS = new Set(['MONDAY', 'WEDNESDAY', 'FRIDAY'])
+const PROGRAMME_ACTIVITY_VALUES = new Set(
+  startingActivities.flatMap((activity) => [
+    activity.code.trim().toUpperCase(),
+    activity.name.trim().toUpperCase(),
+  ]),
+)
 
-function isArrivalProgrammeRow(row: ProgrammeRow) {
-  return (
-    row.session === '3' &&
-    Boolean(row.schoolLabel?.trim()) &&
-    ARRIVAL_DAYS.has(row.day.trim().toUpperCase())
+function normalisedProgrammeValue(value: string) {
+  return value.replace(/\s+/g, ' ').trim().toUpperCase()
+}
+
+function isKnownProgrammeActivity(value: string) {
+  const normalised = normalisedProgrammeValue(value)
+  return Boolean(normalised) && PROGRAMME_ACTIVITY_VALUES.has(normalised)
+}
+
+function schoolNamesInRow(row: ProgrammeRow) {
+  if (row.session !== '3' || !ARRIVAL_DAYS.has(row.day.trim().toUpperCase())) {
+    return []
+  }
+
+  const inlineNames = row.cells
+    .map((cell) => cell.activityCode.trim())
+    .filter((value) => {
+      if (!value || value.toUpperCase() === 'Z') return false
+      if (isKnownProgrammeActivity(value)) return false
+      return /[A-Z]/i.test(value) && value.length >= 4
+    })
+    .map((value) => value.replace(/\s+/g, ' ').trim())
+
+  const uniqueInline = Array.from(
+    new Map(inlineNames.map((name) => [normalisedProgrammeValue(name), name])).values(),
   )
+
+  if (uniqueInline.length) return uniqueInline
+  return row.schoolLabel?.trim() ? [row.schoolLabel.trim()] : []
+}
+
+function arrivalRowsFromProgrammeRow(row: ProgrammeRow): ProgrammeRow[] {
+  return schoolNamesInRow(row).map((schoolName) => {
+    const schoolKey = normalisedProgrammeValue(schoolName)
+    const matchingCells = row.cells.filter(
+      (cell) => normalisedProgrammeValue(cell.activityCode) === schoolKey,
+    )
+
+    return {
+      ...row,
+      id: `${row.id}::arrival::${schoolKey.replace(/[^A-Z0-9]+/g, '-')}`,
+      schoolLabel: schoolName,
+      cells: matchingCells.length ? matchingCells : row.cells,
+    }
+  })
+}
+
+function activityCellsForRow(row: ProgrammeRow) {
+  const schoolKeys = new Set(
+    schoolNamesInRow(row).map((name) => normalisedProgrammeValue(name)),
+  )
+
+  return row.cells.filter((cell) => {
+    const value = cell.activityCode.trim()
+    if (!value || value.toUpperCase() === 'Z') return false
+    return !schoolKeys.has(normalisedProgrammeValue(value))
+  })
+}
+
+function arrivalSchoolName(row: ProgrammeRow) {
+  return row.schoolLabel?.trim() ?? ''
 }
 
 function ManagerApp({
@@ -353,12 +414,7 @@ function ManagerApp({
     >()
 
     for (const row of programme.rows.filter((item) => item.day === day)) {
-      // Session 3 school rows belong to the Arrivals module, not activity staffing.
-      if (isArrivalProgrammeRow(row)) continue
-
-      const activeCells = row.cells.filter(
-        (cell) => cell.activityCode && cell.activityCode !== 'Z',
-      )
+      const activeCells = activityCellsForRow(row)
 
       const current = sessionMap.get(row.session) ?? {
         session: row.session,
@@ -407,11 +463,7 @@ function ManagerApp({
   const populatedCells = useMemo(
     () =>
       programme?.rows.flatMap((row) =>
-        isArrivalProgrammeRow(row)
-          ? []
-          : row.cells
-              .filter((cell) => cell.activityCode && cell.activityCode !== 'Z')
-              .map((cell) => ({ row, cell })),
+        activityCellsForRow(row).map((cell) => ({ row, cell })),
       ) ?? [],
     [programme],
   )
@@ -750,12 +802,11 @@ function ManagerApp({
     if (!programme) return
     let next: StaffingAssignment = { ...assignments }
     const workload = new Map<string, number>()
-    const sortedRows = programme.rows.filter((row) => !isArrivalProgrammeRow(row)).sort((a,b) => a.day.localeCompare(b.day) || Number(a.session)-Number(b.session))
+    const sortedRows = [...programme.rows].sort((a,b) => a.day.localeCompare(b.day) || Number(a.session)-Number(b.session))
     for (const row of sortedRows) {
       const workingIds = new Set(workingByDay[row.day] ?? staff.map((m) => m.id))
       const sickIds = new Set(sicknessByDay[row.day] ?? [])
-      for (const cell of row.cells) {
-        if (!cell.activityCode || cell.activityCode === 'Z') continue
+      for (const cell of activityCellsForRow(row)) {
         const key = cellKey(row.id, cell.group)
         if (next[key]) { workload.set(next[key], (workload.get(next[key]) ?? 0) + 1); continue }
         const candidates = staff.filter((m) => workingIds.has(m.id) && !sickIds.has(m.id) && qualificationIsValid(m, cell.activityCode))
@@ -794,11 +845,10 @@ function ManagerApp({
       workload.set(staffId, (workload.get(staffId) ?? 0) + 1)
     })
 
-    const dayRows = programme.rows.filter((row) => row.day === day && !isArrivalProgrammeRow(row))
+    const dayRows = programme.rows.filter((row) => row.day === day)
 
     for (const row of dayRows) {
-      for (const cell of row.cells) {
-        if (!cell.activityCode || cell.activityCode === 'Z') continue
+      for (const cell of activityCellsForRow(row)) {
 
         const key = cellKey(row.id, cell.group)
         if (nextAssignments[key]) continue
@@ -1076,11 +1126,11 @@ function ManagerApp({
   function autoFillArrivalSchool(row: ProgrammeRow) {
     const current = arrivalAssignment(row)
     if (!current.leaderId) {
-      setImportMessage(`Select the Party Leader for ${row.schoolLabel ?? 'this school'} before using auto-fill.`)
+      setImportMessage(`Select the Party Leader for ${arrivalSchoolName(row) || 'this school'} before using auto-fill.`)
       return
     }
 
-    const populatedGroups = row.cells.filter((cell) => cell.activityCode && cell.activityCode !== 'Z')
+    const populatedGroups = row.cells
     const workingIds = new Set(workingByDay[row.day] ?? staff.map((member) => member.id))
     const sickIds = new Set(sicknessByDay[row.day] ?? [])
     const unavailableIds = new Set<string>([current.leaderId, ...arrivalStaffUsedByOtherSchools(row)])
@@ -1099,7 +1149,7 @@ function ManagerApp({
 
     updateArrivalDetails(row, { guideIds })
     const unfilled = guideIds.filter((id) => !id).length
-    setImportMessage(unfilled ? `${row.schoolLabel}: ${unfilled} group${unfilled === 1 ? '' : 's'} still need an instructor.` : `${row.schoolLabel}: accommodation staffing auto-filled.`)
+    setImportMessage(unfilled ? `${arrivalSchoolName(row)}: ${unfilled} group${unfilled === 1 ? '' : 's'} still need an instructor.` : `${arrivalSchoolName(row)}: accommodation staffing auto-filled.`)
   }
 
   function assignStaff(staffId?: string) {
@@ -1169,8 +1219,7 @@ function ManagerApp({
     }[] = []
 
     for (const row of programme.rows) {
-      if (isArrivalProgrammeRow(row)) continue
-      for (const cell of row.cells) {
+      for (const cell of activityCellsForRow(row)) {
         const staffId = assignments[cellKey(row.id, cell.group)]
         if (!staffId || !cell.activityCode || cell.activityCode === 'Z') {
           continue
@@ -1190,7 +1239,7 @@ function ManagerApp({
           duty_type: 'activity',
           staff_email: email,
           staff_name: member.name,
-          school_name: row.schoolLabel ?? null,
+          school_name: arrivalSchoolName(row) || null,
           building_name: null,
           party_leader_name: null,
           arrival_time: null,
@@ -1222,7 +1271,7 @@ function ManagerApp({
             duty_type: 'arrival_leader',
             staff_email: email,
             staff_name: leader.name,
-            school_name: row.schoolLabel ?? null,
+            school_name: arrivalSchoolName(row) || null,
             building_name: arrivalDetails.building ? `Building ${arrivalDetails.building}` : null,
             party_leader_name: leader.name,
             arrival_time: arrivalDetails.arrivalTime ?? null,
@@ -1232,9 +1281,7 @@ function ManagerApp({
         }
       }
 
-      const arrivalGroups = row.cells.filter(
-        (cell) => cell.activityCode && cell.activityCode !== 'Z',
-      )
+      const arrivalGroups = row.cells
 
       const guideGroups = new Map<string, number[]>()
       arrivalDetails.guideIds.forEach((staffId, index) => {
@@ -1259,7 +1306,7 @@ function ManagerApp({
           duty_type: 'arrival_instructor',
           staff_email: email,
           staff_name: guide.name,
-          school_name: row.schoolLabel ?? null,
+          school_name: arrivalSchoolName(row) || null,
           building_name: arrivalDetails.building ? `Building ${arrivalDetails.building}` : null,
           party_leader_name: partyLeader?.name ?? null,
           arrival_time: arrivalDetails.arrivalTime ?? null,
@@ -1444,7 +1491,7 @@ function ManagerApp({
       .includes(query.toLowerCase())
   })
 
-  const arrivalRows = programme?.rows.filter(isArrivalProgrammeRow) ?? []
+  const arrivalRows = programme?.rows.flatMap(arrivalRowsFromProgrammeRow) ?? []
 
   const arrivalRowsForDay = arrivalRows.filter(
     (row) => row.day === activeStaffingDay,
@@ -1464,7 +1511,7 @@ function ManagerApp({
     })
   })
 
-  const schoolsOnSite = new Set(programme?.rows.map((row) => row.schoolLabel).filter(Boolean) ?? []).size
+  const schoolsOnSite = new Set(programme?.rows.map(arrivalSchoolName).filter(Boolean) ?? []).size
   const availableTodayCount = activeStaffingDay ? (workingByDay[activeStaffingDay] ?? staff.map((m) => m.id)).filter((id) => !(sicknessByDay[activeStaffingDay] ?? []).includes(id)).length : staff.length
   const staffingShortages = populatedCells.filter(({row,cell}) => !assignments[cellKey(row.id,cell.group)]).length
   const expiringQualifications = staff.flatMap((member) => Object.entries(member.qualificationExpiries ?? {}).map(([code,date]) => ({member,code,date}))).filter((item) => {
@@ -1487,7 +1534,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.23</span></div>
+          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.24</span></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -1697,7 +1744,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to a building, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v0.23</span>
+                  <span className="release-pill">v0.24</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
@@ -1730,7 +1777,7 @@ function ManagerApp({
 
                     <div className="arrival-cards-grid">
                       {arrivalRowsForDay.map((row, schoolIndex) => {
-                        const populatedGroups = row.cells.filter((cell) => cell.activityCode && cell.activityCode !== 'Z')
+                        const populatedGroups = row.cells
                         const assignment = arrivalAssignment(row)
                         const availableToday = workingByDay[activeStaffingDay] ?? staff.map((member) => member.id)
                         const sickToday = sicknessByDay[activeStaffingDay] ?? []
@@ -1743,7 +1790,7 @@ function ManagerApp({
                         return (
                           <section className={`arrival-card school-tone-${(schoolIndex % 6) + 1}`} key={row.id}>
                             <div className="arrival-card-heading">
-                              <div><p className="eyebrow">Programme school · Session 3</p><h3>{row.schoolLabel}</h3><p>{populatedGroups.length} group{populatedGroups.length === 1 ? '' : 's'} detected</p></div>
+                              <div><p className="eyebrow">Programme school · Session 3</p><h3>{arrivalSchoolName(row)}</h3><p>{populatedGroups.length} group{populatedGroups.length === 1 ? '' : 's'} detected</p></div>
                               <Building2 size={30} />
                             </div>
 
@@ -1762,7 +1809,7 @@ function ManagerApp({
                               </label>
                               <label>Departure time<input type="time" value={assignment.departureTime ?? '10:00'} onChange={(event) => updateArrivalDetails(row, { departureTime: event.target.value })} /></label>
                             </div>
-                            {conflict && <p className="building-conflict">Building conflict with {conflict.schoolLabel}. Change the building or timings.</p>}
+                            {conflict && <p className="building-conflict">Building conflict with {arrivalSchoolName(conflict)}. Change the building or timings.</p>}
 
                             <label className="party-leader-field">Party Leader
                               <select value={assignment.leaderId ?? ''} onChange={(event) => setArrivalLeader(row, event.target.value)}>
@@ -2091,8 +2138,8 @@ function ManagerApp({
                   {!allocations.length ? <div className="building-empty"><strong>Available</strong><span>No school allocated</span></div> : allocations.map((row) => {
                     const allocation = arrivalAssignment(row)
                     const leader = staff.find((member) => member.id === allocation.leaderId)
-                    const groups = row.cells.filter((cell) => cell.activityCode && cell.activityCode !== 'Z').map((cell) => cell.group)
-                    return <div className="building-school" key={row.id}><strong>{row.schoolLabel}</strong><span>{row.day} {allocation.arrivalTime} → {allocation.departureDay} {allocation.departureTime}</span><span>Party Leader: {leader?.name ?? 'Unassigned'}</span><span>Groups: {groups.join(', ')}</span></div>
+                    const groups = row.cells.map((cell) => cell.group)
+                    return <div className="building-school" key={row.id}><strong>{arrivalSchoolName(row)}</strong><span>{row.day} {allocation.arrivalTime} → {allocation.departureDay} {allocation.departureTime}</span><span>Party Leader: {leader?.name ?? 'Unassigned'}</span><span>Groups: {groups.join(', ')}</span></div>
                   })}
                 </article>
               })}
@@ -2523,8 +2570,8 @@ function ProgrammeGrid({
               <tr key={row.id}>
                 <th className="sticky-day">
                   {showDay ? row.day : ''}
-                  {row.schoolLabel && (
-                    <small>{row.schoolLabel}</small>
+                  {arrivalSchoolName(row) && (
+                    <small>{arrivalSchoolName(row)}</small>
                   )}
                 </th>
                 <th className="sticky-session">{row.session}</th>
