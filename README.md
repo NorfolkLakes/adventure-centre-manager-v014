@@ -1,4 +1,4 @@
-# Adventure Centre Manager v0.20.1
+# Adventure Centre Manager v0.21
 
 This version adds the first cloud login and staff rota system.
 
@@ -92,3 +92,14 @@ After deploying v0.20, run `supabase/setup.sql` once in the Supabase SQL Editor 
 - One instructor can cover at most two groups, both from the same school.
 - Later sessions are unrestricted by school arrival assignments.
 - Staff login combines two arrival groups into one duty card.
+
+## v0.21 Multi-school arrival staffing
+
+- Visible v0.21 release badge on the manager dashboard.
+- Select up to six schools from the programme on Daily Staffing.
+- Assign any working staff member or team leader as Party Leader.
+- Assign one instructor per group manually or use school-specific auto-fill.
+- One instructor can cover no more than two groups, and both groups must be from the same school.
+- Staff cannot be assigned to two schools during Session 3.
+- Later activity sessions remain unrestricted by arrival-school allocation.
+- Staff accounts show school, group(s), and Party Leader or Accommodation / Fire Alarm Instructor role.
