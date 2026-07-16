@@ -139,3 +139,16 @@ create policy "Managers read availability" on public.staff_availability for sele
 do $$ begin
   alter publication supabase_realtime add table public.staff_availability;
 exception when duplicate_object then null; end $$;
+
+
+-- v0.22 arrival and accommodation duty details
+alter table public.rota_assignments add column if not exists building_name text;
+alter table public.rota_assignments add column if not exists party_leader_name text;
+alter table public.rota_assignments add column if not exists arrival_time text;
+alter table public.rota_assignments add column if not exists departure_day text;
+alter table public.rota_assignments add column if not exists departure_time text;
+
+grant usage on schema public to authenticated;
+grant select, insert, update, delete on public.rota_assignments to authenticated;
+grant select, insert, update, delete on public.staff_availability to authenticated;
+grant usage, select on all sequences in schema public to authenticated;

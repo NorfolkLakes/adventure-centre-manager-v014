@@ -1,5 +1,6 @@
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  Building2,
   CalendarDays,
   CheckCircle2,
   ChevronLeft,
@@ -282,7 +283,6 @@ function ManagerApp({
   const [arrivalStaffGroup, setArrivalStaffGroup] = useState<
     'all' | StaffRole
   >('all')
-  const [selectedArrivalRowId, setSelectedArrivalRowId] = useState('')
   const [equipmentChecks, setEquipmentChecks] = useState<EquipmentCheck[]>(() =>
     readJson(EQUIPMENT_CHECKS_KEY, [
       { id: 'water', name: 'Watersports equipment checked', complete: false, updatedAt: '' },
@@ -957,15 +957,72 @@ function ManagerApp({
     return `${row.day}::${row.id}`
   }
 
+  function arrivalDefaults(row: ProgrammeRow): ArrivalAssignment {
+    return {
+      guideIds: [],
+      building: '',
+      arrivalTime: '14:00',
+      departureDay: programmeDays[programmeDays.indexOf(row.day) + 2] ?? row.day,
+      departureTime: '10:00',
+    }
+  }
+
+  function arrivalAssignment(row: ProgrammeRow) {
+    return { ...arrivalDefaults(row), ...(arrivalAssignments[arrivalKey(row)] ?? {}) }
+  }
+
+  function updateArrivalDetails(row: ProgrammeRow, patch: Partial<ArrivalAssignment>) {
+    const key = arrivalKey(row)
+    const nextAssignment = { ...arrivalAssignment(row), ...patch }
+    const next = { ...arrivalAssignments, [key]: nextAssignment }
+    setArrivalAssignments(next)
+    localStorage.setItem(ARRIVAL_ASSIGNMENTS_KEY, JSON.stringify(next))
+  }
+
+  function minutes(value?: string) {
+    const [hours, mins] = (value || '00:00').split(':').map(Number)
+    return (hours || 0) * 60 + (mins || 0)
+  }
+
+  function arrivalWindowsOverlap(a: ProgrammeRow, b: ProgrammeRow) {
+    if (a.day !== b.day) return false
+    const aStart = minutes(arrivalAssignment(a).arrivalTime)
+    const bStart = minutes(arrivalAssignment(b).arrivalTime)
+    const duration = 120
+    return aStart < bStart + duration && bStart < aStart + duration
+  }
+
+  function occupancyPoint(day: string, time?: string) {
+    const dayIndex = Math.max(0, programmeDays.indexOf(day))
+    return dayIndex * 1440 + minutes(time)
+  }
+
+  function buildingConflict(row: ProgrammeRow, building: string) {
+    if (!building) return null
+    const current = arrivalAssignment(row)
+    const start = occupancyPoint(row.day, current.arrivalTime)
+    const end = occupancyPoint(current.departureDay || row.day, current.departureTime)
+
+    for (const otherRow of arrivalRows) {
+      if (otherRow.id === row.id) continue
+      const other = arrivalAssignment(otherRow)
+      if (other.building !== building) continue
+      const otherStart = occupancyPoint(otherRow.day, other.arrivalTime)
+      const otherEnd = occupancyPoint(other.departureDay || otherRow.day, other.departureTime)
+      if (start < otherEnd && otherStart < end) return otherRow
+    }
+    return null
+  }
+
   function arrivalStaffUsedByOtherSchools(row: ProgrammeRow) {
     const used = new Set<string>()
     const currentKey = arrivalKey(row)
 
     for (const [otherKey, otherAssignment] of Object.entries(arrivalAssignments)) {
       if (otherKey === currentKey) continue
-      const [otherDay, otherRowId] = otherKey.split('::')
+      const [, otherRowId] = otherKey.split('::')
       const otherRow = programme?.rows.find((item) => item.id === otherRowId)
-      if (otherDay !== row.day || otherRow?.session !== row.session) continue
+      if (!otherRow || otherRow.session !== '3' || !arrivalWindowsOverlap(row, otherRow)) continue
       if (otherAssignment.leaderId) used.add(otherAssignment.leaderId)
       otherAssignment.guideIds.filter(Boolean).forEach((id) => used.add(id))
     }
@@ -974,33 +1031,20 @@ function ManagerApp({
   }
 
   function setArrivalLeader(row: ProgrammeRow, staffId: string) {
-    const key = arrivalKey(row)
-    const current = arrivalAssignments[key] ?? { guideIds: [] }
     const usedByOtherSchools = arrivalStaffUsedByOtherSchools(row)
-
     if (staffId && usedByOtherSchools.has(staffId)) {
-      setImportMessage('That staff member is already assigned to another school during Session 3.')
+      setImportMessage('That staff member is already assigned to another school during an overlapping arrival window.')
       return
     }
-
-    const nextAssignment = {
-      ...current,
+    const current = arrivalAssignment(row)
+    updateArrivalDetails(row, {
       leaderId: staffId || undefined,
-      // A Party Leader cannot also take an accommodation group for the same school.
       guideIds: current.guideIds.map((id) => (id === staffId ? '' : id)),
-    }
-    const next = { ...arrivalAssignments, [key]: nextAssignment }
-    setArrivalAssignments(next)
-    localStorage.setItem(ARRIVAL_ASSIGNMENTS_KEY, JSON.stringify(next))
+    })
   }
 
-  function setArrivalGuide(
-    row: ProgrammeRow,
-    slotIndex: number,
-    staffId: string,
-  ) {
-    const key = arrivalKey(row)
-    const current = arrivalAssignments[key] ?? { guideIds: [] }
+  function setArrivalGuide(row: ProgrammeRow, slotIndex: number, staffId: string) {
+    const current = arrivalAssignment(row)
     const usedByOtherSchools = arrivalStaffUsedByOtherSchools(row)
 
     if (staffId && staffId === current.leaderId) {
@@ -1008,98 +1052,46 @@ function ManagerApp({
       return
     }
     if (staffId && usedByOtherSchools.has(staffId)) {
-      setImportMessage('That staff member is already assigned to another school during Session 3.')
+      setImportMessage('That staff member is already assigned to another school during an overlapping arrival window.')
       return
     }
 
     const guideIds = [...current.guideIds]
     guideIds[slotIndex] = staffId
     if (staffId && guideIds.filter((id) => id === staffId).length > 2) {
-      setImportMessage('One instructor can cover a maximum of two groups, and both must be from the same school.')
+      setImportMessage('One instructor can cover a maximum of two groups, both from this school.')
       return
     }
-
-    const next = { ...arrivalAssignments, [key]: { ...current, guideIds } }
-    setArrivalAssignments(next)
-    localStorage.setItem(ARRIVAL_ASSIGNMENTS_KEY, JSON.stringify(next))
+    updateArrivalDetails(row, { guideIds })
   }
 
   function autoFillArrivalSchool(row: ProgrammeRow) {
-    const key = arrivalKey(row)
-    const current = arrivalAssignments[key] ?? { guideIds: [] }
+    const current = arrivalAssignment(row)
     if (!current.leaderId) {
       setImportMessage(`Select the Party Leader for ${row.schoolLabel ?? 'this school'} before using auto-fill.`)
       return
     }
 
-    const populatedGroups = row.cells.filter(
-      (cell) => cell.activityCode && cell.activityCode !== 'Z',
-    )
-    const workingIds = new Set(
-      workingByDay[row.day] ?? staff.map((member) => member.id),
-    )
+    const populatedGroups = row.cells.filter((cell) => cell.activityCode && cell.activityCode !== 'Z')
+    const workingIds = new Set(workingByDay[row.day] ?? staff.map((member) => member.id))
     const sickIds = new Set(sicknessByDay[row.day] ?? [])
-
-    const unavailableIds = new Set<string>([current.leaderId])
-
-    for (const [otherKey, otherAssignment] of Object.entries(arrivalAssignments)) {
-      if (otherKey === key) continue
-      const [otherDay, otherRowId] = otherKey.split('::')
-      const otherRow = programme?.rows.find((item) => item.id === otherRowId)
-      if (otherDay !== row.day || otherRow?.session !== row.session) continue
-      if (otherAssignment.leaderId) unavailableIds.add(otherAssignment.leaderId)
-      otherAssignment.guideIds.filter(Boolean).forEach((id) => unavailableIds.add(id))
-    }
-
-    programme?.rows
-      .filter((item) => item.day === row.day && item.session === row.session)
-      .forEach((item) =>
-        item.cells.forEach((cell) => {
-          const assignedId = assignments[cellKey(item.id, cell.group)]
-          if (assignedId) unavailableIds.add(assignedId)
-        }),
-      )
+    const unavailableIds = new Set<string>([current.leaderId, ...arrivalStaffUsedByOtherSchools(row)])
 
     const candidates = staff
-      .filter(
-        (member) =>
-          workingIds.has(member.id) &&
-          !sickIds.has(member.id) &&
-          !unavailableIds.has(member.id) &&
-          (arrivalStaffGroup === 'all' ||
-            resolvedRole(member) === arrivalStaffGroup),
-      )
-      .sort((a, b) => {
-        const priorityDifference =
-          rolePriority(resolvedRole(a)) - rolePriority(resolvedRole(b))
-        return priorityDifference || a.name.localeCompare(b.name)
-      })
+      .filter((member) => workingIds.has(member.id) && !sickIds.has(member.id) && !unavailableIds.has(member.id) && (arrivalStaffGroup === 'all' || resolvedRole(member) === arrivalStaffGroup))
+      .sort((a, b) => rolePriority(resolvedRole(a)) - rolePriority(resolvedRole(b)) || a.name.localeCompare(b.name))
 
     const guideIds: string[] = []
     const useOnePerGroup = candidates.length >= populatedGroups.length
-    const requiredGuides = useOnePerGroup
-      ? populatedGroups.length
-      : Math.ceil(populatedGroups.length / 2)
+    const requiredGuides = useOnePerGroup ? populatedGroups.length : Math.ceil(populatedGroups.length / 2)
     const selected = candidates.slice(0, requiredGuides)
-
     populatedGroups.forEach((_, index) => {
-      const candidateIndex = useOnePerGroup ? index : Math.floor(index / 2)
-      guideIds[index] = selected[candidateIndex]?.id ?? ''
+      guideIds[index] = selected[useOnePerGroup ? index : Math.floor(index / 2)]?.id ?? ''
     })
 
-    const next = {
-      ...arrivalAssignments,
-      [key]: { ...current, guideIds },
-    }
-    setArrivalAssignments(next)
-    localStorage.setItem(ARRIVAL_ASSIGNMENTS_KEY, JSON.stringify(next))
-
+    updateArrivalDetails(row, { guideIds })
     const unfilled = guideIds.filter((id) => !id).length
-    setImportMessage(
-      unfilled
-        ? `${row.schoolLabel}: auto-fill completed, but ${unfilled} group${unfilled === 1 ? '' : 's'} still need an instructor.`
-        : `${row.schoolLabel}: arrival staffing auto-filled without double-booking staff from another school.`,
-    )
+    setImportMessage(unfilled ? `${row.schoolLabel}: ${unfilled} group${unfilled === 1 ? '' : 's'} still need an instructor.` : `${row.schoolLabel}: accommodation staffing auto-filled.`)
   }
 
   function assignStaff(staffId?: string) {
@@ -1161,6 +1153,11 @@ function ManagerApp({
       staff_email: string
       staff_name: string
       school_name: string | null
+      building_name: string | null
+      party_leader_name: string | null
+      arrival_time: string | null
+      departure_day: string | null
+      departure_time: string | null
     }[] = []
 
     for (const row of programme.rows) {
@@ -1185,6 +1182,11 @@ function ManagerApp({
           staff_email: email,
           staff_name: member.name,
           school_name: row.schoolLabel ?? null,
+          building_name: null,
+          party_leader_name: null,
+          arrival_time: null,
+          departure_day: null,
+          departure_time: null,
         })
       }
     }
@@ -1194,9 +1196,12 @@ function ManagerApp({
       const row = programme.rows.find((item) => item.id === rowId)
       if (!row) continue
 
-      if (arrival.leaderId) {
-        const leader = staff.find((item) => item.id === arrival.leaderId)
-        const email = emailByStaffId.get(arrival.leaderId)
+      const arrivalDetails = { ...arrivalDefaults(row), ...arrival }
+      const partyLeader = staff.find((item) => item.id === arrivalDetails.leaderId)
+
+      if (arrivalDetails.leaderId) {
+        const leader = staff.find((item) => item.id === arrivalDetails.leaderId)
+        const email = emailByStaffId.get(arrivalDetails.leaderId)
         if (leader && email) {
           publishedRows.push({
             programme_name: programme.title,
@@ -1209,6 +1214,11 @@ function ManagerApp({
             staff_email: email,
             staff_name: leader.name,
             school_name: row.schoolLabel ?? null,
+            building_name: arrivalDetails.building ? `Building ${arrivalDetails.building}` : null,
+            party_leader_name: leader.name,
+            arrival_time: arrivalDetails.arrivalTime ?? null,
+            departure_day: arrivalDetails.departureDay ?? null,
+            departure_time: arrivalDetails.departureTime ?? null,
           })
         }
       }
@@ -1218,7 +1228,7 @@ function ManagerApp({
       )
 
       const guideGroups = new Map<string, number[]>()
-      arrival.guideIds.forEach((staffId, index) => {
+      arrivalDetails.guideIds.forEach((staffId, index) => {
         if (!staffId || !arrivalGroups[index]) return
         const groups = guideGroups.get(staffId) ?? []
         groups.push(arrivalGroups[index].group)
@@ -1235,12 +1245,17 @@ function ManagerApp({
           day,
           session: row.session,
           activity_code: 'ARRIVAL',
-          activity_name: 'Accommodation / Fire Alarm Instructor',
+          activity_name: 'Accommodation',
           group_numbers: groupNumbers,
           duty_type: 'arrival_instructor',
           staff_email: email,
           staff_name: guide.name,
           school_name: row.schoolLabel ?? null,
+          building_name: arrivalDetails.building ? `Building ${arrivalDetails.building}` : null,
+          party_leader_name: partyLeader?.name ?? null,
+          arrival_time: arrivalDetails.arrivalTime ?? null,
+          departure_day: arrivalDetails.departureDay ?? null,
+          departure_time: arrivalDetails.departureTime ?? null,
         })
       })
     }
@@ -1428,11 +1443,6 @@ function ManagerApp({
   const arrivalRowsForDay = arrivalRows.filter(
     (row) => row.day === activeStaffingDay,
   )
-  const activeArrivalRow =
-    arrivalRowsForDay.find((row) => row.id === selectedArrivalRowId) ??
-    arrivalRowsForDay[0] ??
-    null
-
   const selectedDayDemand = sessionDemandForDay(activeStaffingDay)
   const selectedDayBusiest = busiestSessionForDay(activeStaffingDay)
   const programmeBusiest = busiestSessionAcrossProgramme()
@@ -1471,7 +1481,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.21</span></div>
+          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.22</span></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -1852,185 +1862,77 @@ function ManagerApp({
                 )}
 
                 {arrivalRowsForDay.length > 0 && (
-                  <section className="arrival-school-selector">
+                  <section className="arrival-board-heading">
                     <div>
-                      <p className="eyebrow">Session 3 school arrival</p>
-                      <h3>Select a school</h3>
-                      <p>Choose one of the schools arriving today, select its Party Leader, then auto-fill the accommodation groups.</p>
+                      <p className="eyebrow">Arrival & accommodation</p>
+                      <h3>{arrivalRowsForDay.length} school{arrivalRowsForDay.length === 1 ? '' : 's'} arriving</h3>
+                      <p>Set the building, timings and Party Leader, then assign groups manually or auto-fill each school.</p>
                     </div>
-                    <label>
-                      School
-                      <select
-                        value={activeArrivalRow?.id ?? ''}
-                        onChange={(event) => setSelectedArrivalRowId(event.target.value)}
-                      >
-                        {arrivalRowsForDay.map((schoolRow) => (
-                          <option key={schoolRow.id} value={schoolRow.id}>
-                            {schoolRow.schoolLabel}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
                   </section>
                 )}
 
-                {activeArrivalRow && [activeArrivalRow].map((row) => {
-                    const populatedGroups = row.cells.filter(
-                      (cell) => cell.activityCode && cell.activityCode !== 'Z',
-                    )
-                    const groupCount = populatedGroups.length
-                    const guideSlots = Math.max(1, groupCount)
-                    const key = arrivalKey(row)
-                    const assignment =
-                      arrivalAssignments[key] ?? { guideIds: [] }
-                    const availableToday =
-                      workingByDay[activeStaffingDay] ??
-                      staff.map((member) => member.id)
-                    const sickToday =
-                      sicknessByDay[activeStaffingDay] ?? []
+                <div className="arrival-cards-grid">
+                  {arrivalRowsForDay.map((row, schoolIndex) => {
+                    const populatedGroups = row.cells.filter((cell) => cell.activityCode && cell.activityCode !== 'Z')
+                    const assignment = arrivalAssignment(row)
+                    const availableToday = workingByDay[activeStaffingDay] ?? staff.map((member) => member.id)
+                    const sickToday = sicknessByDay[activeStaffingDay] ?? []
+                    const usedElsewhere = arrivalStaffUsedByOtherSchools(row)
+                    const conflict = buildingConflict(row, assignment.building || '')
 
-                    const leaderOptions = staff.filter(
-                      (member) =>
-                        availableToday.includes(member.id) &&
-                        !sickToday.includes(member.id) &&
-                        ['staff', 'teamLeader'].includes(resolvedRole(member)) &&
-                        !arrivalStaffUsedByOtherSchools(row).has(member.id) &&
-                        !assignment.guideIds.includes(member.id),
-                    )
-
-                    const guideOptions = staff.filter(
-                      (member) =>
-                        availableToday.includes(member.id) &&
-                        !sickToday.includes(member.id) &&
-                        member.id !== assignment.leaderId &&
-                        !arrivalStaffUsedByOtherSchools(row).has(member.id) &&
-                        (arrivalStaffGroup === 'all' ||
-                          resolvedRole(member) === arrivalStaffGroup),
-                    )
+                    const leaderOptions = staff.filter((member) => availableToday.includes(member.id) && !sickToday.includes(member.id) && ['staff', 'teamLeader'].includes(resolvedRole(member)) && !usedElsewhere.has(member.id) && !assignment.guideIds.includes(member.id))
+                    const guideOptions = staff.filter((member) => availableToday.includes(member.id) && !sickToday.includes(member.id) && member.id !== assignment.leaderId && !usedElsewhere.has(member.id) && (arrivalStaffGroup === 'all' || resolvedRole(member) === arrivalStaffGroup))
 
                     return (
-                      <section className="arrival-card" key={row.id}>
+                      <section className={`arrival-card school-tone-${(schoolIndex % 6) + 1}`} key={row.id}>
                         <div className="arrival-card-heading">
-                          <div>
-                            <p className="eyebrow">School arrival · Session 3</p>
-                            <h3>{row.schoolLabel}</h3>
-                            <p>
-                              {groupCount} group{groupCount === 1 ? '' : 's'} ·{' '}
-                              {guideSlots} group instructor slot
-                              {guideSlots === 1 ? '' : 's'}
-                            </p>
-                          </div>
+                          <div><p className="eyebrow">School arrival · Session 3</p><h3>{row.schoolLabel}</h3><p>{populatedGroups.length} group{populatedGroups.length === 1 ? '' : 's'}</p></div>
+                          <Building2 size={30} />
                         </div>
 
-                        <div className="arrival-staff-filter">
-                          <label>
-                            Instructor staff group
-                            <select
-                              value={arrivalStaffGroup}
-                              onChange={(event) =>
-                                setArrivalStaffGroup(
-                                  event.target.value as
-                                    | 'all'
-                                    | StaffRole,
-                                )
-                              }
-                            >
-                              <option value="all">All working staff</option>
-                              <option value="staff">Staff</option>
-                              <option value="teamLeader">Team leaders</option>
-                              <option value="activityManager">
-                                Activities managers
-                              </option>
-                              <option value="centreManager">
-                                Centre managers
-                              </option>
+                        <div className="arrival-details-grid">
+                          <label>Building
+                            <select value={assignment.building ?? ''} onChange={(event) => updateArrivalDetails(row, { building: event.target.value })}>
+                              <option value="">Select building</option>
+                              {[1,2,3,4,5,6].map((building) => <option key={building} value={String(building)}>Building {building}</option>)}
                             </select>
                           </label>
-                          <p>
-                            School-arrival instructors do not need an activity
-                            qualification. They only need to be working and not
-                            marked sick.
-                          </p>
-                        </div>
-
-                        <div className="arrival-assignment-grid">
-                          <label>
-                            Party Leader
-                            <select
-                              value={assignment.leaderId ?? ''}
-                              onChange={(event) =>
-                                setArrivalLeader(row, event.target.value)
-                              }
-                            >
-                              <option value="">Select Party Leader</option>
-                              {leaderOptions.map((member) => (
-                                <option key={member.id} value={member.id}>
-                                  {member.name}
-                                </option>
-                              ))}
+                          <label>Arrival time<input type="time" value={assignment.arrivalTime ?? '14:00'} onChange={(event) => updateArrivalDetails(row, { arrivalTime: event.target.value })} /></label>
+                          <label>Departure day
+                            <select value={assignment.departureDay ?? row.day} onChange={(event) => updateArrivalDetails(row, { departureDay: event.target.value })}>
+                              {programmeDays.map((day) => <option key={day} value={day}>{day}</option>)}
                             </select>
                           </label>
-
-                          {Array.from({ length: guideSlots }, (_, index) => {
-                            const groupNumber = populatedGroups[index]?.group ?? index + 1
-                            return (
-                              <label key={index}>
-                                Instructor for Group {groupNumber}
-                                <select
-                                  value={assignment.guideIds[index] ?? ''}
-                                  onChange={(event) =>
-                                    setArrivalGuide(
-                                      row,
-                                      index,
-                                      event.target.value,
-                                    )
-                                  }
-                                >
-                                  <option value="">Select instructor</option>
-                                  {guideOptions
-                                    .filter((member) => {
-                                      const existingCount =
-                                        assignment.guideIds.filter(
-                                          (id, guideIndex) =>
-                                            guideIndex !== index &&
-                                            id === member.id,
-                                        ).length
-                                      return existingCount < 2
-                                    })
-                                    .map((member) => (
-                                      <option
-                                        key={member.id}
-                                        value={member.id}
-                                      >
-                                        {member.name}
-                                      </option>
-                                    ))}
-                                </select>
-                              </label>
-                            )
-                          })}
+                          <label>Departure time<input type="time" value={assignment.departureTime ?? '10:00'} onChange={(event) => updateArrivalDetails(row, { departureTime: event.target.value })} /></label>
                         </div>
+                        {conflict && <p className="building-conflict">Building conflict with {conflict.schoolLabel}. Change the building or timings.</p>}
+
+                        <label className="party-leader-field">Party Leader
+                          <select value={assignment.leaderId ?? ''} onChange={(event) => setArrivalLeader(row, event.target.value)}>
+                            <option value="">Select Party Leader</option>
+                            {leaderOptions.map((member) => <option key={member.id} value={member.id}>{member.name} · {roleLabel(resolvedRole(member))}</option>)}
+                          </select>
+                        </label>
+
+                        <div className="arrival-group-list">
+                          {populatedGroups.map((group, index) => (
+                            <label key={group.group}>Group {group.group}
+                              <select value={assignment.guideIds[index] ?? ''} onChange={(event) => setArrivalGuide(row, index, event.target.value)}>
+                                <option value="">Select instructor</option>
+                                {guideOptions.filter((member) => assignment.guideIds.filter((id, guideIndex) => guideIndex !== index && id === member.id).length < 2).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}
+                              </select>
+                            </label>
+                          ))}
+                        </div>
+
                         <div className="arrival-actions">
-                          <button
-                            className="primary"
-                            disabled={!assignment.leaderId}
-                            onClick={() => autoFillArrivalSchool(row)}
-                          >
-                            <WandSparkles size={18} />
-                            Auto-fill this school
-                          </button>
-                          <span>
-                            {assignment.leaderId
-                              ? 'The selected Party Leader will not receive a group.'
-                              : 'Select the Party Leader first.'}
-                          </span>
+                          <button className="primary" disabled={!assignment.leaderId} onClick={() => autoFillArrivalSchool(row)}><WandSparkles size={18} />Auto-fill school</button>
+                          <span>{assignment.leaderId ? 'One instructor per group where possible; maximum two groups from this school.' : 'Select the Party Leader first.'}</span>
                         </div>
-                        <p className="arrival-note">
-                          The programme’s real group numbers are used. Auto-fill gives one instructor per group when possible, or one instructor for two groups when staffing is short.
-                        </p>
                       </section>
                     )
                   })}
+                </div>
 
                 <div className="search-box">
                   <Search size={18} />
@@ -2117,6 +2019,29 @@ function ManagerApp({
               </>
             )}
           </Panel>
+        )}
+
+        {page === 'accommodation' && (
+          <section className="panel accommodation-overview-page">
+            <button className="back" onClick={() => setPage('dashboard')}><ChevronLeft size={18} />Dashboard</button>
+            <p className="eyebrow">Live operations</p>
+            <h2>Accommodation Overview</h2>
+            <p className="page-intro">Buildings 1–6 show current allocations, timings, Party Leaders and group coverage.</p>
+            <div className="building-overview-grid">
+              {[1,2,3,4,5,6].map((buildingNumber) => {
+                const allocations = arrivalRows.filter((row) => arrivalAssignment(row).building === String(buildingNumber))
+                return <article className={`building-card ${allocations.length ? 'occupied' : 'available'}`} key={buildingNumber}>
+                  <div className="building-card-top"><Building2 size={24}/><div><p className="eyebrow">Building</p><h3>{buildingNumber}</h3></div></div>
+                  {!allocations.length ? <div className="building-empty"><strong>Available</strong><span>No school allocated</span></div> : allocations.map((row) => {
+                    const allocation = arrivalAssignment(row)
+                    const leader = staff.find((member) => member.id === allocation.leaderId)
+                    const groups = row.cells.filter((cell) => cell.activityCode && cell.activityCode !== 'Z').map((cell) => cell.group)
+                    return <div className="building-school" key={row.id}><strong>{row.schoolLabel}</strong><span>{row.day} {allocation.arrivalTime} → {allocation.departureDay} {allocation.departureTime}</span><span>Party Leader: {leader?.name ?? 'Unassigned'}</span><span>Groups: {groups.join(', ')}</span></div>
+                  })}
+                </article>
+              })}
+            </div>
+          </section>
         )}
 
         {page === 'staff' && (

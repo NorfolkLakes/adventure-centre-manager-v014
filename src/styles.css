@@ -89,7 +89,7 @@ button { cursor: pointer; }
   top: 0;
   z-index: 30;
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 6px;
   width: 100%;
   padding: 8px 10px;
@@ -1150,3 +1150,32 @@ button { cursor: pointer; }
   .arrival-actions { align-items: stretch; flex-direction: column; }
   .arrival-actions .primary { justify-content: center; width: 100%; }
 }
+
+
+/* v0.22 Arrival & Accommodation */
+.arrival-board-heading { display:flex; justify-content:space-between; align-items:center; gap:16px; margin:18px 0 12px; padding:18px; border-radius:18px; background:linear-gradient(135deg,#123f45,#1b625b); color:#fff; }
+.arrival-board-heading h3 { margin:4px 0; font-size:1.35rem; }
+.arrival-board-heading p:last-child { margin:0; color:rgba(255,255,255,.82); }
+.arrival-cards-grid { display:grid; gap:16px; margin-bottom:18px; }
+.arrival-card { border-top:7px solid #2f7f73; }
+.school-tone-1 { border-top-color:#2878b5; } .school-tone-2 { border-top-color:#2e9a68; } .school-tone-3 { border-top-color:#d47c2d; } .school-tone-4 { border-top-color:#8558b5; } .school-tone-5 { border-top-color:#b74f70; } .school-tone-6 { border-top-color:#5b7f39; }
+.arrival-card-heading { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+.arrival-details-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; padding:14px; }
+.arrival-details-grid label, .party-leader-field, .arrival-group-list label { display:grid; gap:6px; color:#39534e; font-size:.78rem; font-weight:850; }
+.arrival-details-grid select, .arrival-details-grid input, .party-leader-field select, .arrival-group-list select { width:100%; min-height:44px; padding:9px 10px; border:1px solid #cbd8d4; border-radius:10px; background:#fff; }
+.party-leader-field { margin:0 14px 14px; padding:14px; border-radius:14px; background:#eef7f3; }
+.arrival-group-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; padding:0 14px 14px; }
+.building-conflict { margin:0 14px 14px; padding:10px 12px; border-radius:10px; background:#fff0e3; color:#9d4b14; font-weight:800; }
+.accommodation-overview-page .page-intro { color:#627570; }
+.building-overview-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; margin-top:18px; }
+.building-card { padding:16px; border:1px solid #d9e5e1; border-radius:18px; background:#fff; box-shadow:0 8px 24px rgba(26,74,64,.08); }
+.building-card.occupied { border-left:6px solid #2878b5; } .building-card.available { border-left:6px solid #34a06f; }
+.building-card-top { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+.building-card-top h3 { margin:0; font-size:1.8rem; }
+.building-empty, .building-school { display:grid; gap:5px; padding:12px; border-radius:12px; background:#f2f7f5; }
+.building-school + .building-school { margin-top:9px; }
+.building-school span, .building-empty span { color:#687b76; font-size:.82rem; }
+.arrival-duty-details { display:grid; gap:4px; margin:10px 0; padding:10px 12px; border-radius:11px; background:#edf6f3; }
+.arrival-duty-details p { margin:0; color:#355750; font-size:.85rem; }
+@media (min-width:900px) { .arrival-cards-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width:700px) { .arrival-details-grid, .arrival-group-list, .building-overview-grid { grid-template-columns:1fr; } .top-nav { grid-template-columns:repeat(3,minmax(0,1fr)); } }

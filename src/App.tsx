@@ -22,6 +22,11 @@ type RotaDuty = {
   duty_type: string
   staff_name: string
   school_name: string | null
+  building_name: string | null
+  party_leader_name: string | null
+  arrival_time: string | null
+  departure_day: string | null
+  departure_time: string | null
 }
 
 function App() {
@@ -235,7 +240,7 @@ function StaffRota({
     const { data, error } = await supabase
       .from('rota_assignments')
       .select(
-        'id,programme_name,day,session,activity_code,activity_name,group_numbers,duty_type,staff_name,school_name',
+        'id,programme_name,day,session,activity_code,activity_name,group_numbers,duty_type,staff_name,school_name,building_name,party_leader_name,arrival_time,departure_day,departure_time',
       )
       .order('day')
       .order('session')
@@ -346,6 +351,14 @@ function StaffRota({
                       <h3>{duty.activity_name}</h3>
                       {duty.school_name && (
                         <p className="school-name">{duty.school_name}</p>
+                      )}
+                      {duty.duty_type.startsWith('arrival_') && (
+                        <div className="arrival-duty-details">
+                          {duty.building_name && <p><strong>Building:</strong> {duty.building_name}</p>}
+                          {duty.party_leader_name && duty.duty_type !== 'arrival_leader' && <p><strong>Party Leader:</strong> {duty.party_leader_name}</p>}
+                          {duty.arrival_time && <p><strong>Arrival:</strong> {duty.day} {duty.arrival_time}</p>}
+                          {duty.departure_day && <p><strong>Departure:</strong> {duty.departure_day} {duty.departure_time || ''}</p>}
+                        </div>
                       )}
                       <div className="group-pill">
                         {duty.group_numbers.length
