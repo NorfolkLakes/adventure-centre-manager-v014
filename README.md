@@ -181,21 +181,21 @@ After deploying v0.20, run `supabase/setup.sql` once in the Supabase SQL Editor 
 - Duties are matched using the logged-in email address and refresh when the published rota changes.
 
 
-## v0.38 — Compact My Sessions
+## v0.39 — Compact My Sessions
 
 - Replaces the larger Home rota block with a compact dashboard panel.
 - Uses a day dropdown and concise session rows.
 - Shows session, activity, school/group/building and role without taking over the Home page.
 
 
-## v0.38
+## v0.39
 - Fixed My Sessions matching for manager-role accounts.
 - Matches duties by login email or linked staff name.
 - Added a compact staff-profile link selector as a reliable fallback.
 - Ensures linked managers without a staff email are included when the rota syncs.
 
 
-## v0.38
+## v0.39
 - Added staff work and absence summary to Holidays.
 - Shows published days worked, total sessions, most-run and least-run activities.
 - Shows unique holiday and sick-day totals.
@@ -204,10 +204,17 @@ After deploying v0.20, run `supabase/setup.sql` once in the Supabase SQL Editor 
 - Instructors cannot add holiday or sickness records.
 
 
-## v0.38 Live operations
+## v0.39 Live operations
 - Shared planning changes update across open manager and Team Leader sessions through Supabase Realtime.
 - Displays who last changed the app and when.
 - Sick staff appear in red on the Holiday calendar.
 - Holiday and sick staff are excluded from manual and automatic staffing for affected dates.
 - Staffing shortage warnings only report genuine full-day capacity shortfalls.
 - My Sessions continues to match the linked staff profile, login email and staff name.
+
+
+## v0.39 Instructor dashboard
+- Removes instructor self-service availability controls.
+- Shows published Arrivals duties clearly, including school, G-number group(s), and building.
+- Shows only the signed-in instructor's holiday records for the selected month.
+- Adds secure Supabase policy access for instructors to read their own holiday rows only.

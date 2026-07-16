@@ -183,7 +183,12 @@ create table if not exists public.staff_holidays (
 );
 alter table public.staff_holidays enable row level security;
 drop policy if exists "Holiday viewers read" on public.staff_holidays;
-create policy "Holiday viewers read" on public.staff_holidays for select to authenticated using (public.can_view_holidays());
+create policy "Holiday viewers read" on public.staff_holidays
+for select to authenticated
+using (
+  public.can_view_holidays()
+  or lower(staff_email) = lower(coalesce(auth.jwt() ->> 'email', ''))
+);
 drop policy if exists "Holiday managers insert" on public.staff_holidays;
 create policy "Holiday managers insert" on public.staff_holidays for insert to authenticated with check (public.can_manage_holidays());
 drop policy if exists "Holiday managers update" on public.staff_holidays;
