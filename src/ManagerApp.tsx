@@ -677,25 +677,50 @@ function ManagerApp({
       workingByDay[day] ?? staff.map((member) => member.id),
     )
     const nextAssignments: StaffingAssignment = { ...assignments }
+    const nextArrivalAssignments = { ...arrivalAssignments }
 
-    // Remove assignments for sick staff on this day before rebuilding gaps.
+    // Remove assignments for staff who are not available before rebuilding gaps.
     programme.rows
       .filter((row) => row.day === day)
       .forEach((row) =>
         row.cells.forEach((cell) => {
           const key = cellKey(row.id, cell.group)
           const assignedId = nextAssignments[key]
-          if (assignedId && sickIds.has(assignedId)) delete nextAssignments[key]
+          if (
+            assignedId &&
+            (!workingIds.has(assignedId) || sickIds.has(assignedId))
+          ) {
+            delete nextAssignments[key]
+          }
         }),
       )
 
+    for (const row of programme.rows.filter(
+      (item) => item.day === day && item.session === '3' && item.schoolLabel,
+    )) {
+      const key = arrivalKey(row)
+      const current = nextArrivalAssignments[key] ?? { guideIds: [] }
+      const leaderAvailable =
+        current.leaderId &&
+        workingIds.has(current.leaderId) &&
+        !sickIds.has(current.leaderId)
+      const guideIds = current.guideIds.map((id) =>
+        id && workingIds.has(id) && !sickIds.has(id) ? id : '',
+      )
+      nextArrivalAssignments[key] = {
+        leaderId: leaderAvailable ? current.leaderId : undefined,
+        guideIds,
+      }
+    }
+
     const workload = new Map<string, number>()
-    Object.entries(nextAssignments).forEach(([, staffId]) => {
+    Object.values(nextAssignments).forEach((staffId) => {
       workload.set(staffId, (workload.get(staffId) ?? 0) + 1)
     })
 
     const dayRows = programme.rows.filter((row) => row.day === day)
 
+    // Fill normal qualified activity assignments first.
     for (const row of dayRows) {
       for (const cell of row.cells) {
         if (!cell.activityCode || cell.activityCode === 'Z') continue
@@ -722,7 +747,6 @@ function ManagerApp({
             )
           })
           .sort((a, b) => {
-            // Strict priority: regular staff first, then team leaders, activities manager, centre manager.
             const priorityDifference =
               rolePriority(resolvedRole(a)) - rolePriority(resolvedRole(b))
             if (priorityDifference !== 0) return priorityDifference
@@ -742,10 +766,128 @@ function ManagerApp({
       }
     }
 
+    // Session 3: assign one School Leader, then one instructor per group where
+    // possible. Only pair two groups to one instructor when staffing is short.
+    const arrivalRowsForDay = dayRows.filter(
+      (row) => row.session === '3' && row.schoolLabel,
+    )
+
+    for (const row of arrivalRowsForDay) {
+      const key = arrivalKey(row)
+      const populatedGroups = row.cells
+        .filter((cell) => cell.activityCode && cell.activityCode !== 'Z')
+        .map((cell) => cell.group)
+      const current = nextArrivalAssignments[key] ?? { guideIds: [] }
+
+      const busyInSession = new Set<string>()
+      dayRows
+        .filter((item) => item.session === row.session)
+        .forEach((item) =>
+          item.cells.forEach((cell) => {
+            const assigned = nextAssignments[cellKey(item.id, cell.group)]
+            if (assigned) busyInSession.add(assigned)
+          }),
+        )
+
+      current.guideIds.filter(Boolean).forEach((id) => busyInSession.add(id))
+      if (current.leaderId) busyInSession.add(current.leaderId)
+
+      if (!current.leaderId) {
+        const leader = staff
+          .filter(
+            (member) =>
+              workingIds.has(member.id) &&
+              !sickIds.has(member.id) &&
+              !busyInSession.has(member.id),
+          )
+          .sort((a, b) => {
+            const leaderRank = (member: StaffMember) => {
+              const role = resolvedRole(member)
+              if (role === 'teamLeader') return 0
+              if (role === 'activityManager') return 1
+              if (role === 'centreManager') return 2
+              return 3
+            }
+            const rankDifference = leaderRank(a) - leaderRank(b)
+            if (rankDifference !== 0) return rankDifference
+            return (workload.get(a.id) ?? 0) - (workload.get(b.id) ?? 0)
+          })[0]
+
+        if (leader) {
+          current.leaderId = leader.id
+          busyInSession.add(leader.id)
+          workload.set(leader.id, (workload.get(leader.id) ?? 0) + 1)
+        }
+      }
+
+      const guideIds = Array.from(
+        { length: populatedGroups.length },
+        (_, index) => current.guideIds[index] ?? '',
+      )
+      const guideLoad = new Map<string, number>()
+      guideIds.filter(Boolean).forEach((id) =>
+        guideLoad.set(id, (guideLoad.get(id) ?? 0) + 1),
+      )
+
+      for (let index = 0; index < populatedGroups.length; index += 1) {
+        if (guideIds[index]) continue
+
+        let candidates = staff
+          .filter(
+            (member) =>
+              workingIds.has(member.id) &&
+              !sickIds.has(member.id) &&
+              member.id !== current.leaderId &&
+              !busyInSession.has(member.id),
+          )
+          .sort((a, b) => {
+            const roleDifference =
+              rolePriority(resolvedRole(a)) - rolePriority(resolvedRole(b))
+            if (roleDifference !== 0) return roleDifference
+            return (workload.get(a.id) ?? 0) - (workload.get(b.id) ?? 0)
+          })
+
+        // If everyone is already used, allow an arrival instructor to cover a
+        // second group, but never more than two groups.
+        if (!candidates.length) {
+          candidates = staff
+            .filter(
+              (member) =>
+                workingIds.has(member.id) &&
+                !sickIds.has(member.id) &&
+                member.id !== current.leaderId &&
+                (guideLoad.get(member.id) ?? 0) === 1,
+            )
+            .sort((a, b) =>
+              (workload.get(a.id) ?? 0) - (workload.get(b.id) ?? 0),
+            )
+        }
+
+        const chosen = candidates[0]
+        if (chosen) {
+          guideIds[index] = chosen.id
+          const previousGuideLoad = guideLoad.get(chosen.id) ?? 0
+          guideLoad.set(chosen.id, previousGuideLoad + 1)
+          if (previousGuideLoad === 0) busyInSession.add(chosen.id)
+          workload.set(chosen.id, (workload.get(chosen.id) ?? 0) + 1)
+        }
+      }
+
+      nextArrivalAssignments[key] = {
+        leaderId: current.leaderId,
+        guideIds,
+      }
+    }
+
     setAssignments(nextAssignments)
+    setArrivalAssignments(nextArrivalAssignments)
     localStorage.setItem(ASSIGNMENT_KEY, JSON.stringify(nextAssignments))
+    localStorage.setItem(
+      ARRIVAL_ASSIGNMENTS_KEY,
+      JSON.stringify(nextArrivalAssignments),
+    )
     setImportMessage(
-      `Auto-filled qualified staff for ${day}. Regular staff were used first, followed by team leaders, activities manager and centre manager.`,
+      `Auto-filled ${day}, including a School Leader and Session 3 group instructors. One instructor per group was used where possible; groups were paired only when staffing was short.`,
     )
   }
 
@@ -1002,7 +1144,7 @@ function ManagerApp({
             day,
             session: row.session,
             activity_code: 'ARRIVAL',
-            activity_name: 'School arrival team leader',
+            activity_name: 'School Leader – documents and welcome',
             group_numbers: row.cells
               .filter((cell) => cell.activityCode && cell.activityCode !== 'Z')
               .map((cell) => cell.group),
@@ -1025,8 +1167,8 @@ function ManagerApp({
           day,
           session: row.session,
           activity_code: 'ARRIVAL',
-          activity_name: 'School arrival instructor',
-          group_numbers: [index + 1],
+          activity_name: 'Accommodation and fire alarm instructor',
+          group_numbers: [row.cells.filter((cell) => cell.activityCode && cell.activityCode !== 'Z')[index]?.group ?? index + 1],
           duty_type: 'arrival_instructor',
           staff_email: email,
           staff_name: guide.name,
@@ -1613,12 +1755,23 @@ function ManagerApp({
                     const sickToday =
                       sicknessByDay[activeStaffingDay] ?? []
 
-                    const leaderOptions = staff.filter(
-                      (member) =>
-                        availableToday.includes(member.id) &&
-                        !sickToday.includes(member.id) &&
-                        resolvedRole(member) === 'teamLeader',
-                    )
+                    const leaderOptions = staff
+                      .filter(
+                        (member) =>
+                          availableToday.includes(member.id) &&
+                          !sickToday.includes(member.id) &&
+                          !assignment.guideIds.includes(member.id),
+                      )
+                      .sort((a, b) => {
+                        const leaderRank = (member: StaffMember) => {
+                          const role = resolvedRole(member)
+                          if (role === 'teamLeader') return 0
+                          if (role === 'activityManager') return 1
+                          if (role === 'centreManager') return 2
+                          return 3
+                        }
+                        return leaderRank(a) - leaderRank(b)
+                      })
 
                     const guideOptions = staff.filter(
                       (member) =>
@@ -1633,12 +1786,10 @@ function ManagerApp({
                       <section className="arrival-card" key={row.id}>
                         <div className="arrival-card-heading">
                           <div>
-                            <p className="eyebrow">School arrival · Session 3</p>
+                            <p className="eyebrow">School welcome and accommodation · Session 3</p>
                             <h3>{row.schoolLabel}</h3>
                             <p>
-                              {groupCount} group{groupCount === 1 ? '' : 's'} ·{' '}
-                              {guideSlots} group instructor slot
-                              {guideSlots === 1 ? '' : 's'}
+                              {groupCount} group{groupCount === 1 ? '' : 's'} · one School Leader plus up to {guideSlots} group instructor{guideSlots === 1 ? '' : 's'}
                             </p>
                           </div>
                         </div>
@@ -1668,22 +1819,20 @@ function ManagerApp({
                             </select>
                           </label>
                           <p>
-                            School-arrival instructors do not need an activity
-                            qualification. They only need to be working and not
-                            marked sick.
+                            The School Leader talks through documents while group instructors take children to accommodation and complete the fire alarm test. One instructor per group is preferred; one instructor may cover two groups when staffing is short.
                           </p>
                         </div>
 
                         <div className="arrival-assignment-grid">
                           <label>
-                            Team leader
+                            School Leader
                             <select
                               value={assignment.leaderId ?? ''}
                               onChange={(event) =>
                                 setArrivalLeader(row, event.target.value)
                               }
                             >
-                              <option value="">Select team leader</option>
+                              <option value="">Select School Leader</option>
                               {leaderOptions.map((member) => (
                                 <option key={member.id} value={member.id}>
                                   {member.name}
@@ -1732,8 +1881,7 @@ function ManagerApp({
                           })}
                         </div>
                         <p className="arrival-note">
-                          Each group has its own instructor selector. The same
-                          instructor can be selected for up to two groups.
+                          Preferred staffing is one instructor per group. The same instructor can be selected for a maximum of two groups when staffing is short.
                         </p>
                       </section>
                     )
