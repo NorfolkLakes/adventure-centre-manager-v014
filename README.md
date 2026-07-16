@@ -71,3 +71,9 @@ The browser uses only the Supabase publishable key. Row Level Security policies 
 - Duties show clear session, activity, school and group information
 - Staff screens refresh automatically when the manager changes the rota
 - Excel printing now includes a Staff Room Wall Rota sheet
+
+## v0.15 Session 3 staffing
+- Adds one School Leader for documents and welcome.
+- Auto-assigns one instructor per group where possible.
+- Allows one instructor to cover a maximum of two groups when staffing is short.
+- Publishes the correct group numbers to staff accounts.

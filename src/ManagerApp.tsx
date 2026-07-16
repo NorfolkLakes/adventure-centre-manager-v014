@@ -310,7 +310,7 @@ function ManagerApp({
 
       current.activityStaff += activeCells.length
 
-      if (row.session === '3' && row.schoolLabel) {
+      if (row.session === '3') {
         const groupCount = activeCells.length
         // One team leader plus one instructor per group.
         current.arrivalStaff += groupCount > 0 ? groupCount + 1 : 0
@@ -769,7 +769,7 @@ function ManagerApp({
     // Session 3: assign one School Leader, then one instructor per group where
     // possible. Only pair two groups to one instructor when staffing is short.
     const arrivalRowsForDay = dayRows.filter(
-      (row) => row.session === '3' && row.schoolLabel,
+      (row) => row.session === '3',
     )
 
     for (const row of arrivalRowsForDay) {
@@ -1344,6 +1344,7 @@ function ManagerApp({
   }
 
   const filteredStaffingCells = populatedCells.filter(({ row, cell }) => {
+    if (row.session === '3') return false
     if (activeStaffingDay && row.day !== activeStaffingDay) return false
     const staffId = assignments[cellKey(row.id, cell.group)]
     const staffName = staff.find((member) => member.id === staffId)?.name ?? ''
@@ -1353,9 +1354,7 @@ function ManagerApp({
   })
 
   const arrivalRows =
-    programme?.rows.filter(
-      (row) => row.schoolLabel && row.session === '3',
-    ) ?? []
+    programme?.rows.filter((row) => row.session === '3') ?? []
 
   const selectedDayDemand = sessionDemandForDay(activeStaffingDay)
   const selectedDayBusiest = busiestSessionForDay(activeStaffingDay)
@@ -1741,11 +1740,36 @@ function ManagerApp({
                 {arrivalRows
                   .filter((row) => row.day === activeStaffingDay)
                   .map((row) => {
-                    const populatedGroups = row.cells.filter(
-                      (cell) => cell.activityCode && cell.activityCode !== 'Z',
-                    )
-                    const groupCount = populatedGroups.length
-                    const guideSlots = Math.max(1, groupCount)
+                    const dayGroupNumbers = Array.from(
+                      new Set(
+                        (programme?.rows ?? [])
+                          .filter((item) => item.day === row.day)
+                          .flatMap((item) =>
+                            item.cells
+                              .filter(
+                                (cell) =>
+                                  cell.activityCode &&
+                                  cell.activityCode !== 'Z',
+                              )
+                              .map((cell) => cell.group),
+                          ),
+                      ),
+                    ).sort((a, b) => a - b)
+                    const groupCount = Math.max(1, dayGroupNumbers.length)
+                    const guideSlots = groupCount
+                    const inferredSchoolLabel =
+                      row.schoolLabel ??
+                      row.cells
+                        .map((cell) => cell.activityCode)
+                        .find(
+                          (code) =>
+                            code &&
+                            code !== 'Z' &&
+                            !activities.some(
+                              (activity) => activity.code === code,
+                            ),
+                        ) ??
+                      'School arrival'
                     const key = arrivalKey(row)
                     const assignment =
                       arrivalAssignments[key] ?? { guideIds: [] }
@@ -1787,7 +1811,7 @@ function ManagerApp({
                         <div className="arrival-card-heading">
                           <div>
                             <p className="eyebrow">School welcome and accommodation · Session 3</p>
-                            <h3>{row.schoolLabel}</h3>
+                            <h3>{inferredSchoolLabel}</h3>
                             <p>
                               {groupCount} group{groupCount === 1 ? '' : 's'} · one School Leader plus up to {guideSlots} group instructor{guideSlots === 1 ? '' : 's'}
                             </p>
@@ -1845,7 +1869,7 @@ function ManagerApp({
                             const groupNumber = index + 1
                             return (
                               <label key={index}>
-                                Instructor for Group {groupNumber}
+                                Instructor for Group {dayGroupNumbers[index] ?? groupNumber}
                                 <select
                                   value={assignment.guideIds[index] ?? ''}
                                   onChange={(event) =>
