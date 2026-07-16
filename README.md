@@ -158,8 +158,24 @@ After deploying v0.20, run `supabase/setup.sql` once in the Supabase SQL Editor 
 - Accommodation navigation is replaced by School Notes. Every detected school has a notes box and a multi-staff assignment panel.
 
 
-## v0.32
+## v0.34
 - Added Admin → Holidays monthly calendar.
 - Head of Centre and Activities Manager can add and remove holidays.
 - Added Team Leader login role with read-only holiday calendar access.
 - Instructors cannot access the holiday calendar.
+
+
+## v0.34 Team Leader access
+
+- Team Leaders now open the full manager application.
+- Team Leaders can use Home, Programme, Staffing, Arrivals, School Notes, Staff and Sign-off.
+- Team Leaders can view the Holiday calendar but cannot add, edit or delete holidays.
+- Head of Centre and Activities Manager retain full Holiday management.
+- Supabase operational policies now recognise Team Leaders while holiday write policies remain restricted.
+
+
+## v0.34 — My Sessions for operational roles
+
+- Head of Centre, Activities Manager and Team Leader accounts now see a My Sessions panel on Home.
+- The panel shows their own published activity and arrival duties while they remain inside the main management app.
+- Duties are matched using the logged-in email address and refresh when the published rota changes.

@@ -48,6 +48,20 @@ const WORKING_KEY = 'acm-working-by-day'
 const ACTIVITIES_KEY = 'acm-activities'
 const ARRIVAL_ASSIGNMENTS_KEY = 'acm-arrival-assignments'
 
+
+type MySessionDuty = {
+  id: string
+  programme_name: string
+  day: string
+  session: string
+  activity_name: string
+  group_numbers: number[]
+  duty_type: string
+  school_name: string | null
+  building_name: string | null
+  party_leader_name: string | null
+}
+
 function readJson<T>(key: string, fallback: T): T {
   try {
     const value = localStorage.getItem(key)
@@ -320,8 +334,9 @@ function ManagerApp({
 }: {
   accountEmail: string
   onSignOut: () => void
-  accountRole?: 'centreManager' | 'activityManager'
+  accountRole?: 'centreManager' | 'activityManager' | 'teamLeader'
 }) {
+  const canManageHolidays = accountRole === 'centreManager' || accountRole === 'activityManager'
   const [page, setPage] = useState<Page>('dashboard')
   const [programme, setProgramme] = useState<ProgrammeImport | null>(() =>
     readJson(PROGRAMME_KEY, null),
@@ -427,6 +442,9 @@ function ManagerApp({
   const [holidayStart, setHolidayStart] = useState('')
   const [holidayEnd, setHolidayEnd] = useState('')
   const [holidayNote, setHolidayNote] = useState('')
+  const [mySessions, setMySessions] = useState<MySessionDuty[]>([])
+  const [mySessionsLoading, setMySessionsLoading] = useState(true)
+  const [selectedMySessionsDay, setSelectedMySessionsDay] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -477,6 +495,43 @@ function ManagerApp({
     return () => { supabase.removeChannel(channel) }
   }, [accountEmail, staff])
 
+  async function loadMySessions() {
+    if (!accountEmail) return
+    setMySessionsLoading(true)
+    const { data, error } = await supabase
+      .from('rota_assignments')
+      .select('id,programme_name,day,session,activity_name,group_numbers,duty_type,school_name,building_name,party_leader_name')
+      .eq('staff_email', accountEmail.trim().toLowerCase())
+      .order('day')
+      .order('session')
+
+    if (error) {
+      setImportMessage(`Could not load your sessions: ${error.message}`)
+    } else {
+      const duties = (data ?? []) as MySessionDuty[]
+      setMySessions(duties)
+      setSelectedMySessionsDay((current) =>
+        current && duties.some((duty) => duty.day === current)
+          ? current
+          : duties[0]?.day ?? '',
+      )
+    }
+    setMySessionsLoading(false)
+  }
+
+  useEffect(() => {
+    loadMySessions()
+    const channel = supabase
+      .channel(`manager-my-sessions-${accountEmail}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'rota_assignments' },
+        loadMySessions,
+      )
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [accountEmail])
+
   async function loadHolidays() {
     const { data, error } = await supabase
       .from('staff_holidays')
@@ -495,6 +550,10 @@ function ManagerApp({
   }, [])
 
   async function addHoliday() {
+    if (!canManageHolidays) {
+      setImportMessage('Team Leaders can view holidays but cannot add or edit them.')
+      return
+    }
     const member = staff.find((item) => item.id === holidayStaffId)
     if (!member || !holidayStart || !holidayEnd) {
       setImportMessage('Choose a staff member and holiday dates.')
@@ -520,6 +579,10 @@ function ManagerApp({
   }
 
   async function deleteHoliday(id: string) {
+    if (!canManageHolidays) {
+      setImportMessage('Team Leaders can view holidays but cannot delete them.')
+      return
+    }
     const { error } = await supabase.from('staff_holidays').delete().eq('id', id)
     if (error) setImportMessage(error.message)
     else loadHolidays()
@@ -1860,6 +1923,42 @@ function ManagerApp({
               </article>
             </section>
 
+            <div className="section-heading"><div><p className="eyebrow">My rota</p><h2>My sessions</h2></div><span>Published duties for your login</span></div>
+            <section className="manager-my-sessions panel">
+              {mySessionsLoading ? (
+                <div className="manager-my-sessions-empty">Loading your sessions…</div>
+              ) : mySessions.length === 0 ? (
+                <div className="manager-my-sessions-empty">
+                  <CalendarDays size={34} />
+                  <div><h3>No sessions published for you</h3><p>Make sure your staff record uses {accountEmail} and publish the rota.</p></div>
+                </div>
+              ) : (
+                <>
+                  <div className="manager-my-session-days">
+                    {Array.from(new Set(mySessions.map((duty) => duty.day))).map((day) => (
+                      <button key={day} className={selectedMySessionsDay === day ? 'active' : ''} onClick={() => setSelectedMySessionsDay(day)}>{day}</button>
+                    ))}
+                  </div>
+                  <div className="manager-my-session-list">
+                    {mySessions.filter((duty) => duty.day === selectedMySessionsDay).map((duty) => (
+                      <article className={`manager-my-session-card duty-${duty.duty_type}`} key={duty.id}>
+                        <div className="manager-my-session-number">Session {duty.session}</div>
+                        <div className="manager-my-session-main">
+                          <h3>{duty.activity_name}</h3>
+                          <p>{[
+                            duty.school_name,
+                            duty.group_numbers?.length ? `G${duty.group_numbers.join(' & G')}` : null,
+                            duty.building_name,
+                          ].filter(Boolean).join(' · ') || 'Published duty'}</p>
+                        </div>
+                        <span className="manager-my-session-role">{duty.duty_type === 'activity' ? 'Instructor' : duty.duty_type === 'arrival_leader' ? 'Party Leader' : 'Arrival'}</span>
+                      </article>
+                    ))}
+                  </div>
+                </>
+              )}
+            </section>
+
             <div className="section-heading"><div><p className="eyebrow">Smart operations</p><h2>Run the centre faster</h2></div><span>Automation and daily assurance</span></div>
             <section className="v019-command-centre">
               <div className="ai-builder-card v019-ai-card">
@@ -2604,16 +2703,20 @@ function ManagerApp({
                 <button className="secondary-action" onClick={() => setHolidayMonth(new Date(holidayMonth.getFullYear(), holidayMonth.getMonth()+1, 1))}>Next</button>
               </div>
             </div>
-            <section className="holiday-editor">
-              <select value={holidayStaffId} onChange={(event) => setHolidayStaffId(event.target.value)}>
-                <option value="">Select staff member</option>
-                {staff.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}
-              </select>
-              <input type="date" value={holidayStart} onChange={(event) => setHolidayStart(event.target.value)} />
-              <input type="date" value={holidayEnd} onChange={(event) => setHolidayEnd(event.target.value)} />
-              <input value={holidayNote} onChange={(event) => setHolidayNote(event.target.value)} placeholder="Note (optional)" />
-              <button className="primary" onClick={addHoliday}>Add holiday</button>
-            </section>
+            {canManageHolidays ? (
+              <section className="holiday-editor">
+                <select value={holidayStaffId} onChange={(event) => setHolidayStaffId(event.target.value)}>
+                  <option value="">Select staff member</option>
+                  {staff.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}
+                </select>
+                <input type="date" value={holidayStart} onChange={(event) => setHolidayStart(event.target.value)} />
+                <input type="date" value={holidayEnd} onChange={(event) => setHolidayEnd(event.target.value)} />
+                <input value={holidayNote} onChange={(event) => setHolidayNote(event.target.value)} placeholder="Note (optional)" />
+                <button className="primary" onClick={addHoliday}>Add holiday</button>
+              </section>
+            ) : (
+              <div className="warning-banner"><strong>View only:</strong> Team Leaders can see staff holidays, but only the Head of Centre and Activities Manager can make changes.</div>
+            )}
             <div className="holiday-weekdays">{['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map((day) => <strong key={day}>{day}</strong>)}</div>
             <div className="holiday-calendar">
               {holidayCalendarDays().map((date) => {
@@ -2622,9 +2725,9 @@ function ManagerApp({
                 const today = key === dateKey(new Date())
                 return <article key={key} className={`holiday-day ${date.getMonth() !== holidayMonth.getMonth() ? 'outside' : ''} ${today ? 'today' : ''}`}>
                   <span className="holiday-date">{date.getDate()}</span>
-                  {entries.map((holiday) => <div className="holiday-entry" key={holiday.id} title={holiday.note ?? ''}>
+                  {entries.map((holiday) => <div className={`holiday-entry ${canManageHolidays ? '' : 'readonly'}`} key={holiday.id} title={holiday.note ?? ''}>
                     <span>{holiday.staff_name}</span>
-                    <button onClick={() => deleteHoliday(holiday.id)} aria-label={`Delete ${holiday.staff_name} holiday`}>×</button>
+                    {canManageHolidays && <button onClick={() => deleteHoliday(holiday.id)} aria-label={`Delete ${holiday.staff_name} holiday`}>×</button>}
                   </div>)}
                 </article>
               })}

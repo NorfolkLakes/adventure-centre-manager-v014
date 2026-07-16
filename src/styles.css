@@ -1276,3 +1276,19 @@ button { cursor: pointer; }
 
 /* v0.32 holiday calendar */
 .holiday-summary,.holiday-month-actions,.app-header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.holiday-editor{display:grid;grid-template-columns:1.2fr 1fr 1fr 1.4fr auto;gap:10px;margin:18px 0}.holiday-weekdays,.holiday-calendar{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}.holiday-weekdays{margin-bottom:6px;text-align:center}.holiday-weekdays strong{padding:7px;font-size:.82rem;color:#667085}.holiday-day{min-height:112px;border:1px solid #dfe5eb;border-radius:12px;padding:8px;background:#fff;overflow:hidden}.holiday-day.outside{opacity:.4;background:#f7f8fa}.holiday-day.today{outline:2px solid #166534}.holiday-date{display:block;font-weight:800;margin-bottom:6px}.holiday-entry{display:flex;align-items:center;justify-content:space-between;gap:5px;background:#dbeafe;border-radius:7px;padding:5px 7px;margin-top:4px;font-size:.78rem;font-weight:700}.holiday-entry button{border:0;background:transparent;font-size:1rem;cursor:pointer}.holiday-entry.readonly{display:block}.team-leader-shell{padding:20px}.app-header{margin-bottom:16px}@media(max-width:900px){.holiday-editor{grid-template-columns:1fr 1fr}.holiday-calendar{gap:3px}.holiday-day{min-height:90px;padding:5px}.holiday-entry{font-size:.68rem;padding:4px}}@media(max-width:600px){.holiday-editor{grid-template-columns:1fr}.holiday-weekdays strong{font-size:.65rem}.holiday-day{min-height:75px}.holiday-entry{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+
+/* v0.34 manager My Sessions */
+.manager-my-sessions { padding: 20px; }
+.manager-my-sessions-empty { min-height: 110px; display:flex; align-items:center; justify-content:center; gap:14px; color:var(--muted, #64748b); text-align:left; }
+.manager-my-sessions-empty h3 { margin:0 0 4px; color:var(--text, #132238); }
+.manager-my-sessions-empty p { margin:0; }
+.manager-my-session-days { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; }
+.manager-my-session-days button { border:1px solid #d7dee8; background:#fff; border-radius:999px; padding:8px 14px; font-weight:700; cursor:pointer; }
+.manager-my-session-days button.active { background:#173f35; color:#fff; border-color:#173f35; }
+.manager-my-session-list { display:grid; gap:10px; }
+.manager-my-session-card { display:grid; grid-template-columns:110px minmax(0,1fr) auto; gap:16px; align-items:center; border:1px solid #e2e8f0; border-left:5px solid #2f7667; border-radius:14px; padding:14px 16px; background:#fff; }
+.manager-my-session-number { font-weight:800; color:#173f35; }
+.manager-my-session-main h3 { margin:0 0 4px; font-size:1rem; }
+.manager-my-session-main p { margin:0; color:#64748b; }
+.manager-my-session-role { background:#eef5f2; color:#245b4f; padding:6px 10px; border-radius:999px; font-size:.78rem; font-weight:800; white-space:nowrap; }
+@media (max-width:700px) { .manager-my-session-card { grid-template-columns:1fr; gap:7px; } .manager-my-session-role { justify-self:start; } }

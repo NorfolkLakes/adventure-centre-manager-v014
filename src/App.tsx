@@ -91,19 +91,16 @@ function App() {
     return <LoginScreen />
   }
 
-  if (profile?.role === 'manager' || profile?.role === 'centreManager' || profile?.role === 'activityManager') {
+  if (profile?.role === 'manager' || profile?.role === 'centreManager' || profile?.role === 'activityManager' || profile?.role === 'teamLeader') {
     return (
       <ManagerApp
         accountEmail={profile.email || session.user.email || ''}
         onSignOut={signOut}
-        accountRole={profile.role === 'activityManager' ? 'activityManager' : 'centreManager'}
+        accountRole={profile.role === 'activityManager' ? 'activityManager' : profile.role === 'teamLeader' ? 'teamLeader' : 'centreManager'}
       />
     )
   }
 
-  if (profile?.role === 'teamLeader') {
-    return <TeamLeaderHolidayView accountEmail={profile.email || session.user.email || ''} onSignOut={signOut} />
-  }
 
   return (
     <StaffRota
