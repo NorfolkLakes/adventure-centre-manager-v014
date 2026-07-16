@@ -453,6 +453,10 @@ function ManagerApp({
   const [holidaySummaryStaffId, setHolidaySummaryStaffId] = useState('')
   const [holidaySickDate, setHolidaySickDate] = useState('')
   const [publishedStaffDuties, setPublishedStaffDuties] = useState<{staff_email:string;staff_name:string;day:string;session:string;activity_name:string;duty_type:string}[]>([])
+  const [lastSharedUpdate, setLastSharedUpdate] = useState<{updated_by_name:string;updated_by_email:string;updated_at:string;section:string} | null>(null)
+  const sharedStateReadyRef = useRef(false)
+  const applyingRemoteStateRef = useRef(false)
+  const sharedSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [mySessions, setMySessions] = useState<MySessionDuty[]>([])
   const [mySessionsLoading, setMySessionsLoading] = useState(true)
   const [selectedMySessionsDay, setSelectedMySessionsDay] = useState('')
@@ -522,8 +526,14 @@ function ManagerApp({
 
   function linkMyStaffProfile(staffId: string) {
     setMyStaffId(staffId)
-    if (staffId) localStorage.setItem(myStaffLinkKey, staffId)
-    else localStorage.removeItem(myStaffLinkKey)
+    if (staffId) {
+      localStorage.setItem(myStaffLinkKey, staffId)
+      setStaff((current) => current.map((member) =>
+        member.id === staffId && !member.email?.trim()
+          ? { ...member, email: accountEmail.trim().toLowerCase() }
+          : member,
+      ))
+    } else localStorage.removeItem(myStaffLinkKey)
   }
 
   async function loadMySessions() {
@@ -598,6 +608,71 @@ function ManagerApp({
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [])
+
+  useEffect(() => {
+    async function loadSharedState() {
+      const { data, error } = await supabase
+        .from('app_live_state')
+        .select('state,updated_by_name,updated_by_email,updated_at,section')
+        .eq('id', 'main')
+        .maybeSingle()
+      if (error) {
+        setImportMessage(`Live updates could not load: ${error.message}`)
+        sharedStateReadyRef.current = true
+        return
+      }
+      if (data?.state) {
+        applyingRemoteStateRef.current = true
+        const state = data.state as any
+        if (state.programme !== undefined) setProgramme(state.programme)
+        if (state.staff) setStaff(state.staff)
+        if (state.activities) setActivities(state.activities)
+        if (state.assignments) setAssignments(state.assignments)
+        if (state.workingByDay) setWorkingByDay(state.workingByDay)
+        if (state.sicknessByDay) setSicknessByDay(state.sicknessByDay)
+        if (state.arrivalAssignments) setArrivalAssignments(state.arrivalAssignments)
+        setLastSharedUpdate({ updated_by_name: data.updated_by_name, updated_by_email: data.updated_by_email, updated_at: data.updated_at, section: data.section })
+        window.setTimeout(() => { applyingRemoteStateRef.current = false }, 0)
+      }
+      sharedStateReadyRef.current = true
+    }
+    loadSharedState()
+    const channel = supabase.channel('app-live-state')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'app_live_state', filter: 'id=eq.main' }, (payload) => {
+        const data = payload.new as any
+        if (!data?.state || data.updated_by_email?.toLowerCase() === accountEmail.trim().toLowerCase()) return
+        applyingRemoteStateRef.current = true
+        const state = data.state
+        if (state.programme !== undefined) setProgramme(state.programme)
+        if (state.staff) setStaff(state.staff)
+        if (state.activities) setActivities(state.activities)
+        if (state.assignments) setAssignments(state.assignments)
+        if (state.workingByDay) setWorkingByDay(state.workingByDay)
+        if (state.sicknessByDay) setSicknessByDay(state.sicknessByDay)
+        if (state.arrivalAssignments) setArrivalAssignments(state.arrivalAssignments)
+        setLastSharedUpdate({ updated_by_name: data.updated_by_name, updated_by_email: data.updated_by_email, updated_at: data.updated_at, section: data.section })
+        window.setTimeout(() => { applyingRemoteStateRef.current = false }, 0)
+      }).subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [accountEmail])
+
+  useEffect(() => {
+    if (!sharedStateReadyRef.current || applyingRemoteStateRef.current) return
+    if (sharedSaveTimerRef.current) clearTimeout(sharedSaveTimerRef.current)
+    sharedSaveTimerRef.current = setTimeout(async () => {
+      const updatedAt = new Date().toISOString()
+      const updatedByName = displayName?.trim() || accountEmail
+      const state = { programme, staff, activities, assignments, workingByDay, sicknessByDay, arrivalAssignments }
+      const { error } = await supabase.from('app_live_state').upsert({
+        id: 'main', state, updated_by_name: updatedByName,
+        updated_by_email: accountEmail.trim().toLowerCase(), updated_at: updatedAt,
+        section: page,
+      }, { onConflict: 'id' })
+      if (error) setImportMessage(`Live update failed: ${error.message}`)
+      else setLastSharedUpdate({ updated_by_name: updatedByName, updated_by_email: accountEmail, updated_at: updatedAt, section: page })
+    }, 700)
+    return () => { if (sharedSaveTimerRef.current) clearTimeout(sharedSaveTimerRef.current) }
+  }, [programme, staff, activities, assignments, workingByDay, sicknessByDay, arrivalAssignments, accountEmail, displayName, page])
 
   async function addHoliday() {
     if (!canManageHolidays) {
@@ -726,6 +801,22 @@ function ManagerApp({
   function dateKey(date: Date) {
     const year = date.getFullYear(); const month = String(date.getMonth()+1).padStart(2,'0'); const day = String(date.getDate()).padStart(2,'0')
     return `${year}-${month}-${day}`
+  }
+
+  function unavailableStaffIdsForDay(day: string): Set<string> {
+    const ids = new Set<string>(sicknessByDay[day] ?? [])
+    holidays
+      .filter((holiday) => holiday.start_date <= day && holiday.end_date >= day)
+      .forEach((holiday) => {
+        const email = holiday.staff_email.trim().toLowerCase()
+        const name = normaliseIdentity(holiday.staff_name)
+        const member = staff.find((item) =>
+          (email && item.email?.trim().toLowerCase() === email) ||
+          normaliseIdentity(item.name) === name,
+        )
+        if (member) ids.add(member.id)
+      })
+    return ids
   }
 
   function sessionDemandForDay(day: string) {
@@ -1149,7 +1240,7 @@ function ManagerApp({
     const sortedRows = [...programme.rows].sort((a,b) => a.day.localeCompare(b.day) || Number(a.session)-Number(b.session))
     for (const row of sortedRows) {
       const workingIds = new Set(workingByDay[row.day] ?? staff.map((m) => m.id))
-      const sickIds = new Set(sicknessByDay[row.day] ?? [])
+      const sickIds = unavailableStaffIdsForDay(row.day)
       for (const cell of activityCellsForRow(row)) {
         const key = cellKey(row.id, cell.group)
         if (next[key]) { workload.set(next[key], (workload.get(next[key]) ?? 0) + 1); continue }
@@ -1183,7 +1274,7 @@ function ManagerApp({
   function autoFillStaffing(day: string) {
     if (!programme || !day) return
 
-    const sickIds = new Set(sicknessByDay[day] ?? [])
+    const sickIds = unavailableStaffIdsForDay(day)
     const workingIds = new Set(
       workingByDay[day] ?? staff.map((member) => member.id),
     )
@@ -1505,7 +1596,7 @@ function ManagerApp({
 
     const populatedGroups = row.cells
     const workingIds = new Set(workingByDay[row.day] ?? staff.map((member) => member.id))
-    const sickIds = new Set(sicknessByDay[row.day] ?? [])
+    const sickIds = unavailableStaffIdsForDay(row.day)
     const unavailableIds = new Set<string>([current.leaderId, ...arrivalStaffUsedByOtherSchools(row), ...activityStaffForDaySession(row.day, '3')])
 
     const candidates = shuffled(
@@ -1540,7 +1631,7 @@ function ManagerApp({
     }
 
     const workingIds = new Set(workingByDay[day] ?? staff.map((member) => member.id))
-    const sickIds = new Set(sicknessByDay[day] ?? [])
+    const sickIds = unavailableStaffIdsForDay(day)
     const reserved = activityStaffForDaySession(day, '3')
     rows.forEach((row) => {
       const leaderId = arrivalAssignment(row).leaderId
@@ -1608,7 +1699,7 @@ function ManagerApp({
             staff.map((item) => item.id)
           ).includes(member.id) &&
           qualificationIsValid(member, selectedStaffingCode) &&
-          !(sicknessByDay[selectedStaffingCell.row.day] ?? []).includes(member.id) &&
+          !unavailableStaffIdsForDay(selectedStaffingCell.row.day).has(member.id) &&
           !isDoubleBooked(
             member.id,
             selectedStaffingCell.row,
@@ -1940,12 +2031,57 @@ function ManagerApp({
   })
 
   const schoolsOnSite = new Set(programme?.rows.map(arrivalSchoolName).filter(Boolean) ?? []).size
-  const availableTodayCount = activeStaffingDay ? (workingByDay[activeStaffingDay] ?? staff.map((m) => m.id)).filter((id) => !(sicknessByDay[activeStaffingDay] ?? []).includes(id)).length : staff.length
-  const staffingShortages = populatedCells.filter(({row,cell}) => !assignments[cellKey(row.id,cell.group)]).length
-  const selectedDayUnfilled = populatedCells.filter(
-    ({ row, cell }) => row.day === activeStaffingDay && !assignments[cellKey(row.id, cell.group)],
-  )
-  const selectedDayCapacityShortfall = Math.max(0, (selectedDayBusiest?.total ?? 0) - availableTodayCount)
+  const availableTodayCount = activeStaffingDay
+    ? (workingByDay[activeStaffingDay] ?? staff.map((m) => m.id)).filter((id) => !unavailableStaffIdsForDay(activeStaffingDay).has(id)).length
+    : staff.length
+  const dailyShortages = programmeDays.map((day) => {
+    const required = busiestSessionForDay(day)?.total ?? 0
+    const available = (workingByDay[day] ?? staff.map((member) => member.id))
+      .filter((id) => !unavailableStaffIdsForDay(day).has(id)).length
+    return { day, required, available, shortfall: Math.max(0, required - available) }
+  })
+  const staffingShortages = dailyShortages.filter((item) => item.shortfall > 0).length
+  const selectedDayCapacityShortfall = dailyShortages.find((item) => item.day === activeStaffingDay)?.shortfall ?? 0
+
+  const plannedMySessions = useMemo<MySessionDuty[]>(() => {
+    if (!programme || !myStaffMember) return []
+    const duties: MySessionDuty[] = []
+    programme.rows.forEach((row) => {
+      activityCellsForRow(row).forEach((cell) => {
+        if (assignments[cellKey(row.id, cell.group)] !== myStaffMember.id) return
+        duties.push({
+          id: `planned-${row.id}-${cell.group}`,
+          programme_name: programme.title,
+          day: row.day,
+          session: row.session,
+          activity_name: activityName(cell.activityCode),
+          group_numbers: [cell.group],
+          duty_type: 'activity',
+          school_name: arrivalSchoolName(row) || null,
+          building_name: null,
+          party_leader_name: null,
+        })
+      })
+    })
+    arrivalRows.forEach((row) => {
+      const details = arrivalAssignment(row)
+      if (details.leaderId === myStaffMember.id) {
+        duties.push({ id: `planned-leader-${row.id}`, programme_name: programme.title, day: row.day, session: row.session, activity_name: 'Party Leader', group_numbers: [], duty_type: 'arrival_leader', school_name: arrivalSchoolName(row) || null, building_name: accommodationSummary(details.flatIds) || null, party_leader_name: myStaffMember.name })
+      }
+      const groups = row.cells.filter((_, index) => details.guideIds[index] === myStaffMember.id).map((cell) => cell.group)
+      if (groups.length) duties.push({ id: `planned-arrival-${row.id}`, programme_name: programme.title, day: row.day, session: row.session, activity_name: 'Accommodation', group_numbers: groups, duty_type: 'arrival_instructor', school_name: arrivalSchoolName(row) || null, building_name: accommodationSummary(details.flatIds) || null, party_leader_name: staff.find((member) => member.id === details.leaderId)?.name ?? null })
+    })
+    return duties
+  }, [programme, myStaffMember, assignments, arrivalAssignments, staff])
+
+  const effectiveMySessions = mySessions.length ? mySessions : plannedMySessions
+
+  useEffect(() => {
+    if (!effectiveMySessions.length) return
+    if (!selectedMySessionsDay || !effectiveMySessions.some((duty) => duty.day === selectedMySessionsDay)) {
+      setSelectedMySessionsDay(effectiveMySessions[0].day)
+    }
+  }, [effectiveMySessions, selectedMySessionsDay])
 
   return (
     <div className="app-shell">
@@ -1960,7 +2096,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.30</span></div>
+          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.38</span></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -1974,6 +2110,9 @@ function ManagerApp({
                   ? 'Staff rota live'
                   : 'Cloud connected'}
           </div>
+          {lastSharedUpdate && <div className="last-updated-live" title={new Date(lastSharedUpdate.updated_at).toLocaleString('en-GB')}>
+            Last updated by {lastSharedUpdate.updated_by_name || lastSharedUpdate.updated_by_email} · {new Date(lastSharedUpdate.updated_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+          </div>}
           <button
             className="upload-top"
             onClick={() => fileInputRef.current?.click()}
@@ -2055,9 +2194,9 @@ function ManagerApp({
             <section className="manager-my-sessions compact-my-sessions panel">
               <div className="compact-my-sessions-head">
                 <div><p className="eyebrow">My rota</p><h2>My Sessions</h2></div>
-                {mySessions.length > 0 && (
+                {effectiveMySessions.length > 0 && (
                   <select value={selectedMySessionsDay} onChange={(event) => setSelectedMySessionsDay(event.target.value)} aria-label="Choose My Sessions day">
-                    {Array.from(new Set(mySessions.map((duty) => duty.day))).map((day) => <option key={day} value={day}>{day}</option>)}
+                    {Array.from(new Set(effectiveMySessions.map((duty) => duty.day))).map((day) => <option key={day} value={day}>{day}</option>)}
                   </select>
                 )}
                 <select className="my-staff-link-select" value={myStaffMember?.id ?? ''} onChange={(event) => linkMyStaffProfile(event.target.value)} aria-label="Link My Sessions to staff profile">
@@ -2067,11 +2206,11 @@ function ManagerApp({
               </div>
               {mySessionsLoading ? (
                 <div className="compact-my-sessions-empty">Loading sessions…</div>
-              ) : mySessions.length === 0 ? (
+              ) : effectiveMySessions.length === 0 ? (
                 <div className="compact-my-sessions-empty"><CalendarDays size={20} /><span>No sessions found. Check the linked staff profile above.</span></div>
               ) : (
                 <div className="compact-my-session-list">
-                  {mySessions.filter((duty) => duty.day === selectedMySessionsDay).map((duty) => (
+                  {effectiveMySessions.filter((duty) => duty.day === selectedMySessionsDay).map((duty) => (
                     <article className={`compact-my-session-row duty-${duty.duty_type}`} key={duty.id}>
                       <strong>S{duty.session}</strong>
                       <div><b>{duty.activity_name}</b><span>{[
@@ -2206,7 +2345,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to accommodation, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v0.30</span>
+                  <span className="release-pill">v0.38</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
@@ -2390,18 +2529,13 @@ function ManagerApp({
                   </div>
                 </div>
 
-                {(selectedDayUnfilled.length > 0 || selectedDayCapacityShortfall > 0) && (
+                {selectedDayCapacityShortfall > 0 && (
                   <section className="staffing-shortage-alert" role="alert">
                     <CircleAlert size={24} />
                     <div>
                       <strong>Staffing warning for {activeStaffingDay}</strong>
                       <p>
-                        {selectedDayCapacityShortfall > 0
-                          ? `${selectedDayCapacityShortfall} more staff ${selectedDayCapacityShortfall === 1 ? 'member is' : 'members are'} needed for the busiest session. `
-                          : ''}
-                        {selectedDayUnfilled.length > 0
-                          ? `${selectedDayUnfilled.length} session ${selectedDayUnfilled.length === 1 ? 'group is' : 'groups are'} still not assigned.`
-                          : ''}
+                        {`${selectedDayCapacityShortfall} more staff ${selectedDayCapacityShortfall === 1 ? 'member is' : 'members are'} needed to cover the full day. ${selectedDayBusiest?.total ?? 0} required, ${availableTodayCount} available.`}
                       </p>
                     </div>
                   </section>
@@ -2849,6 +2983,7 @@ function ManagerApp({
               {holidayCalendarDays().map((date) => {
                 const key = dateKey(date)
                 const entries = holidays.filter((holiday) => holiday.start_date <= key && holiday.end_date >= key)
+                const sickMembers = staff.filter((member) => (sicknessByDay[key] ?? []).includes(member.id))
                 const today = key === dateKey(new Date())
                 return <article key={key} className={`holiday-day ${date.getMonth() !== holidayMonth.getMonth() ? 'outside' : ''} ${today ? 'today' : ''}`}>
                   <span className="holiday-date">{date.getDate()}</span>
@@ -2856,6 +2991,7 @@ function ManagerApp({
                     <span>{holiday.staff_name}</span>
                     {canManageHolidays && <button onClick={() => deleteHoliday(holiday.id)} aria-label={`Delete ${holiday.staff_name} holiday`}>×</button>}
                   </div>)}
+                  {sickMembers.map((member) => <div className="holiday-entry sick-entry readonly" key={`sick-${key}-${member.id}`} title="Sick"><span>{member.name} · Sick</span></div>)}
                 </article>
               })}
             </div>

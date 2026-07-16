@@ -192,3 +192,23 @@ drop policy if exists "Holiday managers delete" on public.staff_holidays;
 create policy "Holiday managers delete" on public.staff_holidays for delete to authenticated using (public.can_manage_holidays());
 grant select, insert, update, delete on public.staff_holidays to authenticated;
 do $$ begin alter publication supabase_realtime add table public.staff_holidays; exception when duplicate_object then null; end $$;
+
+
+-- v0.38 shared live application state
+create table if not exists public.app_live_state (
+  id text primary key,
+  state jsonb not null default '{}'::jsonb,
+  updated_by_name text not null default '',
+  updated_by_email text not null default '',
+  section text not null default 'dashboard',
+  updated_at timestamptz not null default now()
+);
+alter table public.app_live_state enable row level security;
+drop policy if exists "Operational users read live state" on public.app_live_state;
+create policy "Operational users read live state" on public.app_live_state for select to authenticated using (public.is_manager());
+drop policy if exists "Operational users insert live state" on public.app_live_state;
+create policy "Operational users insert live state" on public.app_live_state for insert to authenticated with check (public.is_manager());
+drop policy if exists "Operational users update live state" on public.app_live_state;
+create policy "Operational users update live state" on public.app_live_state for update to authenticated using (public.is_manager()) with check (public.is_manager());
+grant select, insert, update on public.app_live_state to authenticated;
+do $$ begin alter publication supabase_realtime add table public.app_live_state; exception when duplicate_object then null; end $$;

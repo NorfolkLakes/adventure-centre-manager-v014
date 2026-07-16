@@ -1364,3 +1364,9 @@ button { cursor: pointer; }
   .staff-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .staff-stat-grid article.wide { grid-column: span 2; }
 }
+
+
+/* v0.38 live operations */
+.holiday-entry.sick-entry { background:#fee2e2; color:#991b1b; border:1px solid #fecaca; }
+.last-updated-live { font-size:.78rem; color:#475569; max-width:220px; text-align:right; line-height:1.25; }
+@media (max-width: 900px) { .last-updated-live { display:none; } }
