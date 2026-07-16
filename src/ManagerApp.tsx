@@ -1019,13 +1019,10 @@ function ManagerApp({
     return `${row.day}::${row.id}`
   }
 
-  function arrivalDefaults(row: ProgrammeRow): ArrivalAssignment {
+  function arrivalDefaults(_row: ProgrammeRow): ArrivalAssignment {
     return {
       guideIds: [],
-      building: '',
-      arrivalTime: '14:00',
-      departureDay: programmeDays[programmeDays.indexOf(row.day) + 2] ?? row.day,
-      departureTime: '10:00',
+      flatIds: [],
     }
   }
 
@@ -1041,54 +1038,57 @@ function ManagerApp({
     localStorage.setItem(ARRIVAL_ASSIGNMENTS_KEY, JSON.stringify(next))
   }
 
-  function minutes(value?: string) {
-    const [hours, mins] = (value || '00:00').split(':').map(Number)
-    return (hours || 0) * 60 + (mins || 0)
+  function flatLabel(flatId: string) {
+    const [building, flat] = flatId.split('-')
+    return `Building ${building} · Flat ${flat}`
   }
 
-  function arrivalWindowsOverlap(a: ProgrammeRow, b: ProgrammeRow) {
-    if (a.day !== b.day) return false
-    const aStart = minutes(arrivalAssignment(a).arrivalTime)
-    const bStart = minutes(arrivalAssignment(b).arrivalTime)
-    const duration = 120
-    return aStart < bStart + duration && bStart < aStart + duration
+  function accommodationSummary(flatIds: string[] = []) {
+    if (!flatIds.length) return ''
+    const byBuilding = new Map<number, number[]>()
+    flatIds.forEach((flatId) => {
+      const [buildingValue, flatValue] = flatId.split('-').map(Number)
+      if (!buildingValue || !flatValue) return
+      const flats = byBuilding.get(buildingValue) ?? []
+      flats.push(flatValue)
+      byBuilding.set(buildingValue, flats)
+    })
+    return Array.from(byBuilding.entries())
+      .sort(([a], [b]) => a - b)
+      .map(([building, flats]) => `Building ${building} — Flats ${flats.sort((a, b) => a - b).join(', ')}`)
+      .join('; ')
   }
 
-  function occupancyPoint(day: string, time?: string) {
-    const dayIndex = Math.max(0, programmeDays.indexOf(day))
-    return dayIndex * 1440 + minutes(time)
+  function flatsUsedByOtherSchools(row: ProgrammeRow) {
+    const used = new Set<string>()
+    arrivalRows.forEach((otherRow) => {
+      if (otherRow.id === row.id || otherRow.day !== row.day) return
+      arrivalAssignment(otherRow).flatIds?.forEach((flatId) => used.add(flatId))
+    })
+    return used
   }
 
-  function buildingConflict(row: ProgrammeRow, building: string) {
-    if (!building) return null
+  function toggleArrivalFlat(row: ProgrammeRow, flatId: string) {
     const current = arrivalAssignment(row)
-    const start = occupancyPoint(row.day, current.arrivalTime)
-    const end = occupancyPoint(current.departureDay || row.day, current.departureTime)
-
-    for (const otherRow of arrivalRows) {
-      if (otherRow.id === row.id) continue
-      const other = arrivalAssignment(otherRow)
-      if (other.building !== building) continue
-      const otherStart = occupancyPoint(otherRow.day, other.arrivalTime)
-      const otherEnd = occupancyPoint(other.departureDay || otherRow.day, other.departureTime)
-      if (start < otherEnd && otherStart < end) return otherRow
+    const usedElsewhere = flatsUsedByOtherSchools(row)
+    if (!current.flatIds?.includes(flatId) && usedElsewhere.has(flatId)) {
+      setImportMessage(`${flatLabel(flatId)} is already allocated to another school arriving on ${row.day}.`)
+      return
     }
-    return null
+    const flatIds = current.flatIds?.includes(flatId)
+      ? current.flatIds.filter((item) => item !== flatId)
+      : [...(current.flatIds ?? []), flatId]
+    updateArrivalDetails(row, { flatIds })
   }
 
   function arrivalStaffUsedByOtherSchools(row: ProgrammeRow) {
     const used = new Set<string>()
-    const currentKey = arrivalKey(row)
-
-    for (const [otherKey, otherAssignment] of Object.entries(arrivalAssignments)) {
-      if (otherKey === currentKey) continue
-      const [, otherRowId] = otherKey.split('::')
-      const otherRow = programme?.rows.find((item) => item.id === otherRowId)
-      if (!otherRow || otherRow.session !== '3' || !arrivalWindowsOverlap(row, otherRow)) continue
+    arrivalRows.forEach((otherRow) => {
+      if (otherRow.id === row.id || otherRow.day !== row.day) return
+      const otherAssignment = arrivalAssignment(otherRow)
       if (otherAssignment.leaderId) used.add(otherAssignment.leaderId)
       otherAssignment.guideIds.filter(Boolean).forEach((id) => used.add(id))
-    }
-
+    })
     return used
   }
 
@@ -1154,6 +1154,50 @@ function ManagerApp({
     updateArrivalDetails(row, { guideIds })
     const unfilled = guideIds.filter((id) => !id).length
     setImportMessage(unfilled ? `${arrivalSchoolName(row)}: ${unfilled} group${unfilled === 1 ? '' : 's'} still need an instructor.` : `${arrivalSchoolName(row)}: accommodation staffing auto-filled.`)
+  }
+
+  function autoFillAllArrivalSchools(day: string) {
+    const rows = arrivalRows.filter((row) => row.day === day)
+    const missingLeader = rows.find((row) => !arrivalAssignment(row).leaderId)
+    if (missingLeader) {
+      setImportMessage(`Choose a Party Leader for ${arrivalSchoolName(missingLeader)} before using Auto-fill all schools.`)
+      return
+    }
+
+    const workingIds = new Set(workingByDay[day] ?? staff.map((member) => member.id))
+    const sickIds = new Set(sicknessByDay[day] ?? [])
+    const reserved = new Set<string>()
+    rows.forEach((row) => {
+      const leaderId = arrivalAssignment(row).leaderId
+      if (leaderId) reserved.add(leaderId)
+    })
+
+    const candidates = staff
+      .filter((member) => workingIds.has(member.id) && !sickIds.has(member.id) && !reserved.has(member.id) && (arrivalStaffGroup === 'all' || resolvedRole(member) === arrivalStaffGroup))
+      .sort((a, b) => rolePriority(resolvedRole(a)) - rolePriority(resolvedRole(b)) || a.name.localeCompare(b.name))
+
+    let candidateIndex = 0
+    const next = { ...arrivalAssignments }
+    let unfilled = 0
+
+    rows.forEach((row) => {
+      const current = arrivalAssignment(row)
+      const groupCount = row.cells.length
+      const staffRemaining = candidates.length - candidateIndex
+      const schoolsRemaining = rows.filter((item) => item.id === row.id || rows.indexOf(item) > rows.indexOf(row))
+      const groupsRemainingAfter = schoolsRemaining.slice(1).reduce((sum, item) => sum + Math.ceil(item.cells.length / 2), 0)
+      const canUseOnePerGroup = staffRemaining - groupsRemainingAfter >= groupCount
+      const required = canUseOnePerGroup ? groupCount : Math.ceil(groupCount / 2)
+      const selected = candidates.slice(candidateIndex, candidateIndex + required)
+      candidateIndex += selected.length
+      const guideIds = row.cells.map((_, index) => selected[canUseOnePerGroup ? index : Math.floor(index / 2)]?.id ?? '')
+      unfilled += guideIds.filter((id) => !id).length
+      next[arrivalKey(row)] = { ...current, guideIds }
+    })
+
+    setArrivalAssignments(next)
+    localStorage.setItem(ARRIVAL_ASSIGNMENTS_KEY, JSON.stringify(next))
+    setImportMessage(unfilled ? `Auto-fill completed. ${unfilled} group${unfilled === 1 ? '' : 's'} still need an instructor.` : `All ${day} school groups were auto-filled.`)
   }
 
   function assignStaff(staffId?: string) {
@@ -1253,13 +1297,11 @@ function ManagerApp({
       }
     }
 
-    for (const [key, arrival] of Object.entries(arrivalAssignments)) {
-      const [day, rowId] = key.split('::')
-      const row = programme.rows.find((item) => item.id === rowId)
-      if (!row) continue
-
-      const arrivalDetails = { ...arrivalDefaults(row), ...arrival }
+    for (const row of arrivalRows) {
+      const arrivalDetails = arrivalAssignment(row)
+      const day = row.day
       const partyLeader = staff.find((item) => item.id === arrivalDetails.leaderId)
+      const buildingName = accommodationSummary(arrivalDetails.flatIds)
 
       if (arrivalDetails.leaderId) {
         const leader = staff.find((item) => item.id === arrivalDetails.leaderId)
@@ -1276,22 +1318,20 @@ function ManagerApp({
             staff_email: email,
             staff_name: leader.name,
             school_name: arrivalSchoolName(row) || null,
-            building_name: arrivalDetails.building ? `Building ${arrivalDetails.building}` : null,
+            building_name: buildingName || null,
             party_leader_name: leader.name,
-            arrival_time: arrivalDetails.arrivalTime ?? null,
-            departure_day: arrivalDetails.departureDay ?? null,
-            departure_time: arrivalDetails.departureTime ?? null,
+            arrival_time: null,
+            departure_day: null,
+            departure_time: null,
           })
         }
       }
 
-      const arrivalGroups = row.cells
-
       const guideGroups = new Map<string, number[]>()
       arrivalDetails.guideIds.forEach((staffId, index) => {
-        if (!staffId || !arrivalGroups[index]) return
+        if (!staffId || !row.cells[index]) return
         const groups = guideGroups.get(staffId) ?? []
-        groups.push(arrivalGroups[index].group)
+        groups.push(row.cells[index].group)
         guideGroups.set(staffId, groups)
       })
 
@@ -1311,11 +1351,11 @@ function ManagerApp({
           staff_email: email,
           staff_name: guide.name,
           school_name: arrivalSchoolName(row) || null,
-          building_name: arrivalDetails.building ? `Building ${arrivalDetails.building}` : null,
+          building_name: buildingName || null,
           party_leader_name: partyLeader?.name ?? null,
-          arrival_time: arrivalDetails.arrivalTime ?? null,
-          departure_day: arrivalDetails.departureDay ?? null,
-          departure_time: arrivalDetails.departureTime ?? null,
+          arrival_time: null,
+          departure_day: null,
+          departure_time: null,
         })
       })
     }
@@ -1538,7 +1578,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.25</span></div>
+          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.26</span></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -1748,7 +1788,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to a building, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v0.25</span>
+                  <span className="release-pill">v0.26</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
@@ -1775,8 +1815,9 @@ function ManagerApp({
                       <div>
                         <p className="eyebrow">{activeStaffingDay} arrivals</p>
                         <h3>{arrivalRowsForDay.length} school{arrivalRowsForDay.length === 1 ? '' : 's'} detected from the programme</h3>
-                        <p>Choose the building and Party Leader, then allocate instructors manually or auto-fill each school.</p>
+                        <p>Choose accommodation and a Party Leader for every school, then fill each school separately or fill all schools at once.</p>
                       </div>
+                      <button className="primary" disabled={arrivalRowsForDay.some((row) => !arrivalAssignment(row).leaderId)} onClick={() => autoFillAllArrivalSchools(activeStaffingDay)}><WandSparkles size={18}/>Auto-fill all schools</button>
                     </section>
 
                     <div className="arrival-cards-grid">
@@ -1786,7 +1827,6 @@ function ManagerApp({
                         const availableToday = workingByDay[activeStaffingDay] ?? staff.map((member) => member.id)
                         const sickToday = sicknessByDay[activeStaffingDay] ?? []
                         const usedElsewhere = arrivalStaffUsedByOtherSchools(row)
-                        const conflict = buildingConflict(row, assignment.building || '')
 
                         const leaderOptions = staff.filter((member) => availableToday.includes(member.id) && !sickToday.includes(member.id) && ['staff', 'teamLeader'].includes(resolvedRole(member)) && !usedElsewhere.has(member.id) && !assignment.guideIds.includes(member.id))
                         const guideOptions = staff.filter((member) => availableToday.includes(member.id) && !sickToday.includes(member.id) && member.id !== assignment.leaderId && !usedElsewhere.has(member.id) && (arrivalStaffGroup === 'all' || resolvedRole(member) === arrivalStaffGroup))
@@ -1798,22 +1838,29 @@ function ManagerApp({
                               <Building2 size={30} />
                             </div>
 
-                            <div className="arrival-details-grid">
-                              <label>Building
-                                <select value={assignment.building ?? ''} onChange={(event) => updateArrivalDetails(row, { building: event.target.value })}>
-                                  <option value="">Select building</option>
-                                  {[1,2,3,4,5,6].map((building) => <option key={building} value={String(building)}>Building {building}</option>)}
-                                </select>
-                              </label>
-                              <label>Arrival time<input type="time" value={assignment.arrivalTime ?? '14:00'} onChange={(event) => updateArrivalDetails(row, { arrivalTime: event.target.value })} /></label>
-                              <label>Departure day
-                                <select value={assignment.departureDay ?? row.day} onChange={(event) => updateArrivalDetails(row, { departureDay: event.target.value })}>
-                                  {programmeDays.map((day) => <option key={day} value={day}>{day}</option>)}
-                                </select>
-                              </label>
-                              <label>Departure time<input type="time" value={assignment.departureTime ?? '10:00'} onChange={(event) => updateArrivalDetails(row, { departureTime: event.target.value })} /></label>
-                            </div>
-                            {conflict && <p className="building-conflict">Building conflict with {arrivalSchoolName(conflict)}. Change the building or timings.</p>}
+                            <section className="flat-allocation-section">
+                              <div className="flat-allocation-heading">
+                                <div><strong>Accommodation allocation</strong><span>Select any combination of flats across Buildings 1–6.</span></div>
+                                <span>{assignment.flatIds?.length ?? 0} flat{assignment.flatIds?.length === 1 ? '' : 's'} selected</span>
+                              </div>
+                              <div className="building-flat-grid">
+                                {[1,2,3,4,5,6].map((building) => (
+                                  <fieldset className="building-flat-picker" key={building}>
+                                    <legend>Building {building}</legend>
+                                    {[1,2,3,4,5].map((flat) => {
+                                      const flatId = `${building}-${flat}`
+                                      const usedByAnotherSchool = flatsUsedByOtherSchools(row).has(flatId)
+                                      const checked = assignment.flatIds?.includes(flatId) ?? false
+                                      return <label className={usedByAnotherSchool && !checked ? 'flat-unavailable' : ''} key={flatId}>
+                                        <input type="checkbox" checked={checked} disabled={usedByAnotherSchool && !checked} onChange={() => toggleArrivalFlat(row, flatId)} />
+                                        Flat {flat}
+                                      </label>
+                                    })}
+                                  </fieldset>
+                                ))}
+                              </div>
+                              {assignment.flatIds?.length ? <p className="accommodation-summary">{accommodationSummary(assignment.flatIds)}</p> : <p className="accommodation-summary empty">No flats allocated yet.</p>}
+                            </section>
 
                             <label className="party-leader-field">Party Leader
                               <select value={assignment.leaderId ?? ''} onChange={(event) => setArrivalLeader(row, event.target.value)}>
@@ -2133,18 +2180,25 @@ function ManagerApp({
             <button className="back" onClick={() => setPage('dashboard')}><ChevronLeft size={18} />Dashboard</button>
             <p className="eyebrow">Live operations</p>
             <h2>Accommodation Overview</h2>
-            <p className="page-intro">Buildings 1–6 show current allocations, timings, Party Leaders and group coverage.</p>
+            <p className="page-intro">Buildings 1–6 show flat-by-flat school allocations, Party Leaders and programme groups.</p>
             <div className="building-overview-grid">
               {[1,2,3,4,5,6].map((buildingNumber) => {
-                const allocations = arrivalRows.filter((row) => arrivalAssignment(row).building === String(buildingNumber))
-                return <article className={`building-card ${allocations.length ? 'occupied' : 'available'}`} key={buildingNumber}>
-                  <div className="building-card-top"><Building2 size={24}/><div><p className="eyebrow">Building</p><h3>{buildingNumber}</h3></div></div>
-                  {!allocations.length ? <div className="building-empty"><strong>Available</strong><span>No school allocated</span></div> : allocations.map((row) => {
-                    const allocation = arrivalAssignment(row)
-                    const leader = staff.find((member) => member.id === allocation.leaderId)
-                    const groups = row.cells.map((cell) => cell.group)
-                    return <div className="building-school" key={row.id}><strong>{arrivalSchoolName(row)}</strong><span>{row.day} {allocation.arrivalTime} → {allocation.departureDay} {allocation.departureTime}</span><span>Party Leader: {leader?.name ?? 'Unassigned'}</span><span>Groups: {groups.join(', ')}</span></div>
-                  })}
+                const flatAllocations = [1,2,3,4,5].map((flatNumber) => {
+                  const flatId = `${buildingNumber}-${flatNumber}`
+                  const row = arrivalRows.find((item) => arrivalAssignment(item).flatIds?.includes(flatId))
+                  return { flatNumber, row }
+                })
+                const occupiedCount = flatAllocations.filter((item) => item.row).length
+                return <article className={`building-card ${occupiedCount ? 'occupied' : 'available'}`} key={buildingNumber}>
+                  <div className="building-card-top"><Building2 size={24}/><div><p className="eyebrow">Building</p><h3>{buildingNumber}</h3><span>{occupiedCount}/5 flats allocated</span></div></div>
+                  <div className="flat-overview-list">
+                    {flatAllocations.map(({ flatNumber, row }) => {
+                      if (!row) return <div className="flat-overview-row available" key={flatNumber}><strong>Flat {flatNumber}</strong><span>Available</span></div>
+                      const allocation = arrivalAssignment(row)
+                      const leader = staff.find((member) => member.id === allocation.leaderId)
+                      return <div className="flat-overview-row occupied" key={flatNumber}><strong>Flat {flatNumber}</strong><span>{arrivalSchoolName(row)}</span><small>{row.day} · Party Leader: {leader?.name ?? 'Unassigned'} · Groups {row.cells.map((cell) => cell.group).join(', ')}</small></div>
+                    })}
+                  </div>
                 </article>
               })}
             </div>

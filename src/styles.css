@@ -1189,3 +1189,30 @@ button { cursor: pointer; }
 .empty-arrivals-state h3{margin:4px 0 0;color:#214b47}
 .empty-arrivals-state p{max-width:650px;margin:0}
 @media (max-width:700px){.arrivals-module-intro,.staffing-module-note{align-items:flex-start;flex-direction:column}.staffing-module-note button{width:100%;justify-content:center}}
+
+/* v0.26 accommodation flat allocation */
+.flat-allocation-section { margin: 16px 0; padding: 15px; border: 1px solid #dce7e3; border-radius: 16px; background: #f8fbfa; }
+.flat-allocation-heading { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:12px; }
+.flat-allocation-heading div { display:grid; gap:3px; }
+.flat-allocation-heading span { color:#657773; font-size:.8rem; }
+.flat-allocation-heading > span { padding:6px 9px; border-radius:999px; background:#e2f1eb; color:#17685a; font-weight:800; white-space:nowrap; }
+.building-flat-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; }
+.building-flat-picker { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:5px; min-width:0; margin:0; padding:10px; border:1px solid #d4e2dd; border-radius:12px; background:#fff; }
+.building-flat-picker legend { padding:0 5px; color:#1a5f55; font-size:.78rem; font-weight:900; }
+.building-flat-picker label { display:flex; flex-direction:column; align-items:center; gap:4px; padding:7px 3px; border:1px solid #dce7e3; border-radius:8px; color:#3f5a55; font-size:.68rem; font-weight:800; background:#f8faf9; }
+.building-flat-picker label:has(input:checked) { border-color:#1c7567; color:#fff; background:#1c7567; }
+.building-flat-picker label.flat-unavailable { opacity:.45; text-decoration:line-through; }
+.building-flat-picker input { margin:0; accent-color:#1c7567; }
+.accommodation-summary { margin:11px 0 0; color:#175f54; font-size:.82rem; font-weight:800; }
+.accommodation-summary.empty { color:#7a8986; font-weight:600; }
+.arrival-board-heading { display:flex; justify-content:space-between; align-items:center; gap:14px; }
+.flat-overview-list { display:grid; gap:7px; margin-top:12px; }
+.flat-overview-row { display:grid; gap:2px; padding:10px; border-radius:10px; }
+.flat-overview-row.available { background:#eef6f2; color:#55706a; }
+.flat-overview-row.occupied { background:#fff4e5; color:#6b451c; }
+.flat-overview-row small { color:inherit; opacity:.8; }
+@media (max-width:760px) {
+  .building-flat-grid { grid-template-columns:1fr; }
+  .arrival-board-heading, .flat-allocation-heading { align-items:stretch; flex-direction:column; }
+  .arrival-board-heading .primary { width:100%; justify-content:center; }
+}

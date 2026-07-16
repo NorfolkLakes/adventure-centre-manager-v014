@@ -354,10 +354,8 @@ function StaffRota({
                       )}
                       {duty.duty_type.startsWith('arrival_') && (
                         <div className="arrival-duty-details">
-                          {duty.building_name && <p><strong>Building:</strong> {duty.building_name}</p>}
+                          {duty.building_name && <p><strong>Accommodation:</strong> {duty.building_name}</p>}
                           {duty.party_leader_name && duty.duty_type !== 'arrival_leader' && <p><strong>Party Leader:</strong> {duty.party_leader_name}</p>}
-                          {duty.arrival_time && <p><strong>Arrival:</strong> {duty.day} {duty.arrival_time}</p>}
-                          {duty.departure_day && <p><strong>Departure:</strong> {duty.departure_day} {duty.departure_time || ''}</p>}
                         </div>
                       )}
                       <div className="group-pill">

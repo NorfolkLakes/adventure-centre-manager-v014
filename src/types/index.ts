@@ -50,8 +50,5 @@ export type StaffingAssignment = Record<string, string>
 export type ArrivalAssignment = {
   leaderId?: string
   guideIds: string[]
-  building?: string
-  arrivalTime?: string
-  departureDay?: string
-  departureTime?: string
+  flatIds?: string[]
 }

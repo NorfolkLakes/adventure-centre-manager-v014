@@ -1,4 +1,4 @@
-# Adventure Centre Manager v0.25
+# Adventure Centre Manager v0.26
 
 This version adds the first cloud login and staff rota system.
 
@@ -105,7 +105,7 @@ After deploying v0.20, run `supabase/setup.sql` once in the Supabase SQL Editor 
 - Staff accounts show school, group(s), and Party Leader or Accommodation / Fire Alarm Instructor role.
 
 
-## v0.25 Arrival & Accommodation
+## v0.26 Arrival & Accommodation
 - One card per arriving school.
 - Buildings 1–6, arrival time and departure day/time.
 - Party Leader and group assignment with school-specific auto-fill.
@@ -113,22 +113,32 @@ After deploying v0.20, run `supabase/setup.sql` once in the Supabase SQL Editor 
 - Building occupancy conflict warnings and Accommodation Overview page.
 - Staff duties show day, school, building, Party Leader, groups and role “Accommodation”.
 
-## v0.25 Arrivals module
+## v0.26 Arrivals module
 - Detects named schools only from Monday, Wednesday and Friday Session 3 programme rows.
 - Removes school-arrival rows from normal Daily Staffing and activity auto-fill.
 - Adds a dedicated Arrivals page for building, Party Leader and school-group staffing.
 - Keeps normal activity staffing independent after the arrival session.
 
 
-## v0.25 inline school-name detection
+## v0.26 inline school-name detection
 - Detects school names written directly inside Monday, Wednesday or Friday Session 3 group cells.
 - Removes those rows from Daily Staffing and sends them to Arrivals.
 - Keeps normal Session 3 activity rows in Daily Staffing.
 
 
-## v0.25 parser separation fix
+## v0.26 parser separation fix
 
 - Recognises abbreviated programme days (`MON`, `WED`, `FRI`) as well as full day names.
 - Classifies non-activity values in Session 3 on arrival days before Daily Staffing is generated.
 - School names such as GREAT BRADFORD and HENLOW are sent only to Arrivals.
 - Genuine Session 3 activities remain in Daily Staffing.
+
+
+## v0.26 school group and flat allocation
+- Counts each school's programme groups automatically.
+- Adds Auto-fill school and Auto-fill all schools after Party Leaders are selected.
+- Keeps one instructor with one school during Session 3; a maximum of two groups per instructor.
+- Replaces arrival/departure timing with flat allocation.
+- Supports Buildings 1–6 with Flats 1–5 in each building.
+- A school can use flats across more than one building.
+- Prevents the same flat being allocated twice on the same arrival day.
