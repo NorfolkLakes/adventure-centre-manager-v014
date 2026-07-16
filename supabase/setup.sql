@@ -217,3 +217,34 @@ drop policy if exists "Operational users update live state" on public.app_live_s
 create policy "Operational users update live state" on public.app_live_state for update to authenticated using (public.is_manager()) with check (public.is_manager());
 grant select, insert, update on public.app_live_state to authenticated;
 do $$ begin alter publication supabase_realtime add table public.app_live_state; exception when duplicate_object then null; end $$;
+
+-- v0.43 water-lead permission logs
+create table if not exists public.water_lead_logs (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz not null default now(),
+  programme_day text not null,
+  session text not null,
+  discipline text not null check (discipline in ('canoe','kayak')),
+  lead_staff_id text not null,
+  lead_staff_name text not null,
+  lead_group integer,
+  overseen_groups integer[] not null default '{}',
+  confirmed_by_name text not null,
+  confirmed_by_email text not null,
+  permission_from text not null check (permission_from in ('Head of Centre','Activities Manager'))
+);
+
+alter table public.water_lead_logs enable row level security;
+
+drop policy if exists "Managers read water lead logs" on public.water_lead_logs;
+create policy "Managers read water lead logs" on public.water_lead_logs
+for select to authenticated
+using (public.can_manage_holidays());
+
+drop policy if exists "Operational users create water lead logs" on public.water_lead_logs;
+create policy "Operational users create water lead logs" on public.water_lead_logs
+for insert to authenticated
+with check (public.is_manager());
+
+grant select, insert on public.water_lead_logs to authenticated;
+do $$ begin alter publication supabase_realtime add table public.water_lead_logs; exception when duplicate_object then null; end $$;

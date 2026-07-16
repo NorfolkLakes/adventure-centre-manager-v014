@@ -3,6 +3,7 @@ import {
   Building2,
   CalendarDays,
   CalendarRange,
+  ClipboardList,
   ChevronRight,
   CheckCircle2,
   ChevronLeft,
@@ -346,6 +347,7 @@ function ManagerApp({
   const canManageHolidays = accountRole === 'centreManager' || accountRole === 'activityManager'
   const canManageStaff = accountRole === 'centreManager' || accountRole === 'activityManager'
   const canRecordSickness = true
+  const canViewLogs = canManageStaff
   const [page, setPage] = useState<Page>('dashboard')
   const [programme, setProgramme] = useState<ProgrammeImport | null>(() =>
     readJson(PROGRAMME_KEY, null),
@@ -458,6 +460,10 @@ function ManagerApp({
   const [holidaySickDate, setHolidaySickDate] = useState('')
   const [publishedStaffDuties, setPublishedStaffDuties] = useState<{staff_email:string;staff_name:string;day:string;session:string;activity_name:string;duty_type:string}[]>([])
   const [lastSharedUpdate, setLastSharedUpdate] = useState<{updated_by_name:string;updated_by_email:string;updated_at:string;section:string} | null>(null)
+  const [waterLeadLogs, setWaterLeadLogs] = useState<{id:string;created_at:string;programme_day:string;session:string;discipline:string;lead_staff_name:string;lead_staff_id:string;lead_group:number|null;overseen_groups:number[];confirmed_by_name:string;confirmed_by_email:string;permission_from:string}[]>([])
+  const [logSearch, setLogSearch] = useState('')
+  const [logDiscipline, setLogDiscipline] = useState('all')
+  const [pendingWaterConfirmation, setPendingWaterConfirmation] = useState<null | {day:string;session:string;discipline:'canoe'|'kayak';staffId:string;leadGroup:number|null;overseenGroups:number[]}>(null)
   const sharedStateReadyRef = useRef(false)
   const applyingRemoteStateRef = useRef(false)
   const sharedSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -603,12 +609,24 @@ function ManagerApp({
     else setHolidays((data ?? []) as typeof holidays)
   }
 
+  async function loadWaterLeadLogs() {
+    if (!canViewLogs) return
+    const { data, error } = await supabase
+      .from('water_lead_logs')
+      .select('id,created_at,programme_day,session,discipline,lead_staff_name,lead_staff_id,lead_group,overseen_groups,confirmed_by_name,confirmed_by_email,permission_from')
+      .order('created_at', { ascending: false })
+    if (error) setImportMessage(error.message)
+    else setWaterLeadLogs((data ?? []) as typeof waterLeadLogs)
+  }
+
   useEffect(() => {
     loadHolidays()
     loadPublishedStaffDuties()
+    loadWaterLeadLogs()
     const channel = supabase.channel('holiday-calendar-updates')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'staff_holidays' }, loadHolidays)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'rota_assignments' }, loadPublishedStaffDuties)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'water_lead_logs' }, loadWaterLeadLogs)
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [])
@@ -849,7 +867,9 @@ function ManagerApp({
 
     for (const need of waterSupportNeedsForDay(day)) {
       const current = sessionMap.get(need.session) ?? { session: need.session, activityStaff: 0, arrivalStaff: 0, waterSupportStaff: 0 }
-      current.waterSupportStaff += 1
+      const supportId = waterSupportAssignments[waterSupportKey(day, need.session, need.discipline)]
+      const leadAlreadyRunsGroup = Boolean(supportId && disciplineAssignments(day, need.session, need.discipline).some((item) => item.staffId === supportId))
+      current.waterSupportStaff += leadAlreadyRunsGroup ? 0 : 1
       sessionMap.set(need.session, current)
     }
 
@@ -1291,6 +1311,28 @@ function ManagerApp({
     return `${day}::${session}::${discipline}`
   }
 
+  function leadQualificationCode(discipline: 'canoe' | 'kayak') {
+    return discipline === 'canoe' ? 'CANOE LEAD' : 'KAYAK LEAD'
+  }
+
+  function qualifiedWaterLeads(discipline: 'canoe' | 'kayak') {
+    const code = leadQualificationCode(discipline)
+    return staff.filter((member) => member.qualifications.includes(code))
+  }
+
+  function disciplineAssignments(day: string, session: string, discipline: 'canoe' | 'kayak', currentAssignments = assignments) {
+    if (!programme) return [] as {staffId:string;group:number}[]
+    const result: {staffId:string;group:number}[] = []
+    programme.rows.filter((row) => row.day === day && row.session === session).forEach((row) => {
+      activityCellsForRow(row).forEach((cell) => {
+        if (waterDiscipline(cell.activityCode) !== discipline) return
+        const staffId = currentAssignments[cellKey(row.id, cell.group)]
+        if (staffId) result.push({ staffId, group: cell.group })
+      })
+    })
+    return result
+  }
+
   function waterSupportNeedsForDay(day: string) {
     if (!programme) return []
     const counts = new Map<string, { session: string; discipline: 'canoe' | 'kayak'; groups: number }>()
@@ -1318,13 +1360,60 @@ function ManagerApp({
 
   function setWaterSupport(day: string, session: string, discipline: 'canoe' | 'kayak', staffId: string) {
     const key = waterSupportKey(day, session, discipline)
+    if (!staffId) {
+      setWaterSupportAssignments((current) => {
+        const next = { ...current }; delete next[key]
+        localStorage.setItem(WATER_SUPPORT_KEY, JSON.stringify(next)); return next
+      })
+      return
+    }
+    const member = staff.find((item) => item.id === staffId)
+    if (!member?.qualifications.includes(leadQualificationCode(discipline))) {
+      setImportMessage(`${member?.name ?? 'That staff member'} is not signed off as ${discipline === 'canoe' ? 'Canoe Lead' : 'Kayak Lead'}.`)
+      return
+    }
+    const assignedDisciplineGroups = disciplineAssignments(day, session, discipline)
+    const ownGroup = assignedDisciplineGroups.find((item) => item.staffId === staffId)
+    if (ownGroup) {
+      setPendingWaterConfirmation({
+        day, session, discipline, staffId,
+        leadGroup: ownGroup.group,
+        overseenGroups: assignedDisciplineGroups.filter((item) => item.group !== ownGroup.group).map((item) => item.group),
+      })
+      return
+    }
     setWaterSupportAssignments((current) => {
-      const next = { ...current }
-      if (staffId) next[key] = staffId
-      else delete next[key]
-      localStorage.setItem(WATER_SUPPORT_KEY, JSON.stringify(next))
-      return next
+      const next = { ...current, [key]: staffId }
+      localStorage.setItem(WATER_SUPPORT_KEY, JSON.stringify(next)); return next
     })
+  }
+
+  async function confirmWaterLeadException(permissionFrom: 'Head of Centre' | 'Activities Manager') {
+    const pending = pendingWaterConfirmation
+    if (!pending) return
+    const member = staff.find((item) => item.id === pending.staffId)
+    if (!member) return
+    const key = waterSupportKey(pending.day, pending.session, pending.discipline)
+    setWaterSupportAssignments((current) => {
+      const next = { ...current, [key]: pending.staffId }
+      localStorage.setItem(WATER_SUPPORT_KEY, JSON.stringify(next)); return next
+    })
+    const { error } = await supabase.from('water_lead_logs').insert({
+      programme_day: pending.day,
+      session: pending.session,
+      discipline: pending.discipline,
+      lead_staff_id: member.id,
+      lead_staff_name: member.name,
+      lead_group: pending.leadGroup,
+      overseen_groups: pending.overseenGroups,
+      confirmed_by_name: displayName?.trim() || accountEmail,
+      confirmed_by_email: accountEmail.trim().toLowerCase(),
+      permission_from: permissionFrom,
+    })
+    if (error) setImportMessage(`Lead permission could not be logged: ${error.message}`)
+    else setImportMessage(`${member.name} confirmed as ${pending.discipline === 'canoe' ? 'Canoe Lead' : 'Kayak Lead'} with ${permissionFrom} permission.`)
+    setPendingWaterConfirmation(null)
+    loadWaterLeadLogs()
   }
 
   function hadWaterInPreviousPairedSession(staffId: string, day: string, session: string, currentAssignments: StaffingAssignment) {
@@ -1417,16 +1506,35 @@ function ManagerApp({
     for (const need of waterSupportNeedsForDay(day)) {
       const supportKey = waterSupportKey(day, need.session, need.discipline)
       const currentId = nextWaterSupport[supportKey]
-      const currentStillValid = currentId && !sickIds.has(currentId) && workingIds.has(currentId) && !arrivalStaffForDaySession(day, need.session).has(currentId) && !dayRows.filter((row) => row.session === need.session).some((row) => activityCellsForRow(row).some((cell) => nextAssignments[cellKey(row.id, cell.group)] === currentId))
+      const currentStillValid = currentId && staff.find((member) => member.id === currentId)?.qualifications.includes(leadQualificationCode(need.discipline)) && !sickIds.has(currentId) && workingIds.has(currentId) && !arrivalStaffForDaySession(day, need.session).has(currentId) && (!staffBusyInSession(currentId, day, need.session, nextAssignments) || disciplineAssignments(day, need.session, need.discipline, nextAssignments).some((item) => item.staffId === currentId))
       if (currentStillValid) continue
       delete nextWaterSupport[supportKey]
-      const chosen = staff.filter((member) =>
+      const qualificationCode = leadQualificationCode(need.discipline)
+      const spareLead = staff.filter((member) =>
+        member.qualifications.includes(qualificationCode) &&
         workingIds.has(member.id) &&
         !sickIds.has(member.id) &&
         !staffBusyInSession(member.id, day, need.session, nextAssignments) &&
         !Object.entries(nextWaterSupport).some(([key, id]) => key.startsWith(`${day}::${need.session}::`) && id === member.id)
       ).sort((a,b) => rolePriority(resolvedRole(a))-rolePriority(resolvedRole(b)) || (workload.get(a.id)??0)-(workload.get(b.id)??0) || a.name.localeCompare(b.name))[0]
-      if (chosen) nextWaterSupport[supportKey] = chosen.id
+      if (spareLead) {
+        nextWaterSupport[supportKey] = spareLead.id
+        continue
+      }
+      const groupAssignments = disciplineAssignments(day, need.session, need.discipline, nextAssignments)
+      const workingLead = groupAssignments
+        .map((assignment) => ({ assignment, member: staff.find((item) => item.id === assignment.staffId) }))
+        .find(({ member }) => member?.qualifications.includes(qualificationCode))
+      if (workingLead?.member) {
+        setPendingWaterConfirmation({
+          day, session: need.session, discipline: need.discipline,
+          staffId: workingLead.member.id,
+          leadGroup: workingLead.assignment.group,
+          overseenGroups: groupAssignments.filter((item) => item.group !== workingLead.assignment.group).map((item) => item.group),
+        })
+      } else {
+        setImportMessage(`Water staffing warning: no qualified ${need.discipline === 'canoe' ? 'Canoe Lead' : 'Kayak Lead'} is available for ${day}, Session ${need.session}. Assign a qualified lead or remove one group.`)
+      }
     }
     setWaterSupportAssignments(nextWaterSupport)
     localStorage.setItem(WATER_SUPPORT_KEY, JSON.stringify(nextWaterSupport))
@@ -2787,7 +2895,7 @@ function ManagerApp({
                           <div><strong>Session {need.session} · {need.discipline === 'canoe' ? 'Canoe Lead' : 'Kayak Lead'}</strong><span>{need.groups} groups running</span></div>
                           <select value={assignedId} onChange={(event) => setWaterSupport(activeStaffingDay, need.session, need.discipline, event.target.value)}>
                             <option value="">Select lead</option>
-                            {staff.filter((member) => working.has(member.id) && !unavailable.has(member.id) && (!staffBusyInSession(member.id, activeStaffingDay, need.session) || member.id === assignedId)).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}
+                            {qualifiedWaterLeads(need.discipline).filter((member) => working.has(member.id) && !unavailable.has(member.id) && (!staffBusyInSession(member.id, activeStaffingDay, need.session) || member.id === assignedId || disciplineAssignments(activeStaffingDay, need.session, need.discipline).some((item) => item.staffId === member.id))).map((member) => <option key={member.id} value={member.id}>{member.name}{disciplineAssignments(activeStaffingDay, need.session, need.discipline).some((item) => item.staffId === member.id) ? ' · running a group' : ''}</option>)}
                           </select>
                         </article>
                       })}
@@ -2906,6 +3014,10 @@ function ManagerApp({
                 <ShieldCheck size={34} />
                 <div><h3>Sign-off</h3><p>Search staff and manage activity sign-offs.</p></div>
               </button>
+              {canViewLogs && <button className="admin-choice-card" onClick={() => setPage('logs')}>
+                <ClipboardList size={34} />
+                <div><h3>Logs</h3><p>Review water-lead permission confirmations.</p></div>
+              </button>}
             </section>
           </Panel>
         )}
@@ -3137,6 +3249,28 @@ function ManagerApp({
           </Panel>
         )}
 
+        {page === 'logs' && canViewLogs && (
+          <Panel title="Operational logs" onBack={() => setPage('admin')}>
+            <div className="logs-toolbar">
+              <div className="search-box"><Search size={18}/><input value={logSearch} onChange={(event) => setLogSearch(event.target.value)} placeholder="Search lead or confirmer" /></div>
+              <select value={logDiscipline} onChange={(event) => setLogDiscipline(event.target.value)}><option value="all">All water activities</option><option value="canoe">Canoe</option><option value="kayak">Kayak</option></select>
+            </div>
+            <div className="logs-list">
+              {waterLeadLogs.filter((log) => (logDiscipline === 'all' || log.discipline === logDiscipline) && `${log.lead_staff_name} ${log.confirmed_by_name} ${log.programme_day}`.toLowerCase().includes(logSearch.trim().toLowerCase())).map((log) => (
+                <article className="log-card" key={log.id}>
+                  <div className="log-card-top"><strong>{log.discipline === 'canoe' ? 'Canoe Lead' : 'Kayak Lead'} exception</strong><time>{new Date(log.created_at).toLocaleString('en-GB')}</time></div>
+                  <h3>{log.lead_staff_name}</h3>
+                  <p>{log.programme_day} · Session {log.session}</p>
+                  <p>Running G{log.lead_group ?? '—'} · overseeing {log.overseen_groups?.length ? log.overseen_groups.map((group) => `G${group}`).join(', ') : 'second group'}</p>
+                  <p>Permission from <strong>{log.permission_from}</strong></p>
+                  <small>Confirmed by {log.confirmed_by_name} ({log.confirmed_by_email})</small>
+                </article>
+              ))}
+              {!waterLeadLogs.length && <p className="empty-summary">No water-lead exception logs yet.</p>}
+            </div>
+          </Panel>
+        )}
+
         {page === 'signoffs' && (
           <Panel title="Staff sign-offs" onBack={() => setPage('admin')}>
             <div className="signoff-toolbar">
@@ -3285,6 +3419,26 @@ function ManagerApp({
           Last updated by {lastSharedUpdate.updated_by_name || lastSharedUpdate.updated_by_email} · {new Date(lastSharedUpdate.updated_at).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
         </footer>
       )}
+
+      {pendingWaterConfirmation && (() => {
+        const member = staff.find((item) => item.id === pendingWaterConfirmation.staffId)
+        return (
+          <div className="modal-backdrop">
+            <section className="water-confirmation-modal" role="dialog" aria-modal="true">
+              <CircleAlert size={38} />
+              <h2>Water staffing confirmation</h2>
+              <p>There is no spare qualified {pendingWaterConfirmation.discipline === 'canoe' ? 'Canoe Lead' : 'Kayak Lead'} for {pendingWaterConfirmation.day}, Session {pendingWaterConfirmation.session}.</p>
+              <p><strong>{member?.name}</strong> will run G{pendingWaterConfirmation.leadGroup} and oversee {pendingWaterConfirmation.overseenGroups.map((group) => `G${group}`).join(', ')}.</p>
+              <p>Have you spoken to the Head of Centre or Activities Manager and received permission?</p>
+              <div className="confirmation-actions">
+                <button onClick={() => setPendingWaterConfirmation(null)}>No, go back</button>
+                <button className="primary" onClick={() => confirmWaterLeadException('Activities Manager')}>Yes — Activities Manager</button>
+                <button className="primary" onClick={() => confirmWaterLeadException('Head of Centre')}>Yes — Head of Centre</button>
+              </div>
+            </section>
+          </div>
+        )
+      })()}
 
       {selectedCell && (
         <div className="modal-backdrop">

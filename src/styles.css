@@ -1401,3 +1401,6 @@ button { cursor: pointer; }
 .arrival-duty-details { display:grid; gap:7px; margin-top:10px; padding:11px 12px; border-radius:12px; background:#edf6fb; }
 .arrival-duty-details p { margin:0; line-height:1.35; }
 .arrival-duty-details .missing-duty-detail { color:#8a4b15; }
+
+/* v0.43 water-lead confirmations and logs */
+.logs-toolbar{display:flex;gap:12px;align-items:center;margin-bottom:18px}.logs-toolbar .search-box{flex:1}.logs-toolbar select{min-width:190px}.logs-list{display:grid;gap:12px}.log-card{border:1px solid #d8dee8;border-radius:14px;padding:16px;background:#fff}.log-card-top{display:flex;justify-content:space-between;gap:12px}.log-card-top time,.log-card small{color:#5d6778}.log-card h3{margin:10px 0 4px}.log-card p{margin:4px 0}.modal-backdrop{position:fixed;inset:0;background:rgba(14,22,35,.58);display:grid;place-items:center;padding:20px;z-index:1000}.water-confirmation-modal{width:min(620px,100%);background:#fff;border-radius:20px;padding:26px;box-shadow:0 24px 70px rgba(0,0,0,.3)}.water-confirmation-modal h2{margin:10px 0}.water-confirmation-modal p{line-height:1.5}.confirmation-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:20px}.confirmation-actions button{flex:1;min-width:150px}

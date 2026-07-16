@@ -1,4 +1,4 @@
-# Adventure Centre Manager v0.42
+# Adventure Centre Manager v0.43
 
 This version adds the first cloud login and staff rota system.
 
@@ -232,10 +232,18 @@ After deploying v0.20, run `supabase/setup.sql` once in the Supabase SQL Editor 
 - Added manual Water Support selectors on the Staffing page.
 
 
-## v0.42
+## v0.43
 - Removed the thicker Programme grid school borders and restored the original grid appearance.
 - Instructor Arrivals cards now clearly show role, school, G-number group(s), building and Party Leader.
 - Shows “No building assigned” instead of leaving the building blank.
 - Arrivals cards are visually distinct from activity cards without changing the main layout.
 - Instructor duties are sorted into session order.
 - The current weekday receives a compact Today marker.
+
+
+## v0.43
+- Canoe Lead and Kayak Lead assignments now require matching Sign-off tickets.
+- Auto-fill prefers a separate qualified Lead.
+- If a qualified Lead must also run a group, the app requires Head of Centre or Activities Manager permission confirmation.
+- Confirmed exceptions are permanently recorded in Admin → Logs.
+- Logs are visible only to Head of Centre and Activities Manager.
