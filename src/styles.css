@@ -1179,3 +1179,13 @@ button { cursor: pointer; }
 .arrival-duty-details p { margin:0; color:#355750; font-size:.85rem; }
 @media (min-width:900px) { .arrival-cards-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
 @media (max-width:700px) { .arrival-details-grid, .arrival-group-list, .building-overview-grid { grid-template-columns:1fr; } .top-nav { grid-template-columns:repeat(3,minmax(0,1fr)); } }
+
+
+/* v0.23 Arrivals module */
+.arrivals-module-intro,.staffing-module-note{display:flex;justify-content:space-between;align-items:center;gap:18px;margin:0 0 18px;padding:18px;border:1px solid #cfe1db;border-radius:18px;background:linear-gradient(135deg,#f3faf7,#e8f4ef)}
+.arrivals-module-intro h3,.staffing-module-note h3{margin:4px 0 6px;color:#173f42}
+.arrivals-module-intro p,.staffing-module-note p{margin:0;color:#5e716d;line-height:1.45}
+.empty-arrivals-state{display:grid;place-items:center;gap:8px;margin-top:18px;padding:42px 20px;border:1px dashed #bed5cc;border-radius:18px;text-align:center;background:#f8fbfa;color:#58706a}
+.empty-arrivals-state h3{margin:4px 0 0;color:#214b47}
+.empty-arrivals-state p{max-width:650px;margin:0}
+@media (max-width:700px){.arrivals-module-intro,.staffing-module-note{align-items:flex-start;flex-direction:column}.staffing-module-note button{width:100%;justify-content:center}}

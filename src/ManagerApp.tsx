@@ -183,6 +183,16 @@ function cellKey(rowId: string, group: number) {
   return `${rowId}::${group}`
 }
 
+const ARRIVAL_DAYS = new Set(['MONDAY', 'WEDNESDAY', 'FRIDAY'])
+
+function isArrivalProgrammeRow(row: ProgrammeRow) {
+  return (
+    row.session === '3' &&
+    Boolean(row.schoolLabel?.trim()) &&
+    ARRIVAL_DAYS.has(row.day.trim().toUpperCase())
+  )
+}
+
 function ManagerApp({
   accountEmail,
   onSignOut,
@@ -343,6 +353,9 @@ function ManagerApp({
     >()
 
     for (const row of programme.rows.filter((item) => item.day === day)) {
+      // Session 3 school rows belong to the Arrivals module, not activity staffing.
+      if (isArrivalProgrammeRow(row)) continue
+
       const activeCells = row.cells.filter(
         (cell) => cell.activityCode && cell.activityCode !== 'Z',
       )
@@ -354,13 +367,6 @@ function ManagerApp({
       }
 
       current.activityStaff += activeCells.length
-
-      if (row.session === '3' && row.schoolLabel) {
-        const groupCount = activeCells.length
-        // One team leader plus one instructor per group.
-        current.arrivalStaff += groupCount > 0 ? groupCount + 1 : 0
-      }
-
       sessionMap.set(row.session, current)
     }
 
@@ -401,9 +407,11 @@ function ManagerApp({
   const populatedCells = useMemo(
     () =>
       programme?.rows.flatMap((row) =>
-        row.cells
-          .filter((cell) => cell.activityCode && cell.activityCode !== 'Z')
-          .map((cell) => ({ row, cell })),
+        isArrivalProgrammeRow(row)
+          ? []
+          : row.cells
+              .filter((cell) => cell.activityCode && cell.activityCode !== 'Z')
+              .map((cell) => ({ row, cell })),
       ) ?? [],
     [programme],
   )
@@ -742,7 +750,7 @@ function ManagerApp({
     if (!programme) return
     let next: StaffingAssignment = { ...assignments }
     const workload = new Map<string, number>()
-    const sortedRows = [...programme.rows].sort((a,b) => a.day.localeCompare(b.day) || Number(a.session)-Number(b.session))
+    const sortedRows = programme.rows.filter((row) => !isArrivalProgrammeRow(row)).sort((a,b) => a.day.localeCompare(b.day) || Number(a.session)-Number(b.session))
     for (const row of sortedRows) {
       const workingIds = new Set(workingByDay[row.day] ?? staff.map((m) => m.id))
       const sickIds = new Set(sicknessByDay[row.day] ?? [])
@@ -786,7 +794,7 @@ function ManagerApp({
       workload.set(staffId, (workload.get(staffId) ?? 0) + 1)
     })
 
-    const dayRows = programme.rows.filter((row) => row.day === day)
+    const dayRows = programme.rows.filter((row) => row.day === day && !isArrivalProgrammeRow(row))
 
     for (const row of dayRows) {
       for (const cell of row.cells) {
@@ -1161,6 +1169,7 @@ function ManagerApp({
     }[] = []
 
     for (const row of programme.rows) {
+      if (isArrivalProgrammeRow(row)) continue
       for (const cell of row.cells) {
         const staffId = assignments[cellKey(row.id, cell.group)]
         if (!staffId || !cell.activityCode || cell.activityCode === 'Z') {
@@ -1435,10 +1444,7 @@ function ManagerApp({
       .includes(query.toLowerCase())
   })
 
-  const arrivalRows =
-    programme?.rows.filter(
-      (row) => row.schoolLabel && row.session === '3',
-    ) ?? []
+  const arrivalRows = programme?.rows.filter(isArrivalProgrammeRow) ?? []
 
   const arrivalRowsForDay = arrivalRows.filter(
     (row) => row.day === activeStaffingDay,
@@ -1481,7 +1487,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.22</span></div>
+          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.23</span></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -1679,6 +1685,118 @@ function ManagerApp({
           </Panel>
         )}
 
+        {page === 'arrivals' && (
+          <Panel title="Arrivals & accommodation" onBack={() => setPage('dashboard')}>
+            {!programme ? (
+              <EmptyProgramme onUpload={() => fileInputRef.current?.click()} />
+            ) : (
+              <>
+                <section className="arrivals-module-intro">
+                  <div>
+                    <p className="eyebrow">Programme-driven arrivals</p>
+                    <h3>Monday, Wednesday and Friday · Session 3</h3>
+                    <p>School names are taken directly from the uploaded programme. Allocate each school to a building, choose its Party Leader and staff the groups here.</p>
+                  </div>
+                  <span className="release-pill">v0.23</span>
+                </section>
+
+                <div className="day-tabs" role="tablist" aria-label="Arrival day">
+                  {programmeDays.filter((day) => ARRIVAL_DAYS.has(day.trim().toUpperCase())).map((day) => (
+                    <button
+                      key={day}
+                      className={activeStaffingDay === day ? 'active' : ''}
+                      onClick={() => setSelectedStaffingDay(day)}
+                    >
+                      {day}
+                    </button>
+                  ))}
+                </div>
+
+                {!arrivalRowsForDay.length ? (
+                  <section className="empty-arrivals-state">
+                    <Building2 size={34} />
+                    <h3>No Session 3 school arrivals on {activeStaffingDay}</h3>
+                    <p>The app creates cards only when the uploaded programme contains a named school in Session 3 on Monday, Wednesday or Friday.</p>
+                  </section>
+                ) : (
+                  <>
+                    <section className="arrival-board-heading">
+                      <div>
+                        <p className="eyebrow">{activeStaffingDay} arrivals</p>
+                        <h3>{arrivalRowsForDay.length} school{arrivalRowsForDay.length === 1 ? '' : 's'} detected from the programme</h3>
+                        <p>Choose the building and Party Leader, then allocate instructors manually or auto-fill each school.</p>
+                      </div>
+                    </section>
+
+                    <div className="arrival-cards-grid">
+                      {arrivalRowsForDay.map((row, schoolIndex) => {
+                        const populatedGroups = row.cells.filter((cell) => cell.activityCode && cell.activityCode !== 'Z')
+                        const assignment = arrivalAssignment(row)
+                        const availableToday = workingByDay[activeStaffingDay] ?? staff.map((member) => member.id)
+                        const sickToday = sicknessByDay[activeStaffingDay] ?? []
+                        const usedElsewhere = arrivalStaffUsedByOtherSchools(row)
+                        const conflict = buildingConflict(row, assignment.building || '')
+
+                        const leaderOptions = staff.filter((member) => availableToday.includes(member.id) && !sickToday.includes(member.id) && ['staff', 'teamLeader'].includes(resolvedRole(member)) && !usedElsewhere.has(member.id) && !assignment.guideIds.includes(member.id))
+                        const guideOptions = staff.filter((member) => availableToday.includes(member.id) && !sickToday.includes(member.id) && member.id !== assignment.leaderId && !usedElsewhere.has(member.id) && (arrivalStaffGroup === 'all' || resolvedRole(member) === arrivalStaffGroup))
+
+                        return (
+                          <section className={`arrival-card school-tone-${(schoolIndex % 6) + 1}`} key={row.id}>
+                            <div className="arrival-card-heading">
+                              <div><p className="eyebrow">Programme school · Session 3</p><h3>{row.schoolLabel}</h3><p>{populatedGroups.length} group{populatedGroups.length === 1 ? '' : 's'} detected</p></div>
+                              <Building2 size={30} />
+                            </div>
+
+                            <div className="arrival-details-grid">
+                              <label>Building
+                                <select value={assignment.building ?? ''} onChange={(event) => updateArrivalDetails(row, { building: event.target.value })}>
+                                  <option value="">Select building</option>
+                                  {[1,2,3,4,5,6].map((building) => <option key={building} value={String(building)}>Building {building}</option>)}
+                                </select>
+                              </label>
+                              <label>Arrival time<input type="time" value={assignment.arrivalTime ?? '14:00'} onChange={(event) => updateArrivalDetails(row, { arrivalTime: event.target.value })} /></label>
+                              <label>Departure day
+                                <select value={assignment.departureDay ?? row.day} onChange={(event) => updateArrivalDetails(row, { departureDay: event.target.value })}>
+                                  {programmeDays.map((day) => <option key={day} value={day}>{day}</option>)}
+                                </select>
+                              </label>
+                              <label>Departure time<input type="time" value={assignment.departureTime ?? '10:00'} onChange={(event) => updateArrivalDetails(row, { departureTime: event.target.value })} /></label>
+                            </div>
+                            {conflict && <p className="building-conflict">Building conflict with {conflict.schoolLabel}. Change the building or timings.</p>}
+
+                            <label className="party-leader-field">Party Leader
+                              <select value={assignment.leaderId ?? ''} onChange={(event) => setArrivalLeader(row, event.target.value)}>
+                                <option value="">Select Party Leader</option>
+                                {leaderOptions.map((member) => <option key={member.id} value={member.id}>{member.name} · {roleLabel(resolvedRole(member))}</option>)}
+                              </select>
+                            </label>
+
+                            <div className="arrival-group-list">
+                              {populatedGroups.map((group, index) => (
+                                <label key={group.group}>Group {group.group}
+                                  <select value={assignment.guideIds[index] ?? ''} onChange={(event) => setArrivalGuide(row, index, event.target.value)}>
+                                    <option value="">Select instructor</option>
+                                    {guideOptions.filter((member) => assignment.guideIds.filter((id, guideIndex) => guideIndex !== index && id === member.id).length < 2).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}
+                                  </select>
+                                </label>
+                              ))}
+                            </div>
+
+                            <div className="arrival-actions">
+                              <button className="primary" disabled={!assignment.leaderId} onClick={() => autoFillArrivalSchool(row)}><WandSparkles size={18} />Auto-fill school</button>
+                              <span>{assignment.leaderId ? 'One instructor per group where possible; maximum two groups from this school.' : 'Select the Party Leader first.'}</span>
+                            </div>
+                          </section>
+                        )
+                      })}
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+          </Panel>
+        )}
+
         {page === 'staffing' && (
           <Panel title="Daily staffing" onBack={() => setPage('dashboard')}>
             {!programme ? (
@@ -1861,78 +1979,16 @@ function ManagerApp({
                   </section>
                 )}
 
-                {arrivalRowsForDay.length > 0 && (
-                  <section className="arrival-board-heading">
-                    <div>
-                      <p className="eyebrow">Arrival & accommodation</p>
-                      <h3>{arrivalRowsForDay.length} school{arrivalRowsForDay.length === 1 ? '' : 's'} arriving</h3>
-                      <p>Set the building, timings and Party Leader, then assign groups manually or auto-fill each school.</p>
-                    </div>
-                  </section>
-                )}
-
-                <div className="arrival-cards-grid">
-                  {arrivalRowsForDay.map((row, schoolIndex) => {
-                    const populatedGroups = row.cells.filter((cell) => cell.activityCode && cell.activityCode !== 'Z')
-                    const assignment = arrivalAssignment(row)
-                    const availableToday = workingByDay[activeStaffingDay] ?? staff.map((member) => member.id)
-                    const sickToday = sicknessByDay[activeStaffingDay] ?? []
-                    const usedElsewhere = arrivalStaffUsedByOtherSchools(row)
-                    const conflict = buildingConflict(row, assignment.building || '')
-
-                    const leaderOptions = staff.filter((member) => availableToday.includes(member.id) && !sickToday.includes(member.id) && ['staff', 'teamLeader'].includes(resolvedRole(member)) && !usedElsewhere.has(member.id) && !assignment.guideIds.includes(member.id))
-                    const guideOptions = staff.filter((member) => availableToday.includes(member.id) && !sickToday.includes(member.id) && member.id !== assignment.leaderId && !usedElsewhere.has(member.id) && (arrivalStaffGroup === 'all' || resolvedRole(member) === arrivalStaffGroup))
-
-                    return (
-                      <section className={`arrival-card school-tone-${(schoolIndex % 6) + 1}`} key={row.id}>
-                        <div className="arrival-card-heading">
-                          <div><p className="eyebrow">School arrival · Session 3</p><h3>{row.schoolLabel}</h3><p>{populatedGroups.length} group{populatedGroups.length === 1 ? '' : 's'}</p></div>
-                          <Building2 size={30} />
-                        </div>
-
-                        <div className="arrival-details-grid">
-                          <label>Building
-                            <select value={assignment.building ?? ''} onChange={(event) => updateArrivalDetails(row, { building: event.target.value })}>
-                              <option value="">Select building</option>
-                              {[1,2,3,4,5,6].map((building) => <option key={building} value={String(building)}>Building {building}</option>)}
-                            </select>
-                          </label>
-                          <label>Arrival time<input type="time" value={assignment.arrivalTime ?? '14:00'} onChange={(event) => updateArrivalDetails(row, { arrivalTime: event.target.value })} /></label>
-                          <label>Departure day
-                            <select value={assignment.departureDay ?? row.day} onChange={(event) => updateArrivalDetails(row, { departureDay: event.target.value })}>
-                              {programmeDays.map((day) => <option key={day} value={day}>{day}</option>)}
-                            </select>
-                          </label>
-                          <label>Departure time<input type="time" value={assignment.departureTime ?? '10:00'} onChange={(event) => updateArrivalDetails(row, { departureTime: event.target.value })} /></label>
-                        </div>
-                        {conflict && <p className="building-conflict">Building conflict with {conflict.schoolLabel}. Change the building or timings.</p>}
-
-                        <label className="party-leader-field">Party Leader
-                          <select value={assignment.leaderId ?? ''} onChange={(event) => setArrivalLeader(row, event.target.value)}>
-                            <option value="">Select Party Leader</option>
-                            {leaderOptions.map((member) => <option key={member.id} value={member.id}>{member.name} · {roleLabel(resolvedRole(member))}</option>)}
-                          </select>
-                        </label>
-
-                        <div className="arrival-group-list">
-                          {populatedGroups.map((group, index) => (
-                            <label key={group.group}>Group {group.group}
-                              <select value={assignment.guideIds[index] ?? ''} onChange={(event) => setArrivalGuide(row, index, event.target.value)}>
-                                <option value="">Select instructor</option>
-                                {guideOptions.filter((member) => assignment.guideIds.filter((id, guideIndex) => guideIndex !== index && id === member.id).length < 2).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}
-                              </select>
-                            </label>
-                          ))}
-                        </div>
-
-                        <div className="arrival-actions">
-                          <button className="primary" disabled={!assignment.leaderId} onClick={() => autoFillArrivalSchool(row)}><WandSparkles size={18} />Auto-fill school</button>
-                          <span>{assignment.leaderId ? 'One instructor per group where possible; maximum two groups from this school.' : 'Select the Party Leader first.'}</span>
-                        </div>
-                      </section>
-                    )
-                  })}
-                </div>
+                <section className="staffing-module-note">
+                  <div>
+                    <p className="eyebrow">Activity staffing only</p>
+                    <h3>School arrivals are managed separately</h3>
+                    <p>Monday, Wednesday and Friday Session 3 school rows are automatically sent to the Arrivals page.</p>
+                  </div>
+                  <button className="secondary-action" onClick={() => setPage('arrivals')}>
+                    <Building2 size={18} /> Open arrivals
+                  </button>
+                </section>
 
                 <div className="search-box">
                   <Search size={18} />

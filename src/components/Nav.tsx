@@ -4,6 +4,7 @@ import type { Page } from '../types'
 const items = [
   { page: 'dashboard' as Page, label: 'Home', icon: Home },
   { page: 'programme' as Page, label: 'Programme', icon: CalendarDays },
+  { page: 'arrivals' as Page, label: 'Arrivals', icon: Building2 },
   { page: 'staffing' as Page, label: 'Staffing', icon: Users },
   { page: 'accommodation' as Page, label: 'Accommodation', icon: Building2 },
   { page: 'staff' as Page, label: 'Staff', icon: Users },

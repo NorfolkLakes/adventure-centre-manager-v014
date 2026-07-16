@@ -1,4 +1,4 @@
-# Adventure Centre Manager v0.22
+# Adventure Centre Manager v0.23
 
 This version adds the first cloud login and staff rota system.
 
@@ -105,10 +105,16 @@ After deploying v0.20, run `supabase/setup.sql` once in the Supabase SQL Editor 
 - Staff accounts show school, group(s), and Party Leader or Accommodation / Fire Alarm Instructor role.
 
 
-## v0.22 Arrival & Accommodation
+## v0.23 Arrival & Accommodation
 - One card per arriving school.
 - Buildings 1–6, arrival time and departure day/time.
 - Party Leader and group assignment with school-specific auto-fill.
 - Overlap-aware staff conflict prevention.
 - Building occupancy conflict warnings and Accommodation Overview page.
 - Staff duties show day, school, building, Party Leader, groups and role “Accommodation”.
+
+## v0.23 Arrivals module
+- Detects named schools only from Monday, Wednesday and Friday Session 3 programme rows.
+- Removes school-arrival rows from normal Daily Staffing and activity auto-fill.
+- Adds a dedicated Arrivals page for building, Party Leader and school-group staffing.
+- Keeps normal activity staffing independent after the arrival session.
