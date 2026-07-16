@@ -18,8 +18,7 @@ import {
   Trash2,
   LogOut,
   Bot,
-  ClipboardCheck,
-  Clock3,
+  CloudSun,
   X,
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
@@ -46,9 +45,6 @@ const SICKNESS_KEY = 'acm-sickness-by-day'
 const WORKING_KEY = 'acm-working-by-day'
 const ACTIVITIES_KEY = 'acm-activities'
 const ARRIVAL_ASSIGNMENTS_KEY = 'acm-arrival-assignments'
-const EQUIPMENT_CHECKS_KEY = 'acm-equipment-checks'
-
-type EquipmentCheck = { id: string; name: string; complete: boolean; updatedAt: string }
 
 function readJson<T>(key: string, fallback: T): T {
   try {
@@ -393,6 +389,7 @@ function ManagerApp({
       ? selectedStaffingDay
       : programmeDays[0] ?? ''
   const [importMessage, setImportMessage] = useState('')
+  const [weather, setWeather] = useState<{ temperature: number; wind: number; code: number } | null>(null)
   const [cloudSyncStatus, setCloudSyncStatus] = useState<
     'idle' | 'syncing' | 'synced' | 'error'
   >('idle')
@@ -405,14 +402,6 @@ function ManagerApp({
   const [arrivalStaffGroup, setArrivalStaffGroup] = useState<
     'all' | StaffRole
   >('all')
-  const [equipmentChecks, setEquipmentChecks] = useState<EquipmentCheck[]>(() =>
-    readJson(EQUIPMENT_CHECKS_KEY, [
-      { id: 'water', name: 'Watersports equipment checked', complete: false, updatedAt: '' },
-      { id: 'ppe', name: 'Climbing PPE checked', complete: false, updatedAt: '' },
-      { id: 'vehicles', name: 'Centre vehicles checked', complete: false, updatedAt: '' },
-      { id: 'first-aid', name: 'First-aid kits checked', complete: false, updatedAt: '' },
-    ]),
-  )
   const [showAddStaff, setShowAddStaff] = useState(false)
   const [newStaffName, setNewStaffName] = useState('')
   const [newStaffRole, setNewStaffRole] = useState<StaffRole>('staff')
@@ -426,6 +415,17 @@ function ManagerApp({
     )
   }, [programme, staff])
 
+
+  useEffect(() => {
+    fetch('https://api.open-meteo.com/v1/forecast?latitude=52.69&longitude=0.95&current=temperature_2m,weather_code,wind_speed_10m&timezone=Europe%2FLondon')
+      .then((response) => response.ok ? response.json() : Promise.reject())
+      .then((data) => setWeather({
+        temperature: Math.round(data.current.temperature_2m),
+        wind: Math.round(data.current.wind_speed_10m),
+        code: Number(data.current.weather_code),
+      }))
+      .catch(() => setWeather(null))
+  }, [])
 
   useEffect(() => {
     if (!accountEmail || !staff.length) return
@@ -826,27 +826,32 @@ function ManagerApp({
   }
 
   function qualificationIsValid(member: StaffMember, code: string) {
-    if (!member.qualifications.includes(code)) return false
-    const expiry = member.qualificationExpiries?.[code]
-    if (!expiry) return true
-    return new Date(`${expiry}T23:59:59`).getTime() >= Date.now()
+    return member.qualifications.includes(code)
   }
 
-  function updateQualificationExpiry(staffId: string, code: string, expiry: string) {
-    const next = staff.map((member) => member.id === staffId ? {
-      ...member,
-      qualificationExpiries: { ...(member.qualificationExpiries ?? {}), [code]: expiry },
-    } : member)
-    setStaff(next)
-    localStorage.setItem(STAFF_KEY, JSON.stringify(next))
+  function arrivalStaffForDaySession(day: string, session: string) {
+    const used = new Set<string>()
+    if (session !== '3') return used
+    arrivalRows
+      .filter((row) => row.day === day)
+      .forEach((row) => {
+        const current = arrivalAssignment(row)
+        if (current.leaderId) used.add(current.leaderId)
+        current.guideIds.filter(Boolean).forEach((id) => used.add(id))
+      })
+    return used
   }
 
-  function toggleEquipmentCheck(id: string) {
-    const next = equipmentChecks.map((item) => item.id === id ? {
-      ...item, complete: !item.complete, updatedAt: new Date().toISOString(),
-    } : item)
-    setEquipmentChecks(next)
-    localStorage.setItem(EQUIPMENT_CHECKS_KEY, JSON.stringify(next))
+  function activityStaffForDaySession(day: string, session: string) {
+    const used = new Set<string>()
+    if (!programme) return used
+    programme.rows
+      .filter((row) => row.day === day && row.session === session)
+      .forEach((row) => activityCellsForRow(row).forEach((cell) => {
+        const staffId = assignments[cellKey(row.id, cell.group)]
+        if (staffId) used.add(staffId)
+      }))
+    return used
   }
 
   function aiBuildEntireRota() {
@@ -860,7 +865,7 @@ function ManagerApp({
       for (const cell of activityCellsForRow(row)) {
         const key = cellKey(row.id, cell.group)
         if (next[key]) { workload.set(next[key], (workload.get(next[key]) ?? 0) + 1); continue }
-        const candidates = staff.filter((m) => workingIds.has(m.id) && !sickIds.has(m.id) && qualificationIsValid(m, cell.activityCode))
+        const candidates = staff.filter((m) => workingIds.has(m.id) && !sickIds.has(m.id) && qualificationIsValid(m, cell.activityCode) && !arrivalStaffForDaySession(row.day, row.session).has(m.id))
           .filter((m) => !sortedRows.some((other) => other.day === row.day && other.session === row.session && other.cells.some((c) => next[cellKey(other.id,c.group)] === m.id)))
           .sort((a,b) => (rolePriority(resolvedRole(a))-rolePriority(resolvedRole(b))) || ((workload.get(a.id)??0)-(workload.get(b.id)??0)) || a.name.localeCompare(b.name))
         if (candidates[0]) { next[key]=candidates[0].id; workload.set(candidates[0].id,(workload.get(candidates[0].id)??0)+1) }
@@ -909,7 +914,8 @@ function ManagerApp({
             (member) =>
               workingIds.has(member.id) &&
               !sickIds.has(member.id) &&
-              qualificationIsValid(member, cell.activityCode),
+              qualificationIsValid(member, cell.activityCode) &&
+              !arrivalStaffForDaySession(day, row.session).has(member.id),
           )
           .filter((member) => {
             return !dayRows.some(
@@ -956,6 +962,7 @@ function ManagerApp({
     targetGroup: number,
   ) {
     if (!programme) return false
+    if (targetRow.session === '3' && arrivalStaffForDaySession(targetRow.day, targetRow.session).has(staffId)) return true
     return programme.rows.some(
       (row) =>
         row.day === targetRow.day &&
@@ -1141,6 +1148,10 @@ function ManagerApp({
 
   function setArrivalLeader(row: ProgrammeRow, staffId: string) {
     const usedByOtherSchools = arrivalStaffUsedByOtherSchools(row)
+    if (staffId && activityStaffForDaySession(row.day, '3').has(staffId)) {
+      setImportMessage('That staff member is already assigned to a Session 3 activity.')
+      return
+    }
     if (staffId && usedByOtherSchools.has(staffId)) {
       setImportMessage('That staff member is already assigned to another school during an overlapping arrival window.')
       return
@@ -1156,6 +1167,10 @@ function ManagerApp({
     const current = arrivalAssignment(row)
     const usedByOtherSchools = arrivalStaffUsedByOtherSchools(row)
 
+    if (staffId && activityStaffForDaySession(row.day, '3').has(staffId)) {
+      setImportMessage('That staff member is already assigned to a Session 3 activity.')
+      return
+    }
     if (staffId && staffId === current.leaderId) {
       setImportMessage('The Party Leader cannot also be assigned an accommodation group.')
       return
@@ -1184,7 +1199,7 @@ function ManagerApp({
     const populatedGroups = row.cells
     const workingIds = new Set(workingByDay[row.day] ?? staff.map((member) => member.id))
     const sickIds = new Set(sicknessByDay[row.day] ?? [])
-    const unavailableIds = new Set<string>([current.leaderId, ...arrivalStaffUsedByOtherSchools(row)])
+    const unavailableIds = new Set<string>([current.leaderId, ...arrivalStaffUsedByOtherSchools(row), ...activityStaffForDaySession(row.day, '3')])
 
     const candidates = shuffled(
       staff.filter((member) =>
@@ -1218,7 +1233,7 @@ function ManagerApp({
 
     const workingIds = new Set(workingByDay[day] ?? staff.map((member) => member.id))
     const sickIds = new Set(sicknessByDay[day] ?? [])
-    const reserved = new Set<string>()
+    const reserved = activityStaffForDaySession(day, '3')
     rows.forEach((row) => {
       const leaderId = arrivalAssignment(row).leaderId
       if (leaderId) reserved.add(leaderId)
@@ -1619,12 +1634,6 @@ function ManagerApp({
     ({ row, cell }) => row.day === activeStaffingDay && !assignments[cellKey(row.id, cell.group)],
   )
   const selectedDayCapacityShortfall = Math.max(0, (selectedDayBusiest?.total ?? 0) - availableTodayCount)
-  const expiringQualifications = staff.flatMap((member) => Object.entries(member.qualificationExpiries ?? {}).map(([code,date]) => ({member,code,date}))).filter((item) => {
-    if (!item.date) return false
-    const days = (new Date(`${item.date}T23:59:59`).getTime()-Date.now())/86400000
-    return days >= 0 && days <= 60
-  })
-  const outstandingEquipmentChecks = equipmentChecks.filter((item) => !item.complete).length
 
   return (
     <div className="app-shell">
@@ -1639,7 +1648,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.28</span></div>
+          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.30</span></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -1720,8 +1729,6 @@ function ManagerApp({
               <Stat icon={<Users />} value={schoolsOnSite} label="Schools on site" />
               <Stat icon={<UserRoundCheck />} value={availableTodayCount} label="Staff available" />
               <Stat icon={<CircleAlert />} value={staffingShortages} label="Staffing shortages" />
-              <Stat icon={<Clock3 />} value={expiringQualifications.length} label="Qualifications expiring" />
-              <Stat icon={<ClipboardCheck />} value={outstandingEquipmentChecks} label="Equipment checks due" />
               <article className="stat-card busiest-card">
                 <span><CircleAlert /></span>
                 <strong>
@@ -1740,9 +1747,13 @@ function ManagerApp({
                 <div><p className="eyebrow">AI rota builder</p><h3>Build the complete rota</h3><p>Balances workload and respects availability, qualifications and session conflicts.</p></div>
                 <button className="primary" onClick={aiBuildEntireRota}><WandSparkles size={17}/> Build entire rota</button>
               </div>
-              <div className="equipment-check-card v019-equipment-card">
-                <div><p className="eyebrow">Daily operations</p><h3>Equipment checks</h3></div>
-                {equipmentChecks.map((item) => <button key={item.id} className={item.complete ? 'equipment-item complete' : 'equipment-item'} onClick={() => toggleEquipmentCheck(item.id)}><CheckCircle2 size={18}/><span>{item.name}</span><small>{item.complete ? 'Complete' : 'Outstanding'}</small></button>)}
+              <div className="weather-card compact-weather-card">
+                <CloudSun size={30} />
+                <div>
+                  <p className="eyebrow">Norfolk Lakes weather</p>
+                  <h3>{weather ? `${weather.temperature}°C` : 'Weather unavailable'}</h3>
+                  <p>{weather ? `Wind ${weather.wind} km/h · Current conditions` : 'Check again shortly.'}</p>
+                </div>
               </div>
             </section>
 
@@ -1838,7 +1849,7 @@ function ManagerApp({
         )}
 
         {page === 'arrivals' && (
-          <Panel title="Arrivals & accommodation" onBack={() => setPage('dashboard')}>
+          <Panel title="Arrivals" onBack={() => setPage('dashboard')}>
             {!programme ? (
               <EmptyProgramme onUpload={() => fileInputRef.current?.click()} />
             ) : (
@@ -1849,7 +1860,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to a building, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v0.28</span>
+                  <span className="release-pill">v0.30</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
@@ -2253,7 +2264,7 @@ function ManagerApp({
           </Panel>
         )}
 
-        {page === 'accommodation' && (
+        {page === 'schoolNotes' && (
           <section className="panel school-notes-page">
             <button className="back" onClick={() => setPage('dashboard')}><ChevronLeft size={18} />Dashboard</button>
             <p className="eyebrow">School information</p>
@@ -2596,14 +2607,6 @@ function ManagerApp({
                           <small>{member.signOffs[activity.code]}</small>
                         )}
                       </button>
-                    ))}
-                  </div>
-                  <div className="expiry-grid">
-                    {member.qualifications.map((code) => (
-                      <label key={`${member.id}-${code}-expiry`}>
-                        <span>{code} expiry</span>
-                        <input type="date" value={member.qualificationExpiries?.[code] ?? ''} onChange={(event) => updateQualificationExpiry(member.id, code, event.target.value)} />
-                      </label>
                     ))}
                   </div>
                 </article>

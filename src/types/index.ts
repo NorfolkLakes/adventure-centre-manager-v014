@@ -1,4 +1,4 @@
-export type Page = 'dashboard' | 'programme' | 'arrivals' | 'staffing' | 'accommodation' | 'staff' | 'signoffs'
+export type Page = 'dashboard' | 'programme' | 'arrivals' | 'staffing' | 'schoolNotes' | 'staff' | 'signoffs'
 
 export type Activity = {
   code: string
@@ -41,7 +41,6 @@ export type StaffMember = {
   signOffs?: Record<string, string>
   role?: StaffRole
   teamLeader?: boolean
-  qualificationExpiries?: Record<string, string>
 }
 
 export type StaffingAssignment = Record<string, string>
