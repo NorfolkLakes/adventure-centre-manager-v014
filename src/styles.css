@@ -1381,11 +1381,7 @@ button { cursor: pointer; }
   text-align: center;
 }
 
-/* v0.41 school boxes and water support */
-.programme-table .school-box-start { border-left:3px solid #174f4c !important; }
-.programme-table .school-box-end { border-right:3px solid #174f4c !important; }
-.programme-table thead .school-box-cell { border-top:3px solid #174f4c; }
-.programme-table tbody tr:last-child .school-box-cell { border-bottom:3px solid #174f4c; }
+/* v0.41 water support */
 .water-support-panel { margin:18px 0; padding:18px; border:1px solid #9dc9c1; border-radius:16px; background:#f3faf8; display:grid; gap:14px; }
 .water-support-panel h3 { margin:2px 0 4px; }
 .water-support-panel p { margin:0; }
@@ -1395,3 +1391,13 @@ button { cursor: pointer; }
 .water-support-list article span { color:#61736f; font-size:.82rem; }
 .water-support-list select { min-width:210px; }
 @media (max-width:700px) { .water-support-list article { align-items:stretch; flex-direction:column; } .water-support-list select { width:100%; min-width:0; } }
+
+
+/* v0.42 instructor duty clarity */
+.staff-day-tabs button { display:inline-flex; align-items:center; justify-content:center; gap:7px; }
+.today-day-badge { padding:2px 6px; border-radius:999px; background:#dff4ec; color:#155f51; font-size:.64rem; font-weight:900; }
+.staff-day-tabs button.active .today-day-badge { background:rgba(255,255,255,.2); color:inherit; }
+.duty-arrival_instructor, .duty-arrival_leader { border-left:5px solid #2878b5; background:linear-gradient(135deg,#f7fbff,#fff); }
+.arrival-duty-details { display:grid; gap:7px; margin-top:10px; padding:11px 12px; border-radius:12px; background:#edf6fb; }
+.arrival-duty-details p { margin:0; line-height:1.35; }
+.arrival-duty-details .missing-duty-detail { color:#8a4b15; }

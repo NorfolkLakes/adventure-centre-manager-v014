@@ -3401,19 +3401,6 @@ function ProgrammeGrid({
   activities: Activity[]
   onSelect: (row: ProgrammeRow, group: number) => void
 }) {
-  const schoolRanges = programme.rows.flatMap(arrivalRowsFromProgrammeRow).reduce<{name:string;first:number;last:number}[]>((ranges, row) => {
-    const groups = row.cells.map((cell) => cell.group).sort((a,b) => a-b)
-    const name = arrivalSchoolName(row)
-    if (!name || !groups.length || ranges.some((item) => item.name === name)) return ranges
-    ranges.push({ name, first: groups[0], last: groups[groups.length - 1] })
-    return ranges
-  }, [])
-  const schoolClass = (group: number) => {
-    const range = schoolRanges.find((item) => group >= item.first && group <= item.last)
-    if (!range) return ''
-    return `${group === range.first ? ' school-box-start' : ''}${group === range.last ? ' school-box-end' : ''} school-box-cell`
-  }
-
   return (
     <div className="programme-scroll">
       <table className="programme-table">
@@ -3422,7 +3409,7 @@ function ProgrammeGrid({
             <th className="sticky-day">Day</th>
             <th className="sticky-session">Ses</th>
             {programme.groupNumbers.map((group) => (
-              <th key={group} className={schoolClass(group)} title={schoolRanges.find((item) => group >= item.first && group <= item.last)?.name}>G{group}</th>
+              <th key={group} >G{group}</th>
             ))}
           </tr>
         </thead>
@@ -3445,7 +3432,7 @@ function ProgrammeGrid({
                   )
                   const code = cell?.activityCode ?? ''
                   return (
-                    <td key={group} className={schoolClass(group)}>
+                    <td key={group} >
                       <button
                         className={`programme-cell code-${code.toLowerCase()}`}
                         onClick={() => onSelect(row, group)}

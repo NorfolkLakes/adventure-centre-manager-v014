@@ -41,6 +41,16 @@ function displayProgrammeDay(value: string) {
   return names[key] ?? value
 }
 
+function isTodayProgrammeDay(value: string) {
+  const today = new Date().toLocaleDateString('en-GB', { weekday: 'long' })
+  return displayProgrammeDay(value) === today
+}
+
+function sessionRank(value: string) {
+  const numeric = Number.parseFloat(value)
+  return Number.isFinite(numeric) ? numeric : 999
+}
+
 type RotaDuty = {
   id: string
   programme_name: string
@@ -391,7 +401,8 @@ function StaffRota({
                   className={selectedDay === day ? 'active' : ''}
                   onClick={() => setSelectedDay(day)}
                 >
-                  {displayProgrammeDay(day)}
+                  <span>{displayProgrammeDay(day)}</span>
+                  {isTodayProgrammeDay(day) && <small className="today-day-badge">Today</small>}
                 </button>
               ))}
             </div>
@@ -409,6 +420,7 @@ function StaffRota({
               <div className="my-rota-list">
                 {duties
                   .filter((duty) => duty.day === selectedDay)
+                  .sort((a, b) => sessionRank(a.session) - sessionRank(b.session))
                   .map((duty) => (
                     <article
                       className={`my-rota-card duty-${duty.duty_type}`}
@@ -421,24 +433,24 @@ function StaffRota({
                         <span className="live-badge">Live</span>
                       </div>
                       <h3>{duty.duty_type.startsWith('arrival_') ? 'Arrivals' : duty.activity_name}</h3>
-                      {duty.school_name && (
-                        <p className="school-name">{duty.school_name}</p>
-                      )}
-                      {duty.duty_type.startsWith('arrival_') && (
+                      {duty.duty_type.startsWith('arrival_') ? (
                         <div className="arrival-duty-details">
-                          {duty.school_name && <p><strong>School:</strong> {duty.school_name}</p>}
-                          {duty.group_numbers.length > 0 && <p><strong>Group{duty.group_numbers.length > 1 ? 's' : ''}:</strong> {duty.group_numbers.map((group) => `G${group}`).join(', ')}</p>}
-                          {duty.building_name && <p><strong>Building:</strong> {duty.building_name}</p>}
+                          <p><strong>Role:</strong> {duty.duty_type === 'arrival_leader' ? 'Party Leader' : 'Arrival Instructor'}</p>
+                          <p><strong>School:</strong> {duty.school_name || 'No school assigned'}</p>
+                          <p><strong>Group{duty.group_numbers.length !== 1 ? 's' : ''}:</strong> {duty.group_numbers.length ? duty.group_numbers.map((group) => `G${group}`).join(', ') : duty.duty_type === 'arrival_leader' ? 'Party Leader — no group' : 'No group assigned'}</p>
+                          <p className={duty.building_name ? '' : 'missing-duty-detail'}><strong>Building:</strong> {duty.building_name || 'No building assigned'}</p>
                           {duty.party_leader_name && duty.duty_type !== 'arrival_leader' && <p><strong>Party Leader:</strong> {duty.party_leader_name}</p>}
                         </div>
+                      ) : (
+                        <>
+                          {duty.school_name && <p className="school-name">{duty.school_name}</p>}
+                          <div className="group-pill">
+                            {duty.group_numbers.length
+                              ? `Group${duty.group_numbers.length > 1 ? 's' : ''} ${duty.group_numbers.map((group) => `G${group}`).join(', ')}`
+                              : 'No group'}
+                          </div>
+                        </>
                       )}
-                      <div className="group-pill">
-                        {duty.group_numbers.length
-                          ? `Group${
-                              duty.group_numbers.length > 1 ? 's' : ''
-                            } ${duty.group_numbers.map((group) => `G${group}`).join(', ')}`
-                          : 'No group'}
-                      </div>
                     </article>
                   ))}
               </div>
