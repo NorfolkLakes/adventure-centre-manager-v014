@@ -1292,3 +1292,27 @@ button { cursor: pointer; }
 .manager-my-session-main p { margin:0; color:#64748b; }
 .manager-my-session-role { background:#eef5f2; color:#245b4f; padding:6px 10px; border-radius:999px; font-size:.78rem; font-weight:800; white-space:nowrap; }
 @media (max-width:700px) { .manager-my-session-card { grid-template-columns:1fr; gap:7px; } .manager-my-session-role { justify-self:start; } }
+
+
+/* v0.35 compact My Sessions */
+.compact-my-sessions { padding:16px 18px; }
+.compact-my-sessions-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; }
+.compact-my-sessions-head h2 { margin:0; font-size:1.15rem; }
+.compact-my-sessions-head .eyebrow { margin:0 0 2px; }
+.compact-my-sessions-head select { width:auto; min-width:120px; padding:7px 30px 7px 10px; border:1px solid #d7dee8; border-radius:10px; background:#fff; font:inherit; font-weight:700; color:#173f35; }
+.compact-my-session-list { display:grid; gap:6px; }
+.compact-my-session-row { display:grid; grid-template-columns:36px minmax(0,1fr) auto; align-items:center; gap:10px; padding:8px 10px; border:1px solid #e4e9ef; border-left:4px solid #2f7667; border-radius:10px; background:#fff; }
+.compact-my-session-row > strong { color:#173f35; font-size:.82rem; }
+.compact-my-session-row div { min-width:0; display:flex; align-items:baseline; gap:8px; }
+.compact-my-session-row b { font-size:.88rem; white-space:nowrap; }
+.compact-my-session-row span { min-width:0; color:#64748b; font-size:.78rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.compact-my-session-row em { font-style:normal; color:#245b4f; background:#eef5f2; border-radius:999px; padding:4px 7px; font-size:.68rem; font-weight:800; white-space:nowrap; }
+.compact-my-sessions-empty { min-height:54px; display:flex; align-items:center; justify-content:center; gap:8px; color:#64748b; font-size:.84rem; }
+@media(max-width:620px){ .compact-my-session-row{grid-template-columns:32px minmax(0,1fr)} .compact-my-session-row em{display:none} .compact-my-session-row div{display:grid;gap:1px} }
+
+.my-staff-link-select {
+  max-width: 190px;
+  min-width: 150px;
+  font-size: 0.78rem;
+  padding: 0.45rem 0.6rem;
+}

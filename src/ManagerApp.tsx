@@ -94,6 +94,10 @@ function normaliseText(value: unknown) {
   return String(value ?? '').trim()
 }
 
+function normaliseIdentity(value: unknown) {
+  return normaliseText(value).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+}
+
 function isSessionValue(value: unknown) {
   const text = normaliseText(value)
   return /^[1-9]\d*$/.test(text)
@@ -329,10 +333,12 @@ function arrivalSchoolName(row: ProgrammeRow) {
 
 function ManagerApp({
   accountEmail,
+  displayName,
   onSignOut,
   accountRole = 'centreManager',
 }: {
   accountEmail: string
+  displayName?: string | null
   onSignOut: () => void
   accountRole?: 'centreManager' | 'activityManager' | 'teamLeader'
 }) {
@@ -445,6 +451,8 @@ function ManagerApp({
   const [mySessions, setMySessions] = useState<MySessionDuty[]>([])
   const [mySessionsLoading, setMySessionsLoading] = useState(true)
   const [selectedMySessionsDay, setSelectedMySessionsDay] = useState('')
+  const myStaffLinkKey = `acm-my-staff-link-${accountEmail.trim().toLowerCase()}`
+  const [myStaffId, setMyStaffId] = useState(() => localStorage.getItem(myStaffLinkKey) ?? '')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -495,20 +503,47 @@ function ManagerApp({
     return () => { supabase.removeChannel(channel) }
   }, [accountEmail, staff])
 
+  const myStaffMember = useMemo(() => {
+    const email = accountEmail.trim().toLowerCase()
+    const linked = staff.find((member) => member.id === myStaffId)
+    if (linked) return linked
+    const byEmail = staff.find((member) => member.email?.trim().toLowerCase() === email)
+    if (byEmail) return byEmail
+    const wantedName = normaliseIdentity(displayName)
+    return wantedName
+      ? staff.find((member) => normaliseIdentity(member.name) === wantedName)
+      : undefined
+  }, [staff, myStaffId, accountEmail, displayName])
+
+  function linkMyStaffProfile(staffId: string) {
+    setMyStaffId(staffId)
+    if (staffId) localStorage.setItem(myStaffLinkKey, staffId)
+    else localStorage.removeItem(myStaffLinkKey)
+  }
+
   async function loadMySessions() {
     if (!accountEmail) return
     setMySessionsLoading(true)
     const { data, error } = await supabase
       .from('rota_assignments')
-      .select('id,programme_name,day,session,activity_name,group_numbers,duty_type,school_name,building_name,party_leader_name')
-      .eq('staff_email', accountEmail.trim().toLowerCase())
+      .select('id,programme_name,day,session,activity_name,group_numbers,duty_type,school_name,building_name,party_leader_name,staff_email,staff_name')
       .order('day')
       .order('session')
 
     if (error) {
       setImportMessage(`Could not load your sessions: ${error.message}`)
     } else {
-      const duties = (data ?? []) as MySessionDuty[]
+      const loginEmail = accountEmail.trim().toLowerCase()
+      const identityNames = new Set(
+        [myStaffMember?.name, displayName]
+          .map(normaliseIdentity)
+          .filter(Boolean),
+      )
+      const duties = ((data ?? []) as (MySessionDuty & { staff_email: string; staff_name: string })[])
+        .filter((duty) =>
+          duty.staff_email?.trim().toLowerCase() === loginEmail ||
+          identityNames.has(normaliseIdentity(duty.staff_name)),
+        )
       setMySessions(duties)
       setSelectedMySessionsDay((current) =>
         current && duties.some((duty) => duty.day === current)
@@ -530,7 +565,7 @@ function ManagerApp({
       )
       .subscribe()
     return () => { supabase.removeChannel(channel) }
-  }, [accountEmail])
+  }, [accountEmail, myStaffMember?.id, displayName])
 
   async function loadHolidays() {
     const { data, error } = await supabase
@@ -1502,6 +1537,9 @@ function ManagerApp({
         (member.email ?? '').trim().toLowerCase(),
       ]),
     )
+    if (myStaffMember && !emailByStaffId.get(myStaffMember.id)) {
+      emailByStaffId.set(myStaffMember.id, accountEmail.trim().toLowerCase())
+    }
 
     const publishedRows: {
       programme_name: string
@@ -1923,39 +1961,37 @@ function ManagerApp({
               </article>
             </section>
 
-            <div className="section-heading"><div><p className="eyebrow">My rota</p><h2>My sessions</h2></div><span>Published duties for your login</span></div>
-            <section className="manager-my-sessions panel">
+            <section className="manager-my-sessions compact-my-sessions panel">
+              <div className="compact-my-sessions-head">
+                <div><p className="eyebrow">My rota</p><h2>My Sessions</h2></div>
+                {mySessions.length > 0 && (
+                  <select value={selectedMySessionsDay} onChange={(event) => setSelectedMySessionsDay(event.target.value)} aria-label="Choose My Sessions day">
+                    {Array.from(new Set(mySessions.map((duty) => duty.day))).map((day) => <option key={day} value={day}>{day}</option>)}
+                  </select>
+                )}
+                <select className="my-staff-link-select" value={myStaffMember?.id ?? ''} onChange={(event) => linkMyStaffProfile(event.target.value)} aria-label="Link My Sessions to staff profile">
+                  <option value="">Link my staff profile</option>
+                  {staff.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}
+                </select>
+              </div>
               {mySessionsLoading ? (
-                <div className="manager-my-sessions-empty">Loading your sessions…</div>
+                <div className="compact-my-sessions-empty">Loading sessions…</div>
               ) : mySessions.length === 0 ? (
-                <div className="manager-my-sessions-empty">
-                  <CalendarDays size={34} />
-                  <div><h3>No sessions published for you</h3><p>Make sure your staff record uses {accountEmail} and publish the rota.</p></div>
-                </div>
+                <div className="compact-my-sessions-empty"><CalendarDays size={20} /><span>No sessions found. Check the linked staff profile above.</span></div>
               ) : (
-                <>
-                  <div className="manager-my-session-days">
-                    {Array.from(new Set(mySessions.map((duty) => duty.day))).map((day) => (
-                      <button key={day} className={selectedMySessionsDay === day ? 'active' : ''} onClick={() => setSelectedMySessionsDay(day)}>{day}</button>
-                    ))}
-                  </div>
-                  <div className="manager-my-session-list">
-                    {mySessions.filter((duty) => duty.day === selectedMySessionsDay).map((duty) => (
-                      <article className={`manager-my-session-card duty-${duty.duty_type}`} key={duty.id}>
-                        <div className="manager-my-session-number">Session {duty.session}</div>
-                        <div className="manager-my-session-main">
-                          <h3>{duty.activity_name}</h3>
-                          <p>{[
-                            duty.school_name,
-                            duty.group_numbers?.length ? `G${duty.group_numbers.join(' & G')}` : null,
-                            duty.building_name,
-                          ].filter(Boolean).join(' · ') || 'Published duty'}</p>
-                        </div>
-                        <span className="manager-my-session-role">{duty.duty_type === 'activity' ? 'Instructor' : duty.duty_type === 'arrival_leader' ? 'Party Leader' : 'Arrival'}</span>
-                      </article>
-                    ))}
-                  </div>
-                </>
+                <div className="compact-my-session-list">
+                  {mySessions.filter((duty) => duty.day === selectedMySessionsDay).map((duty) => (
+                    <article className={`compact-my-session-row duty-${duty.duty_type}`} key={duty.id}>
+                      <strong>S{duty.session}</strong>
+                      <div><b>{duty.activity_name}</b><span>{[
+                        duty.school_name,
+                        duty.group_numbers?.length ? `G${duty.group_numbers.join(' & G')}` : null,
+                        duty.building_name,
+                      ].filter(Boolean).join(' · ') || 'Published duty'}</span></div>
+                      <em>{duty.duty_type === 'activity' ? 'Instructor' : duty.duty_type === 'arrival_leader' ? 'Party Leader' : 'Arrival'}</em>
+                    </article>
+                  ))}
+                </div>
               )}
             </section>
 

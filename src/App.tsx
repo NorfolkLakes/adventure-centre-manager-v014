@@ -95,6 +95,7 @@ function App() {
     return (
       <ManagerApp
         accountEmail={profile.email || session.user.email || ''}
+        displayName={profile.display_name ?? null}
         onSignOut={signOut}
         accountRole={profile.role === 'activityManager' ? 'activityManager' : profile.role === 'teamLeader' ? 'teamLeader' : 'centreManager'}
       />

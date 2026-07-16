@@ -179,3 +179,17 @@ After deploying v0.20, run `supabase/setup.sql` once in the Supabase SQL Editor 
 - Head of Centre, Activities Manager and Team Leader accounts now see a My Sessions panel on Home.
 - The panel shows their own published activity and arrival duties while they remain inside the main management app.
 - Duties are matched using the logged-in email address and refresh when the published rota changes.
+
+
+## v0.36 — Compact My Sessions
+
+- Replaces the larger Home rota block with a compact dashboard panel.
+- Uses a day dropdown and concise session rows.
+- Shows session, activity, school/group/building and role without taking over the Home page.
+
+
+## v0.36
+- Fixed My Sessions matching for manager-role accounts.
+- Matches duties by login email or linked staff name.
+- Added a compact staff-profile link selector as a reliable fallback.
+- Ensures linked managers without a staff email are included when the rota syncs.
