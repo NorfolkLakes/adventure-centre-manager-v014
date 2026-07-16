@@ -1,4 +1,4 @@
-# Adventure Centre Manager v0.20
+# Adventure Centre Manager v0.20.1
 
 This version adds the first cloud login and staff rota system.
 
@@ -84,3 +84,11 @@ The browser uses only the Supabase publishable key. Row Level Security policies 
 - Outstanding equipment-check dashboard
 
 After deploying v0.20, run `supabase/setup.sql` once in the Supabase SQL Editor to add the availability table and policies.
+
+
+## v0.20.1 Arrival staffing correction
+- Party Leader can be a Staff member or Team Leader.
+- Manual group assignment prevents cross-school double-booking.
+- One instructor can cover at most two groups, both from the same school.
+- Later sessions are unrestricted by school arrival assignments.
+- Staff login combines two arrival groups into one duty card.

@@ -957,20 +957,41 @@ function ManagerApp({
     return `${row.day}::${row.id}`
   }
 
+  function arrivalStaffUsedByOtherSchools(row: ProgrammeRow) {
+    const used = new Set<string>()
+    const currentKey = arrivalKey(row)
+
+    for (const [otherKey, otherAssignment] of Object.entries(arrivalAssignments)) {
+      if (otherKey === currentKey) continue
+      const [otherDay, otherRowId] = otherKey.split('::')
+      const otherRow = programme?.rows.find((item) => item.id === otherRowId)
+      if (otherDay !== row.day || otherRow?.session !== row.session) continue
+      if (otherAssignment.leaderId) used.add(otherAssignment.leaderId)
+      otherAssignment.guideIds.filter(Boolean).forEach((id) => used.add(id))
+    }
+
+    return used
+  }
+
   function setArrivalLeader(row: ProgrammeRow, staffId: string) {
     const key = arrivalKey(row)
-    const next = {
-      ...arrivalAssignments,
-      [key]: {
-        ...(arrivalAssignments[key] ?? { guideIds: [] }),
-        leaderId: staffId || undefined,
-      },
+    const current = arrivalAssignments[key] ?? { guideIds: [] }
+    const usedByOtherSchools = arrivalStaffUsedByOtherSchools(row)
+
+    if (staffId && usedByOtherSchools.has(staffId)) {
+      setImportMessage('That staff member is already assigned to another school during Session 3.')
+      return
     }
+
+    const nextAssignment = {
+      ...current,
+      leaderId: staffId || undefined,
+      // A Party Leader cannot also take an accommodation group for the same school.
+      guideIds: current.guideIds.map((id) => (id === staffId ? '' : id)),
+    }
+    const next = { ...arrivalAssignments, [key]: nextAssignment }
     setArrivalAssignments(next)
-    localStorage.setItem(
-      ARRIVAL_ASSIGNMENTS_KEY,
-      JSON.stringify(next),
-    )
+    localStorage.setItem(ARRIVAL_ASSIGNMENTS_KEY, JSON.stringify(next))
   }
 
   function setArrivalGuide(
@@ -980,24 +1001,34 @@ function ManagerApp({
   ) {
     const key = arrivalKey(row)
     const current = arrivalAssignments[key] ?? { guideIds: [] }
+    const usedByOtherSchools = arrivalStaffUsedByOtherSchools(row)
+
+    if (staffId && staffId === current.leaderId) {
+      setImportMessage('The Party Leader cannot also be assigned an accommodation group.')
+      return
+    }
+    if (staffId && usedByOtherSchools.has(staffId)) {
+      setImportMessage('That staff member is already assigned to another school during Session 3.')
+      return
+    }
+
     const guideIds = [...current.guideIds]
     guideIds[slotIndex] = staffId
-    const next = {
-      ...arrivalAssignments,
-      [key]: { ...current, guideIds },
+    if (staffId && guideIds.filter((id) => id === staffId).length > 2) {
+      setImportMessage('One instructor can cover a maximum of two groups, and both must be from the same school.')
+      return
     }
+
+    const next = { ...arrivalAssignments, [key]: { ...current, guideIds } }
     setArrivalAssignments(next)
-    localStorage.setItem(
-      ARRIVAL_ASSIGNMENTS_KEY,
-      JSON.stringify(next),
-    )
+    localStorage.setItem(ARRIVAL_ASSIGNMENTS_KEY, JSON.stringify(next))
   }
 
   function autoFillArrivalSchool(row: ProgrammeRow) {
     const key = arrivalKey(row)
     const current = arrivalAssignments[key] ?? { guideIds: [] }
     if (!current.leaderId) {
-      setImportMessage(`Select the School Leader for ${row.schoolLabel ?? 'this school'} before using auto-fill.`)
+      setImportMessage(`Select the Party Leader for ${row.schoolLabel ?? 'this school'} before using auto-fill.`)
       return
     }
 
@@ -1172,7 +1203,7 @@ function ManagerApp({
             day,
             session: row.session,
             activity_code: 'ARRIVAL',
-            activity_name: 'School Leader',
+            activity_name: 'Party Leader',
             group_numbers: [],
             duty_type: 'arrival_leader',
             staff_email: email,
@@ -1186,8 +1217,15 @@ function ManagerApp({
         (cell) => cell.activityCode && cell.activityCode !== 'Z',
       )
 
+      const guideGroups = new Map<string, number[]>()
       arrival.guideIds.forEach((staffId, index) => {
-        if (!staffId) return
+        if (!staffId || !arrivalGroups[index]) return
+        const groups = guideGroups.get(staffId) ?? []
+        groups.push(arrivalGroups[index].group)
+        guideGroups.set(staffId, groups)
+      })
+
+      guideGroups.forEach((groupNumbers, staffId) => {
         const guide = staff.find((item) => item.id === staffId)
         const email = emailByStaffId.get(staffId)
         if (!guide || !email) return
@@ -1198,7 +1236,7 @@ function ManagerApp({
           session: row.session,
           activity_code: 'ARRIVAL',
           activity_name: 'Accommodation / Fire Alarm Instructor',
-          group_numbers: arrivalGroups[index] ? [arrivalGroups[index].group] : [],
+          group_numbers: groupNumbers,
           duty_type: 'arrival_instructor',
           staff_email: email,
           staff_name: guide.name,
@@ -1818,7 +1856,7 @@ function ManagerApp({
                     <div>
                       <p className="eyebrow">Session 3 school arrival</p>
                       <h3>Select a school</h3>
-                      <p>Choose one of the schools arriving today, select its School Leader, then auto-fill the accommodation groups.</p>
+                      <p>Choose one of the schools arriving today, select its Party Leader, then auto-fill the accommodation groups.</p>
                     </div>
                     <label>
                       School
@@ -1855,7 +1893,9 @@ function ManagerApp({
                       (member) =>
                         availableToday.includes(member.id) &&
                         !sickToday.includes(member.id) &&
-                        resolvedRole(member) === 'teamLeader',
+                        ['staff', 'teamLeader'].includes(resolvedRole(member)) &&
+                        !arrivalStaffUsedByOtherSchools(row).has(member.id) &&
+                        !assignment.guideIds.includes(member.id),
                     )
 
                     const guideOptions = staff.filter(
@@ -1863,6 +1903,7 @@ function ManagerApp({
                         availableToday.includes(member.id) &&
                         !sickToday.includes(member.id) &&
                         member.id !== assignment.leaderId &&
+                        !arrivalStaffUsedByOtherSchools(row).has(member.id) &&
                         (arrivalStaffGroup === 'all' ||
                           resolvedRole(member) === arrivalStaffGroup),
                     )
@@ -1914,14 +1955,14 @@ function ManagerApp({
 
                         <div className="arrival-assignment-grid">
                           <label>
-                            School Leader
+                            Party Leader
                             <select
                               value={assignment.leaderId ?? ''}
                               onChange={(event) =>
                                 setArrivalLeader(row, event.target.value)
                               }
                             >
-                              <option value="">Select School Leader</option>
+                              <option value="">Select Party Leader</option>
                               {leaderOptions.map((member) => (
                                 <option key={member.id} value={member.id}>
                                   {member.name}
@@ -1980,8 +2021,8 @@ function ManagerApp({
                           </button>
                           <span>
                             {assignment.leaderId
-                              ? 'The selected School Leader will not receive a group.'
-                              : 'Select the School Leader first.'}
+                              ? 'The selected Party Leader will not receive a group.'
+                              : 'Select the Party Leader first.'}
                           </span>
                         </div>
                         <p className="arrival-note">
