@@ -43,6 +43,7 @@ const PROGRAMME_KEY = 'acm-programme-current'
 const HISTORY_KEY = 'acm-programme-history'
 const STAFF_KEY = 'acm-staff'
 const ASSIGNMENT_KEY = 'acm-assignments'
+const WATER_SUPPORT_KEY = 'acm-water-support'
 const SICKNESS_KEY = 'acm-sickness-by-day'
 const WORKING_KEY = 'acm-working-by-day'
 const ACTIVITIES_KEY = 'acm-activities'
@@ -398,6 +399,9 @@ function ManagerApp({
   const [assignments, setAssignments] = useState<StaffingAssignment>(() =>
     readJson(ASSIGNMENT_KEY, {}),
   )
+  const [waterSupportAssignments, setWaterSupportAssignments] = useState<Record<string, string>>(() =>
+    readJson(WATER_SUPPORT_KEY, {}),
+  )
   const [sicknessByDay, setSicknessByDay] = useState<Record<string, string[]>>(() =>
     readJson(SICKNESS_KEY, {}),
   )
@@ -628,6 +632,7 @@ function ManagerApp({
         if (state.staff) setStaff(state.staff)
         if (state.activities) setActivities(state.activities)
         if (state.assignments) setAssignments(state.assignments)
+        if (state.waterSupportAssignments) setWaterSupportAssignments(state.waterSupportAssignments)
         if (state.workingByDay) setWorkingByDay(state.workingByDay)
         if (state.sicknessByDay) setSicknessByDay(state.sicknessByDay)
         if (state.arrivalAssignments) setArrivalAssignments(state.arrivalAssignments)
@@ -647,6 +652,7 @@ function ManagerApp({
         if (state.staff) setStaff(state.staff)
         if (state.activities) setActivities(state.activities)
         if (state.assignments) setAssignments(state.assignments)
+        if (state.waterSupportAssignments) setWaterSupportAssignments(state.waterSupportAssignments)
         if (state.workingByDay) setWorkingByDay(state.workingByDay)
         if (state.sicknessByDay) setSicknessByDay(state.sicknessByDay)
         if (state.arrivalAssignments) setArrivalAssignments(state.arrivalAssignments)
@@ -662,7 +668,7 @@ function ManagerApp({
     sharedSaveTimerRef.current = setTimeout(async () => {
       const updatedAt = new Date().toISOString()
       const updatedByName = displayName?.trim() || accountEmail
-      const state = { programme, staff, activities, assignments, workingByDay, sicknessByDay, arrivalAssignments }
+      const state = { programme, staff, activities, assignments, waterSupportAssignments, workingByDay, sicknessByDay, arrivalAssignments }
       const { error } = await supabase.from('app_live_state').upsert({
         id: 'main', state, updated_by_name: updatedByName,
         updated_by_email: accountEmail.trim().toLowerCase(), updated_at: updatedAt,
@@ -672,7 +678,7 @@ function ManagerApp({
       else setLastSharedUpdate({ updated_by_name: updatedByName, updated_by_email: accountEmail, updated_at: updatedAt, section: page })
     }, 700)
     return () => { if (sharedSaveTimerRef.current) clearTimeout(sharedSaveTimerRef.current) }
-  }, [programme, staff, activities, assignments, workingByDay, sicknessByDay, arrivalAssignments, accountEmail, displayName, page])
+  }, [programme, staff, activities, assignments, waterSupportAssignments, workingByDay, sicknessByDay, arrivalAssignments, accountEmail, displayName, page])
 
   async function addHoliday() {
     if (!canManageHolidays) {
@@ -824,7 +830,7 @@ function ManagerApp({
 
     const sessionMap = new Map<
       string,
-      { session: string; activityStaff: number; arrivalStaff: number }
+      { session: string; activityStaff: number; arrivalStaff: number; waterSupportStaff: number }
     >()
 
     for (const row of programme.rows.filter((item) => item.day === day)) {
@@ -834,16 +840,23 @@ function ManagerApp({
         session: row.session,
         activityStaff: 0,
         arrivalStaff: 0,
+        waterSupportStaff: 0,
       }
 
       current.activityStaff += activeCells.length
       sessionMap.set(row.session, current)
     }
 
+    for (const need of waterSupportNeedsForDay(day)) {
+      const current = sessionMap.get(need.session) ?? { session: need.session, activityStaff: 0, arrivalStaff: 0, waterSupportStaff: 0 }
+      current.waterSupportStaff += 1
+      sessionMap.set(need.session, current)
+    }
+
     return Array.from(sessionMap.values())
       .map((item) => ({
         ...item,
-        total: Math.max(item.activityStaff, item.arrivalStaff),
+        total: Math.max(item.activityStaff, item.arrivalStaff) + item.waterSupportStaff,
       }))
       .sort((a, b) => Number(a.session) - Number(b.session))
   }
@@ -1191,8 +1204,13 @@ function ManagerApp({
       }),
     )
 
+    const nextWaterSupport = Object.fromEntries(
+      Object.entries(waterSupportAssignments).filter(([key]) => !key.startsWith(`${day}::`)),
+    )
     setAssignments(nextAssignments)
     setArrivalAssignments(nextArrivalAssignments)
+    setWaterSupportAssignments(nextWaterSupport)
+    localStorage.setItem(WATER_SUPPORT_KEY, JSON.stringify(nextWaterSupport))
     localStorage.setItem(
       ASSIGNMENT_KEY,
       JSON.stringify(nextAssignments),
@@ -1259,6 +1277,54 @@ function ManagerApp({
     const activity = activities.find((item) => item.code === code)
     const text = normaliseActivityText(`${code} ${activity?.name ?? ''}`)
     return ['water', 'sailing', 'kayak', 'canoe', 'paddle', 'raft', 'sup', 'windsurf'].some((term) => text.includes(term))
+  }
+
+  function waterDiscipline(code: string): 'canoe' | 'kayak' | null {
+    const activity = activities.find((item) => item.code === code)
+    const text = normaliseActivityText(`${code} ${activity?.name ?? ''}`)
+    if (text.includes('canoe')) return 'canoe'
+    if (text.includes('kayak')) return 'kayak'
+    return null
+  }
+
+  function waterSupportKey(day: string, session: string, discipline: 'canoe' | 'kayak') {
+    return `${day}::${session}::${discipline}`
+  }
+
+  function waterSupportNeedsForDay(day: string) {
+    if (!programme) return []
+    const counts = new Map<string, { session: string; discipline: 'canoe' | 'kayak'; groups: number }>()
+    programme.rows.filter((row) => row.day === day).forEach((row) => {
+      activityCellsForRow(row).forEach((cell) => {
+        const discipline = waterDiscipline(cell.activityCode)
+        if (!discipline) return
+        const key = `${row.session}::${discipline}`
+        const current = counts.get(key) ?? { session: row.session, discipline, groups: 0 }
+        current.groups += 1
+        counts.set(key, current)
+      })
+    })
+    return Array.from(counts.values()).filter((item) => item.groups >= 2)
+      .sort((a,b) => Number(a.session)-Number(b.session) || a.discipline.localeCompare(b.discipline))
+  }
+
+  function staffBusyInSession(staffId: string, day: string, session: string, currentAssignments = assignments) {
+    if (!programme) return false
+    if (arrivalStaffForDaySession(day, session).has(staffId)) return true
+    if (Object.entries(waterSupportAssignments).some(([key, id]) => key.startsWith(`${day}::${session}::`) && id === staffId)) return true
+    return programme.rows.filter((row) => row.day === day && row.session === session)
+      .some((row) => activityCellsForRow(row).some((cell) => currentAssignments[cellKey(row.id, cell.group)] === staffId))
+  }
+
+  function setWaterSupport(day: string, session: string, discipline: 'canoe' | 'kayak', staffId: string) {
+    const key = waterSupportKey(day, session, discipline)
+    setWaterSupportAssignments((current) => {
+      const next = { ...current }
+      if (staffId) next[key] = staffId
+      else delete next[key]
+      localStorage.setItem(WATER_SUPPORT_KEY, JSON.stringify(next))
+      return next
+    })
   }
 
   function hadWaterInPreviousPairedSession(staffId: string, day: string, session: string, currentAssignments: StaffingAssignment) {
@@ -1347,10 +1413,27 @@ function ManagerApp({
       }
     }
 
+    const nextWaterSupport = { ...waterSupportAssignments }
+    for (const need of waterSupportNeedsForDay(day)) {
+      const supportKey = waterSupportKey(day, need.session, need.discipline)
+      const currentId = nextWaterSupport[supportKey]
+      const currentStillValid = currentId && !sickIds.has(currentId) && workingIds.has(currentId) && !arrivalStaffForDaySession(day, need.session).has(currentId) && !dayRows.filter((row) => row.session === need.session).some((row) => activityCellsForRow(row).some((cell) => nextAssignments[cellKey(row.id, cell.group)] === currentId))
+      if (currentStillValid) continue
+      delete nextWaterSupport[supportKey]
+      const chosen = staff.filter((member) =>
+        workingIds.has(member.id) &&
+        !sickIds.has(member.id) &&
+        !staffBusyInSession(member.id, day, need.session, nextAssignments) &&
+        !Object.entries(nextWaterSupport).some(([key, id]) => key.startsWith(`${day}::${need.session}::`) && id === member.id)
+      ).sort((a,b) => rolePriority(resolvedRole(a))-rolePriority(resolvedRole(b)) || (workload.get(a.id)??0)-(workload.get(b.id)??0) || a.name.localeCompare(b.name))[0]
+      if (chosen) nextWaterSupport[supportKey] = chosen.id
+    }
+    setWaterSupportAssignments(nextWaterSupport)
+    localStorage.setItem(WATER_SUPPORT_KEY, JSON.stringify(nextWaterSupport))
     setAssignments(nextAssignments)
     localStorage.setItem(ASSIGNMENT_KEY, JSON.stringify(nextAssignments))
     setImportMessage(
-      `Auto-filled qualified staff for ${day}. Regular staff were used first, followed by team leaders, activities manager and centre manager.`,
+      `Auto-filled qualified staff and required canoe/kayak leads for ${day}.`,
     )
   }
 
@@ -2096,7 +2179,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.40</span></div>
+          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.41</span></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -2342,7 +2425,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to accommodation, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v0.40</span>
+                  <span className="release-pill">v0.41</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
@@ -2690,6 +2773,27 @@ function ManagerApp({
                     ))}
                   </div>
                 </section>
+
+                {waterSupportNeedsForDay(activeStaffingDay).length > 0 && (
+                  <section className="water-support-panel">
+                    <div><p className="eyebrow">Water ratios</p><h3>Water Support</h3><p>Extra leads are required when two or more groups run the same canoe or kayak activity in one session.</p></div>
+                    <div className="water-support-list">
+                      {waterSupportNeedsForDay(activeStaffingDay).map((need) => {
+                        const key = waterSupportKey(activeStaffingDay, need.session, need.discipline)
+                        const assignedId = waterSupportAssignments[key] ?? ''
+                        const unavailable = unavailableStaffIdsForDay(activeStaffingDay)
+                        const working = new Set(workingByDay[activeStaffingDay] ?? staff.map((member) => member.id))
+                        return <article key={key}>
+                          <div><strong>Session {need.session} · {need.discipline === 'canoe' ? 'Canoe Lead' : 'Kayak Lead'}</strong><span>{need.groups} groups running</span></div>
+                          <select value={assignedId} onChange={(event) => setWaterSupport(activeStaffingDay, need.session, need.discipline, event.target.value)}>
+                            <option value="">Select lead</option>
+                            {staff.filter((member) => working.has(member.id) && !unavailable.has(member.id) && (!staffBusyInSession(member.id, activeStaffingDay, need.session) || member.id === assignedId)).map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}
+                          </select>
+                        </article>
+                      })}
+                    </div>
+                  </section>
+                )}
 
                 <div className="staffing-grid">
                   {filteredStaffingCells.map(({ row, cell }) => {
@@ -3297,6 +3401,19 @@ function ProgrammeGrid({
   activities: Activity[]
   onSelect: (row: ProgrammeRow, group: number) => void
 }) {
+  const schoolRanges = programme.rows.flatMap(arrivalRowsFromProgrammeRow).reduce<{name:string;first:number;last:number}[]>((ranges, row) => {
+    const groups = row.cells.map((cell) => cell.group).sort((a,b) => a-b)
+    const name = arrivalSchoolName(row)
+    if (!name || !groups.length || ranges.some((item) => item.name === name)) return ranges
+    ranges.push({ name, first: groups[0], last: groups[groups.length - 1] })
+    return ranges
+  }, [])
+  const schoolClass = (group: number) => {
+    const range = schoolRanges.find((item) => group >= item.first && group <= item.last)
+    if (!range) return ''
+    return `${group === range.first ? ' school-box-start' : ''}${group === range.last ? ' school-box-end' : ''} school-box-cell`
+  }
+
   return (
     <div className="programme-scroll">
       <table className="programme-table">
@@ -3305,7 +3422,7 @@ function ProgrammeGrid({
             <th className="sticky-day">Day</th>
             <th className="sticky-session">Ses</th>
             {programme.groupNumbers.map((group) => (
-              <th key={group}>G{group}</th>
+              <th key={group} className={schoolClass(group)} title={schoolRanges.find((item) => group >= item.first && group <= item.last)?.name}>G{group}</th>
             ))}
           </tr>
         </thead>
@@ -3328,7 +3445,7 @@ function ProgrammeGrid({
                   )
                   const code = cell?.activityCode ?? ''
                   return (
-                    <td key={group}>
+                    <td key={group} className={schoolClass(group)}>
                       <button
                         className={`programme-cell code-${code.toLowerCase()}`}
                         onClick={() => onSelect(row, group)}

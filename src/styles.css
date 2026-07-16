@@ -1380,3 +1380,18 @@ button { cursor: pointer; }
   font-size: .82rem;
   text-align: center;
 }
+
+/* v0.41 school boxes and water support */
+.programme-table .school-box-start { border-left:3px solid #174f4c !important; }
+.programme-table .school-box-end { border-right:3px solid #174f4c !important; }
+.programme-table thead .school-box-cell { border-top:3px solid #174f4c; }
+.programme-table tbody tr:last-child .school-box-cell { border-bottom:3px solid #174f4c; }
+.water-support-panel { margin:18px 0; padding:18px; border:1px solid #9dc9c1; border-radius:16px; background:#f3faf8; display:grid; gap:14px; }
+.water-support-panel h3 { margin:2px 0 4px; }
+.water-support-panel p { margin:0; }
+.water-support-list { display:grid; gap:10px; }
+.water-support-list article { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:12px; background:#fff; border:1px solid #cfe2de; border-radius:12px; }
+.water-support-list article div { display:flex; flex-direction:column; gap:3px; }
+.water-support-list article span { color:#61736f; font-size:.82rem; }
+.water-support-list select { min-width:210px; }
+@media (max-width:700px) { .water-support-list article { align-items:stretch; flex-direction:column; } .water-support-list select { width:100%; min-width:0; } }
