@@ -183,7 +183,7 @@ function cellKey(rowId: string, group: number) {
   return `${rowId}::${group}`
 }
 
-const ARRIVAL_DAYS = new Set(['MONDAY', 'WEDNESDAY', 'FRIDAY'])
+const ARRIVAL_DAY_ALIASES = new Set(['MON', 'MONDAY', 'WED', 'WEDNESDAY', 'FRI', 'FRIDAY'])
 const PROGRAMME_ACTIVITY_VALUES = new Set(
   startingActivities.flatMap((activity) => [
     activity.code.trim().toUpperCase(),
@@ -195,13 +195,17 @@ function normalisedProgrammeValue(value: string) {
   return value.replace(/\s+/g, ' ').trim().toUpperCase()
 }
 
+function isArrivalDay(day: string) {
+  return ARRIVAL_DAY_ALIASES.has(normalisedProgrammeValue(day))
+}
+
 function isKnownProgrammeActivity(value: string) {
   const normalised = normalisedProgrammeValue(value)
   return Boolean(normalised) && PROGRAMME_ACTIVITY_VALUES.has(normalised)
 }
 
 function schoolNamesInRow(row: ProgrammeRow) {
-  if (row.session !== '3' || !ARRIVAL_DAYS.has(row.day.trim().toUpperCase())) {
+  if (row.session !== '3' || !isArrivalDay(row.day)) {
     return []
   }
 
@@ -1534,7 +1538,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.24</span></div>
+          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.25</span></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -1744,11 +1748,11 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to a building, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v0.24</span>
+                  <span className="release-pill">v0.25</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
-                  {programmeDays.filter((day) => ARRIVAL_DAYS.has(day.trim().toUpperCase())).map((day) => (
+                  {programmeDays.filter(isArrivalDay).map((day) => (
                     <button
                       key={day}
                       className={activeStaffingDay === day ? 'active' : ''}
