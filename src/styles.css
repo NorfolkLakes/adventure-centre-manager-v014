@@ -1116,3 +1116,25 @@ button { cursor: pointer; }
 .school-name { color: #6d7f7b; }
 .duty-arrival_leader { border-left-color: #8c62c4; }
 .duty-arrival_instructor { border-left-color: #db8b36; }
+
+.arrival-school-toolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 14px;
+  margin: 16px 0 12px;
+  padding: 14px;
+  border: 1px solid #cfe0da;
+  border-radius: 16px;
+  background: #f4f9f7;
+}
+.arrival-school-toolbar label { display: grid; gap: 6px; flex: 1; font-weight: 800; color: #234f49; }
+.arrival-school-toolbar select { min-height: 46px; padding: 0 12px; border: 1px solid #bfcfca; border-radius: 11px; background: #fff; }
+.arrival-school-toolbar span { padding-bottom: 12px; color: #617570; font-weight: 750; white-space: nowrap; }
+.arrival-card-heading { align-items: center; }
+.arrival-autofill { flex-shrink: 0; }
+@media (max-width: 700px) {
+  .arrival-school-toolbar, .arrival-card-heading { align-items: stretch; flex-direction: column; }
+  .arrival-school-toolbar span { padding-bottom: 0; }
+  .arrival-autofill { width: 100%; justify-content: center; }
+}
