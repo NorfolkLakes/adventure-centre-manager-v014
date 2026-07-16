@@ -1216,3 +1216,38 @@ button { cursor: pointer; }
   .arrival-board-heading, .flat-allocation-heading { align-items:stretch; flex-direction:column; }
   .arrival-board-heading .primary { width:100%; justify-content:center; }
 }
+
+/* v0.28 staffing warnings and school notes */
+.staffing-shortage-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin: 14px 0;
+  padding: 15px 16px;
+  border: 1px solid #efb36f;
+  border-left: 6px solid #d96c13;
+  border-radius: 15px;
+  background: #fff3e3;
+  color: #71390d;
+}
+.staffing-shortage-alert strong { display: block; margin-bottom: 4px; font-size: 1rem; }
+.staffing-shortage-alert p { margin: 0; line-height: 1.45; }
+.school-notes-page h2 { margin-bottom: 6px; }
+.school-notes-grid { display: grid; gap: 16px; margin-top: 18px; }
+.school-note-card { padding: 18px; border: 1px solid #d8e5e0; border-radius: 18px; background: #fff; box-shadow: 0 10px 28px rgba(30,74,64,.08); }
+.school-note-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; margin-bottom: 16px; }
+.school-note-card-head h3 { margin: 4px 0; color: #173f42; }
+.school-note-card-head span { color: #687a76; font-size: .84rem; }
+.school-note-staff-count { flex: 0 0 auto; padding: 7px 10px; border-radius: 999px; background: #e4f2ec; color: #195f53 !important; font-weight: 800; }
+.school-note-field { display: grid; gap: 7px; color: #294d47; font-weight: 800; }
+.school-note-field textarea { width: 100%; resize: vertical; min-height: 120px; padding: 12px; border: 1px solid #cbdad5; border-radius: 12px; font: inherit; line-height: 1.45; color: #20313a; background: #fbfdfc; }
+.school-note-field textarea:focus { outline: 3px solid rgba(28,117,103,.18); border-color: #1c7567; }
+.school-note-staff { margin-top: 17px; padding-top: 15px; border-top: 1px solid #e3ece8; }
+.school-note-staff > p { margin: 4px 0 12px; color: #71817e; }
+.school-note-staff-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
+.school-note-staff-grid button { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px 11px; border: 1px solid #cedbd7; border-radius: 11px; background: #f7faf9; color: #294d47; text-align: left; font-weight: 800; }
+.school-note-staff-grid button span { color: #71817e; font-size: .7rem; font-weight: 700; }
+.school-note-staff-grid button.active { border-color: #1c7567; background: #1c7567; color: #fff; }
+.school-note-staff-grid button.active span { color: rgba(255,255,255,.82); }
+@media (min-width: 850px) { .school-notes-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+@media (max-width: 620px) { .school-note-card-head { flex-direction: column; } .school-note-staff-grid { grid-template-columns: 1fr; } }

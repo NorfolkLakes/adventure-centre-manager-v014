@@ -1,4 +1,4 @@
-import { Building2, CalendarDays, CheckSquare, Home, Users } from 'lucide-react'
+import { Building2, CalendarDays, CheckSquare, Home, NotebookPen, Users } from 'lucide-react'
 import type { Page } from '../types'
 
 const items = [
@@ -6,7 +6,7 @@ const items = [
   { page: 'programme' as Page, label: 'Programme', icon: CalendarDays },
   { page: 'arrivals' as Page, label: 'Arrivals', icon: Building2 },
   { page: 'staffing' as Page, label: 'Staffing', icon: Users },
-  { page: 'accommodation' as Page, label: 'Accommodation', icon: Building2 },
+  { page: 'accommodation' as Page, label: 'School Notes', icon: NotebookPen },
   { page: 'staff' as Page, label: 'Staff', icon: Users },
   { page: 'signoffs' as Page, label: 'Sign-offs', icon: CheckSquare },
 ]

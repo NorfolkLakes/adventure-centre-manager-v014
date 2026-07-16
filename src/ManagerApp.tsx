@@ -59,6 +59,15 @@ function readJson<T>(key: string, fallback: T): T {
   }
 }
 
+function shuffled<T>(items: T[]): T[] {
+  const next = [...items]
+  for (let index = next.length - 1; index > 0; index -= 1) {
+    const randomIndex = Math.floor(Math.random() * (index + 1))
+    ;[next[index], next[randomIndex]] = [next[randomIndex], next[index]]
+  }
+  return next
+}
+
 function normaliseText(value: unknown) {
   return String(value ?? '').trim()
 }
@@ -1177,9 +1186,14 @@ function ManagerApp({
     const sickIds = new Set(sicknessByDay[row.day] ?? [])
     const unavailableIds = new Set<string>([current.leaderId, ...arrivalStaffUsedByOtherSchools(row)])
 
-    const candidates = staff
-      .filter((member) => workingIds.has(member.id) && !sickIds.has(member.id) && !unavailableIds.has(member.id) && (arrivalStaffGroup === 'all' || resolvedRole(member) === arrivalStaffGroup))
-      .sort((a, b) => rolePriority(resolvedRole(a)) - rolePriority(resolvedRole(b)) || a.name.localeCompare(b.name))
+    const candidates = shuffled(
+      staff.filter((member) =>
+        workingIds.has(member.id) &&
+        !sickIds.has(member.id) &&
+        !unavailableIds.has(member.id) &&
+        (arrivalStaffGroup === 'all' || resolvedRole(member) === arrivalStaffGroup),
+      ),
+    )
 
     const guideIds: string[] = []
     const useOnePerGroup = candidates.length >= populatedGroups.length
@@ -1210,9 +1224,14 @@ function ManagerApp({
       if (leaderId) reserved.add(leaderId)
     })
 
-    const candidates = staff
-      .filter((member) => workingIds.has(member.id) && !sickIds.has(member.id) && !reserved.has(member.id) && (arrivalStaffGroup === 'all' || resolvedRole(member) === arrivalStaffGroup))
-      .sort((a, b) => rolePriority(resolvedRole(a)) - rolePriority(resolvedRole(b)) || a.name.localeCompare(b.name))
+    const candidates = shuffled(
+      staff.filter((member) =>
+        workingIds.has(member.id) &&
+        !sickIds.has(member.id) &&
+        !reserved.has(member.id) &&
+        (arrivalStaffGroup === 'all' || resolvedRole(member) === arrivalStaffGroup),
+      ),
+    )
 
     let candidateIndex = 0
     const next = { ...arrivalAssignments }
@@ -1596,6 +1615,10 @@ function ManagerApp({
   const schoolsOnSite = new Set(programme?.rows.map(arrivalSchoolName).filter(Boolean) ?? []).size
   const availableTodayCount = activeStaffingDay ? (workingByDay[activeStaffingDay] ?? staff.map((m) => m.id)).filter((id) => !(sicknessByDay[activeStaffingDay] ?? []).includes(id)).length : staff.length
   const staffingShortages = populatedCells.filter(({row,cell}) => !assignments[cellKey(row.id,cell.group)]).length
+  const selectedDayUnfilled = populatedCells.filter(
+    ({ row, cell }) => row.day === activeStaffingDay && !assignments[cellKey(row.id, cell.group)],
+  )
+  const selectedDayCapacityShortfall = Math.max(0, (selectedDayBusiest?.total ?? 0) - availableTodayCount)
   const expiringQualifications = staff.flatMap((member) => Object.entries(member.qualificationExpiries ?? {}).map(([code,date]) => ({member,code,date}))).filter((item) => {
     if (!item.date) return false
     const days = (new Date(`${item.date}T23:59:59`).getTime()-Date.now())/86400000
@@ -1616,7 +1639,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.27</span></div>
+          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.28</span></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -1826,7 +1849,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to a building, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v0.27</span>
+                  <span className="release-pill">v0.28</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
@@ -2009,6 +2032,23 @@ function ManagerApp({
                     </button>
                   </div>
                 </div>
+
+                {(selectedDayUnfilled.length > 0 || selectedDayCapacityShortfall > 0) && (
+                  <section className="staffing-shortage-alert" role="alert">
+                    <CircleAlert size={24} />
+                    <div>
+                      <strong>Staffing warning for {activeStaffingDay}</strong>
+                      <p>
+                        {selectedDayCapacityShortfall > 0
+                          ? `${selectedDayCapacityShortfall} more staff ${selectedDayCapacityShortfall === 1 ? 'member is' : 'members are'} needed for the busiest session. `
+                          : ''}
+                        {selectedDayUnfilled.length > 0
+                          ? `${selectedDayUnfilled.length} session ${selectedDayUnfilled.length === 1 ? 'group is' : 'groups are'} still not assigned.`
+                          : ''}
+                      </p>
+                    </div>
+                  </section>
+                )}
 
                 {showWorkingPanel && (
                   <section className="sickness-panel compact working-panel">
@@ -2214,32 +2254,75 @@ function ManagerApp({
         )}
 
         {page === 'accommodation' && (
-          <section className="panel accommodation-overview-page">
+          <section className="panel school-notes-page">
             <button className="back" onClick={() => setPage('dashboard')}><ChevronLeft size={18} />Dashboard</button>
-            <p className="eyebrow">Live operations</p>
-            <h2>Accommodation Overview</h2>
-            <p className="page-intro">Buildings 1–6 show flat-by-flat school allocations, Party Leaders and programme groups.</p>
-            <div className="building-overview-grid">
-              {[1,2,3,4,5,6].map((buildingNumber) => {
-                const flatAllocations = [1,2,3,4,5].map((flatNumber) => {
-                  const flatId = `${buildingNumber}-${flatNumber}`
-                  const row = arrivalRows.find((item) => arrivalAssignment(item).flatIds?.includes(flatId))
-                  return { flatNumber, row }
-                })
-                const occupiedCount = flatAllocations.filter((item) => item.row).length
-                return <article className={`building-card ${occupiedCount ? 'occupied' : 'available'}`} key={buildingNumber}>
-                  <div className="building-card-top"><Building2 size={24}/><div><p className="eyebrow">Building</p><h3>{buildingNumber}</h3><span>{occupiedCount}/5 flats allocated</span></div></div>
-                  <div className="flat-overview-list">
-                    {flatAllocations.map(({ flatNumber, row }) => {
-                      if (!row) return <div className="flat-overview-row available" key={flatNumber}><strong>Flat {flatNumber}</strong><span>Available</span></div>
-                      const allocation = arrivalAssignment(row)
-                      const leader = staff.find((member) => member.id === allocation.leaderId)
-                      return <div className="flat-overview-row occupied" key={flatNumber}><strong>Flat {flatNumber}</strong><span>{arrivalSchoolName(row)}</span><small>{row.day} · Party Leader: {leader?.name ?? 'Unassigned'} · Groups {row.cells.map((cell) => cell.group).join(', ')}</small></div>
-                    })}
-                  </div>
-                </article>
-              })}
-            </div>
+            <p className="eyebrow">School information</p>
+            <h2>School Notes</h2>
+            <p className="page-intro">Add operational notes for every school detected in the uploaded programme and choose which staff members are linked to those notes.</p>
+
+            {!arrivalRows.length ? (
+              <section className="empty-arrivals-state">
+                <Building2 size={34} />
+                <h3>No schools detected</h3>
+                <p>Upload a programme containing school arrivals to create school note cards.</p>
+              </section>
+            ) : (
+              <div className="school-notes-grid">
+                {arrivalRows.map((row) => {
+                  const assignment = arrivalAssignment(row)
+                  const selectedNoteStaff = assignment.noteStaffIds ?? []
+                  return (
+                    <article className="school-note-card" key={row.id}>
+                      <div className="school-note-card-head">
+                        <div>
+                          <p className="eyebrow">{row.day} · Session 3</p>
+                          <h3>{arrivalSchoolName(row)}</h3>
+                          <span>{row.cells.length} group{row.cells.length === 1 ? '' : 's'} · Groups {row.cells.map((cell) => cell.group).join(', ')}</span>
+                        </div>
+                        <span className="school-note-staff-count">{selectedNoteStaff.length} staff linked</span>
+                      </div>
+
+                      <label className="school-note-field">
+                        Notes about this school
+                        <textarea
+                          rows={5}
+                          value={assignment.notes ?? ''}
+                          placeholder="Add dietary information, teacher requests, behaviour notes, accessibility needs or other operational information…"
+                          onChange={(event) => updateArrivalDetails(row, { notes: event.target.value })}
+                        />
+                      </label>
+
+                      <div className="school-note-staff">
+                        <strong>Assign staff to this school note</strong>
+                        <p>Select everyone who should be linked to this school’s information.</p>
+                        <div className="school-note-staff-grid">
+                          {staff.map((member) => {
+                            const selected = selectedNoteStaff.includes(member.id)
+                            return (
+                              <button
+                                type="button"
+                                key={member.id}
+                                className={selected ? 'active' : ''}
+                                onClick={() =>
+                                  updateArrivalDetails(row, {
+                                    noteStaffIds: selected
+                                      ? selectedNoteStaff.filter((id) => id !== member.id)
+                                      : [...selectedNoteStaff, member.id],
+                                  })
+                                }
+                              >
+                                {member.name}
+                                <span>{selected ? 'Assigned' : roleLabel(resolvedRole(member))}</span>
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    </article>
+                  )
+                })}
+              </div>
+            )}
           </section>
         )}
 

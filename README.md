@@ -1,4 +1,4 @@
-# Adventure Centre Manager v0.27
+# Adventure Centre Manager v0.28
 
 This version adds the first cloud login and staff rota system.
 
@@ -149,3 +149,10 @@ After deploying v0.20, run `supabase/setup.sql` once in the Supabase SQL Editor 
 - A school name starts a school group block.
 - Blank cells after the school name inherit that school until the next school name or recognised activity.
 - Arrival cards show the exact group range and total group count automatically.
+
+
+## v0.28 Random arrivals, staffing alerts and school notes
+
+- Arrival auto-fill shuffles eligible staff on every run rather than assigning alphabetically or by role order.
+- Daily Staffing displays a prominent warning when groups remain unassigned or the busiest session needs more staff than are available.
+- Accommodation navigation is replaced by School Notes. Every detected school has a notes box and a multi-staff assignment panel.

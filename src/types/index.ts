@@ -51,4 +51,6 @@ export type ArrivalAssignment = {
   leaderId?: string
   guideIds: string[]
   flatIds?: string[]
+  notes?: string
+  noteStaffIds?: string[]
 }
