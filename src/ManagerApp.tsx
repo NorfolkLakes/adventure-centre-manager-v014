@@ -343,6 +343,8 @@ function ManagerApp({
   accountRole?: 'centreManager' | 'activityManager' | 'teamLeader'
 }) {
   const canManageHolidays = accountRole === 'centreManager' || accountRole === 'activityManager'
+  const canManageStaff = accountRole === 'centreManager' || accountRole === 'activityManager'
+  const canRecordSickness = true
   const [page, setPage] = useState<Page>('dashboard')
   const [programme, setProgramme] = useState<ProgrammeImport | null>(() =>
     readJson(PROGRAMME_KEY, null),
@@ -448,6 +450,9 @@ function ManagerApp({
   const [holidayStart, setHolidayStart] = useState('')
   const [holidayEnd, setHolidayEnd] = useState('')
   const [holidayNote, setHolidayNote] = useState('')
+  const [holidaySummaryStaffId, setHolidaySummaryStaffId] = useState('')
+  const [holidaySickDate, setHolidaySickDate] = useState('')
+  const [publishedStaffDuties, setPublishedStaffDuties] = useState<{staff_email:string;staff_name:string;day:string;session:string;activity_name:string;duty_type:string}[]>([])
   const [mySessions, setMySessions] = useState<MySessionDuty[]>([])
   const [mySessionsLoading, setMySessionsLoading] = useState(true)
   const [selectedMySessionsDay, setSelectedMySessionsDay] = useState('')
@@ -567,6 +572,14 @@ function ManagerApp({
     return () => { supabase.removeChannel(channel) }
   }, [accountEmail, myStaffMember?.id, displayName])
 
+  async function loadPublishedStaffDuties() {
+    const { data, error } = await supabase
+      .from('rota_assignments')
+      .select('staff_email,staff_name,day,session,activity_name,duty_type')
+    if (error) setImportMessage(error.message)
+    else setPublishedStaffDuties((data ?? []) as typeof publishedStaffDuties)
+  }
+
   async function loadHolidays() {
     const { data, error } = await supabase
       .from('staff_holidays')
@@ -578,8 +591,10 @@ function ManagerApp({
 
   useEffect(() => {
     loadHolidays()
+    loadPublishedStaffDuties()
     const channel = supabase.channel('holiday-calendar-updates')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'staff_holidays' }, loadHolidays)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'rota_assignments' }, loadPublishedStaffDuties)
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [])
@@ -622,6 +637,82 @@ function ManagerApp({
     if (error) setImportMessage(error.message)
     else loadHolidays()
   }
+
+
+
+  async function setHolidayPageSickness() {
+    if (!canRecordSickness) return
+    const member = staff.find((item) => item.id === holidaySummaryStaffId)
+    if (!member || !holidaySickDate) {
+      setImportMessage('Select a staff member and sickness date.')
+      return
+    }
+    const email = (member.email ?? '').trim().toLowerCase()
+    if (!email) {
+      setImportMessage('Add this staff member’s login email in Staff Management first.')
+      return
+    }
+    const alreadySick = (sicknessByDay[holidaySickDate] ?? []).includes(member.id)
+    const { error } = await supabase.from('staff_availability').upsert({
+      staff_email: email,
+      day: holidaySickDate,
+      status: alreadySick ? 'available' : 'sick',
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'staff_email,day' })
+    if (error) {
+      setImportMessage(error.message)
+      return
+    }
+    const current = sicknessByDay[holidaySickDate] ?? []
+    const nextForDay = alreadySick
+      ? current.filter((id) => id !== member.id)
+      : [...new Set([...current, member.id])]
+    const next = { ...sicknessByDay, [holidaySickDate]: nextForDay }
+    setSicknessByDay(next)
+    localStorage.setItem(SICKNESS_KEY, JSON.stringify(next))
+    setImportMessage(`${member.name} marked ${alreadySick ? 'available' : 'sick'} on ${holidaySickDate}.`)
+  }
+
+  function uniqueDatesInRange(start: string, end: string) {
+    const dates: string[] = []
+    const cursor = new Date(`${start}T12:00:00`)
+    const finish = new Date(`${end}T12:00:00`)
+    while (cursor <= finish) {
+      dates.push(dateKey(cursor))
+      cursor.setDate(cursor.getDate() + 1)
+    }
+    return dates
+  }
+
+  const holidaySummaryMember = staff.find((member) => member.id === holidaySummaryStaffId)
+  const holidayStaffSummary = useMemo(() => {
+    if (!holidaySummaryMember) return null
+    const email = (holidaySummaryMember.email ?? '').trim().toLowerCase()
+    const name = holidaySummaryMember.name.trim().toLowerCase()
+    const duties = publishedStaffDuties.filter((duty) =>
+      (email && duty.staff_email.trim().toLowerCase() === email) ||
+      duty.staff_name.trim().toLowerCase() === name,
+    )
+    const daysWorked = new Set(duties.map((duty) => duty.day)).size
+    const sessionsWorked = new Set(duties.map((duty) => `${duty.day}|${duty.session}`)).size
+    const activityCounts = new Map<string, number>()
+    duties
+      .filter((duty) => duty.duty_type === 'activity' && duty.activity_name.trim())
+      .forEach((duty) => activityCounts.set(duty.activity_name, (activityCounts.get(duty.activity_name) ?? 0) + 1))
+    const ranked = [...activityCounts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    const mostRun = ranked[0] ?? null
+    const leastRun = ranked.length ? [...ranked].sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]))[0] : null
+    const holidayDays = new Set(
+      holidays
+        .filter((holiday) =>
+          (email && holiday.staff_email.trim().toLowerCase() === email) ||
+          holiday.staff_name.trim().toLowerCase() === name,
+        )
+        .flatMap((holiday) => uniqueDatesInRange(holiday.start_date, holiday.end_date)),
+    ).size
+    const sickDays = Object.entries(sicknessByDay).filter(([, ids]) => ids.includes(holidaySummaryMember.id)).length
+    return { daysWorked, sessionsWorked, mostRun, leastRun, holidayDays, sickDays }
+  }, [holidaySummaryMember, publishedStaffDuties, holidays, sicknessByDay])
 
   function holidayCalendarDays() {
     const first = new Date(holidayMonth.getFullYear(), holidayMonth.getMonth(), 1)
@@ -2567,10 +2658,10 @@ function ManagerApp({
         {page === 'admin' && (
           <Panel title="Admin" onBack={() => setPage('dashboard')}>
             <section className="admin-choice-grid">
-              <button className="admin-choice-card" onClick={() => setPage('staff')}>
+              {canManageStaff && <button className="admin-choice-card" onClick={() => setPage('staff')}>
                 <Users size={34} />
                 <div><h3>Staff</h3><p>Manage staff accounts, roles and availability.</p></div>
-              </button>
+              </button>}
               <button className="admin-choice-card" onClick={() => setPage('holidays')}>
                 <CalendarRange size={25} />
                 <div><h3>Holidays</h3><p>View and manage the staff holiday calendar.</p></div>
@@ -2584,7 +2675,7 @@ function ManagerApp({
           </Panel>
         )}
 
-        {page === 'staff' && (
+        {page === 'staff' && canManageStaff && (
           <Panel title="Staff management" onBack={() => setPage('admin')}>
             <div className="staff-page-toolbar">
               <div>
@@ -2768,6 +2859,44 @@ function ManagerApp({
                 </article>
               })}
             </div>
+
+            <section className="holiday-sickness-editor">
+              <div>
+                <p className="eyebrow">Sickness</p>
+                <h3>Record a sick day</h3>
+                <p>Head of Centre, Activities Manager and Team Leaders can record sickness.</p>
+              </div>
+              <select value={holidaySummaryStaffId} onChange={(event) => setHolidaySummaryStaffId(event.target.value)}>
+                <option value="">Select staff member</option>
+                {staff.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}
+              </select>
+              <input type="date" value={holidaySickDate} onChange={(event) => setHolidaySickDate(event.target.value)} />
+              <button className="primary" onClick={setHolidayPageSickness}>
+                {holidaySummaryMember && holidaySickDate && (sicknessByDay[holidaySickDate] ?? []).includes(holidaySummaryMember.id) ? 'Remove sick day' : 'Mark sick'}
+              </button>
+            </section>
+
+            <section className="staff-work-summary">
+              <div className="staff-work-summary-heading">
+                <div><p className="eyebrow">Staff overview</p><h3>Work and absence summary</h3></div>
+                <select value={holidaySummaryStaffId} onChange={(event) => setHolidaySummaryStaffId(event.target.value)}>
+                  <option value="">Select staff member</option>
+                  {staff.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}
+                </select>
+              </div>
+              {!holidayStaffSummary ? (
+                <p className="empty-summary">Select a staff member to view their totals.</p>
+              ) : (
+                <div className="staff-stat-grid">
+                  <article><strong>{holidayStaffSummary.daysWorked}</strong><span>Days worked</span></article>
+                  <article><strong>{holidayStaffSummary.sessionsWorked}</strong><span>Total sessions</span></article>
+                  <article><strong>{holidayStaffSummary.holidayDays}</strong><span>Holiday days</span></article>
+                  <article><strong>{holidayStaffSummary.sickDays}</strong><span>Sick days</span></article>
+                  <article className="wide"><strong>{holidayStaffSummary.mostRun ? `${holidayStaffSummary.mostRun[0]} — ${holidayStaffSummary.mostRun[1]}` : 'No activity data yet'}</strong><span>Most-run activity</span></article>
+                  <article className="wide"><strong>{holidayStaffSummary.leastRun ? `${holidayStaffSummary.leastRun[0]} — ${holidayStaffSummary.leastRun[1]}` : 'No activity data yet'}</strong><span>Least-run activity</span></article>
+                </div>
+              )}
+            </section>
           </Panel>
         )}
 

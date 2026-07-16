@@ -1316,3 +1316,51 @@ button { cursor: pointer; }
   font-size: 0.78rem;
   padding: 0.45rem 0.6rem;
 }
+
+.holiday-sickness-editor,
+.staff-work-summary {
+  margin-top: 1.25rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--surface);
+}
+.holiday-sickness-editor {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(180px, 240px) minmax(150px, 190px) auto;
+  gap: .75rem;
+  align-items: end;
+}
+.holiday-sickness-editor p { margin-bottom: 0; }
+.staff-work-summary-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  align-items: end;
+  margin-bottom: 1rem;
+}
+.staff-work-summary-heading select { min-width: 220px; }
+.staff-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: .75rem;
+}
+.staff-stat-grid article {
+  padding: .9rem;
+  border-radius: 14px;
+  background: var(--surface-soft, #f6f8fb);
+  display: flex;
+  flex-direction: column;
+  gap: .25rem;
+}
+.staff-stat-grid article.wide { grid-column: span 2; }
+.staff-stat-grid strong { font-size: 1.15rem; }
+.staff-stat-grid span { color: var(--muted); font-size: .86rem; }
+.empty-summary { color: var(--muted); margin: 0; }
+@media (max-width: 850px) {
+  .holiday-sickness-editor { grid-template-columns: 1fr; align-items: stretch; }
+  .staff-work-summary-heading { align-items: stretch; flex-direction: column; }
+  .staff-work-summary-heading select { min-width: 0; width: 100%; }
+  .staff-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .staff-stat-grid article.wide { grid-column: span 2; }
+}

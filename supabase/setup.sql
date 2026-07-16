@@ -61,7 +61,7 @@ as $$
     select 1
     from public.profiles
     where id = auth.uid()
-      and role = 'manager'
+      and role in ('manager','centreManager','activityManager','teamLeader')
   );
 $$;
 
@@ -131,9 +131,10 @@ create table if not exists public.staff_availability (
 );
 alter table public.staff_availability enable row level security;
 drop policy if exists "Staff manage own availability" on public.staff_availability;
-create policy "Staff manage own availability" on public.staff_availability for all to authenticated
-using (lower(staff_email)=lower(coalesce(auth.jwt()->>'email','')) or public.is_manager())
-with check (lower(staff_email)=lower(coalesce(auth.jwt()->>'email','')) or public.is_manager());
+drop policy if exists "Managers manage availability" on public.staff_availability;
+create policy "Managers manage availability" on public.staff_availability for all to authenticated
+using (public.is_manager())
+with check (public.is_manager());
 drop policy if exists "Managers read availability" on public.staff_availability;
 create policy "Managers read availability" on public.staff_availability for select to authenticated using (public.is_manager() or lower(staff_email)=lower(coalesce(auth.jwt()->>'email','')));
 do $$ begin
