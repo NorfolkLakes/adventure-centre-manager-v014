@@ -276,6 +276,9 @@ function ManagerApp({
   const [arrivalStaffGroup, setArrivalStaffGroup] = useState<
     'all' | StaffRole
   >('all')
+  const [selectedArrivalSchoolByDay, setSelectedArrivalSchoolByDay] = useState<
+    Record<string, string>
+  >({})
   const [showAddStaff, setShowAddStaff] = useState(false)
   const [newStaffName, setNewStaffName] = useState('')
   const [newStaffRole, setNewStaffRole] = useState<StaffRole>('staff')
@@ -696,20 +699,22 @@ function ManagerApp({
       )
 
     for (const row of programme.rows.filter(
-      (item) => item.day === day && item.session === '3' && item.schoolLabel,
+      (item) => item.day === day && item.session === '3',
     )) {
-      const key = arrivalKey(row)
-      const current = nextArrivalAssignments[key] ?? { guideIds: [] }
-      const leaderAvailable =
-        current.leaderId &&
-        workingIds.has(current.leaderId) &&
-        !sickIds.has(current.leaderId)
-      const guideIds = current.guideIds.map((id) =>
-        id && workingIds.has(id) && !sickIds.has(id) ? id : '',
-      )
-      nextArrivalAssignments[key] = {
-        leaderId: leaderAvailable ? current.leaderId : undefined,
-        guideIds,
+      for (const school of sessionThreeSchools(row)) {
+        const key = arrivalKey(row, school.name)
+        const current = nextArrivalAssignments[key] ?? { guideIds: [] }
+        const leaderAvailable =
+          current.leaderId &&
+          workingIds.has(current.leaderId) &&
+          !sickIds.has(current.leaderId)
+        const guideIds = current.guideIds.map((id) =>
+          id && workingIds.has(id) && !sickIds.has(id) ? id : '',
+        )
+        nextArrivalAssignments[key] = {
+          leaderId: leaderAvailable ? current.leaderId : undefined,
+          guideIds,
+        }
       }
     }
 
@@ -766,116 +771,93 @@ function ManagerApp({
       }
     }
 
-    // Session 3: assign one School Leader, then one instructor per group where
-    // possible. Only pair two groups to one instructor when staffing is short.
-    const arrivalRowsForDay = dayRows.filter(
-      (row) => row.session === '3',
-    )
+    // Session 3 is filled school-by-school. Existing leaders are respected,
+    // and each school's groups receive one instructor where possible.
+    const arrivalRowsForDay = dayRows.filter((row) => row.session === '3')
 
     for (const row of arrivalRowsForDay) {
-      const key = arrivalKey(row)
-      const populatedGroups = row.cells
-        .filter((cell) => cell.activityCode && cell.activityCode !== 'Z')
-        .map((cell) => cell.group)
-      const current = nextArrivalAssignments[key] ?? { guideIds: [] }
+      for (const school of sessionThreeSchools(row)) {
+        const key = arrivalKey(row, school.name)
+        const current = nextArrivalAssignments[key] ?? { guideIds: [] }
+        if (!current.leaderId) continue
 
-      const busyInSession = new Set<string>()
-      dayRows
-        .filter((item) => item.session === row.session)
-        .forEach((item) =>
-          item.cells.forEach((cell) => {
-            const assigned = nextAssignments[cellKey(item.id, cell.group)]
-            if (assigned) busyInSession.add(assigned)
-          }),
+        const busyIds = new Set<string>()
+        dayRows
+          .filter((item) => item.session === row.session)
+          .forEach((item) =>
+            item.cells.forEach((cell) => {
+              const assigned = nextAssignments[cellKey(item.id, cell.group)]
+              if (assigned) busyIds.add(assigned)
+            }),
+          )
+
+        Object.entries(nextArrivalAssignments).forEach(
+          ([otherKey, otherAssignment]) => {
+            if (!otherKey.startsWith(`${day}::`) || otherKey === key) return
+            if (otherAssignment.leaderId) busyIds.add(otherAssignment.leaderId)
+            otherAssignment.guideIds
+              .filter(Boolean)
+              .forEach((id) => busyIds.add(id))
+          },
         )
+        busyIds.add(current.leaderId)
 
-      current.guideIds.filter(Boolean).forEach((id) => busyInSession.add(id))
-      if (current.leaderId) busyInSession.add(current.leaderId)
+        const guideIds = Array.from(
+          { length: school.groups.length },
+          (_, index) => current.guideIds[index] ?? '',
+        )
+        const guideLoad = new Map<string, number>()
+        guideIds.filter(Boolean).forEach((id) => {
+          guideLoad.set(id, (guideLoad.get(id) ?? 0) + 1)
+          busyIds.add(id)
+        })
 
-      if (!current.leaderId) {
-        const leader = staff
-          .filter(
-            (member) =>
-              workingIds.has(member.id) &&
-              !sickIds.has(member.id) &&
-              !busyInSession.has(member.id),
-          )
-          .sort((a, b) => {
-            const leaderRank = (member: StaffMember) => {
-              const role = resolvedRole(member)
-              if (role === 'teamLeader') return 0
-              if (role === 'activityManager') return 1
-              if (role === 'centreManager') return 2
-              return 3
-            }
-            const rankDifference = leaderRank(a) - leaderRank(b)
-            if (rankDifference !== 0) return rankDifference
-            return (workload.get(a.id) ?? 0) - (workload.get(b.id) ?? 0)
-          })[0]
-
-        if (leader) {
-          current.leaderId = leader.id
-          busyInSession.add(leader.id)
-          workload.set(leader.id, (workload.get(leader.id) ?? 0) + 1)
-        }
-      }
-
-      const guideIds = Array.from(
-        { length: populatedGroups.length },
-        (_, index) => current.guideIds[index] ?? '',
-      )
-      const guideLoad = new Map<string, number>()
-      guideIds.filter(Boolean).forEach((id) =>
-        guideLoad.set(id, (guideLoad.get(id) ?? 0) + 1),
-      )
-
-      for (let index = 0; index < populatedGroups.length; index += 1) {
-        if (guideIds[index]) continue
-
-        let candidates = staff
-          .filter(
-            (member) =>
-              workingIds.has(member.id) &&
-              !sickIds.has(member.id) &&
-              member.id !== current.leaderId &&
-              !busyInSession.has(member.id),
-          )
-          .sort((a, b) => {
-            const roleDifference =
-              rolePriority(resolvedRole(a)) - rolePriority(resolvedRole(b))
-            if (roleDifference !== 0) return roleDifference
-            return (workload.get(a.id) ?? 0) - (workload.get(b.id) ?? 0)
-          })
-
-        // If everyone is already used, allow an arrival instructor to cover a
-        // second group, but never more than two groups.
-        if (!candidates.length) {
-          candidates = staff
+        for (let index = 0; index < school.groups.length; index += 1) {
+          if (guideIds[index]) continue
+          let candidates = staff
             .filter(
               (member) =>
                 workingIds.has(member.id) &&
                 !sickIds.has(member.id) &&
                 member.id !== current.leaderId &&
-                (guideLoad.get(member.id) ?? 0) === 1,
+                !busyIds.has(member.id),
             )
-            .sort((a, b) =>
-              (workload.get(a.id) ?? 0) - (workload.get(b.id) ?? 0),
-            )
-        }
+            .sort((a, b) => {
+              const roleDifference =
+                rolePriority(resolvedRole(a)) - rolePriority(resolvedRole(b))
+              return (
+                roleDifference ||
+                (workload.get(a.id) ?? 0) - (workload.get(b.id) ?? 0)
+              )
+            })
 
-        const chosen = candidates[0]
-        if (chosen) {
+          if (!candidates.length) {
+            candidates = staff
+              .filter(
+                (member) =>
+                  workingIds.has(member.id) &&
+                  !sickIds.has(member.id) &&
+                  member.id !== current.leaderId &&
+                  (guideLoad.get(member.id) ?? 0) === 1,
+              )
+              .sort(
+                (a, b) =>
+                  (workload.get(a.id) ?? 0) - (workload.get(b.id) ?? 0),
+              )
+          }
+
+          const chosen = candidates[0]
+          if (!chosen) continue
           guideIds[index] = chosen.id
-          const previousGuideLoad = guideLoad.get(chosen.id) ?? 0
-          guideLoad.set(chosen.id, previousGuideLoad + 1)
-          if (previousGuideLoad === 0) busyInSession.add(chosen.id)
+          guideLoad.set(chosen.id, (guideLoad.get(chosen.id) ?? 0) + 1)
+          busyIds.add(chosen.id)
           workload.set(chosen.id, (workload.get(chosen.id) ?? 0) + 1)
         }
-      }
 
-      nextArrivalAssignments[key] = {
-        leaderId: current.leaderId,
-        guideIds,
+        nextArrivalAssignments[key] = {
+          leaderId: current.leaderId,
+          guideIds,
+        }
       }
     }
 
@@ -887,7 +869,7 @@ function ManagerApp({
       JSON.stringify(nextArrivalAssignments),
     )
     setImportMessage(
-      `Auto-filled ${day}, including a School Leader and Session 3 group instructors. One instructor per group was used where possible; groups were paired only when staffing was short.`,
+      `Auto-filled ${day}, including Session 3 group instructors for schools with a selected leader. One instructor per group was used where possible; groups were paired only when staffing was short.`,
     )
   }
 
@@ -1003,12 +985,49 @@ function ManagerApp({
     localStorage.setItem(STAFF_KEY, JSON.stringify(nextStaff))
   }
 
-  function arrivalKey(row: ProgrammeRow) {
-    return `${row.day}::${row.id}`
+  function sessionThreeSchools(row: ProgrammeRow) {
+    const knownActivityCodes = new Set(
+      activities.map((activity) => activity.code.trim().toUpperCase()),
+    )
+    const groupsBySchool = new Map<string, number[]>()
+
+    row.cells.forEach((cell) => {
+      const value = cell.activityCode.trim()
+      if (!value || value === 'Z' || knownActivityCodes.has(value)) return
+      const groups = groupsBySchool.get(value) ?? []
+      groups.push(cell.group)
+      groupsBySchool.set(value, groups)
+    })
+
+    if (groupsBySchool.size > 0) {
+      return Array.from(groupsBySchool.entries()).map(([name, groups]) => ({
+        name,
+        groups: Array.from(new Set(groups)).sort((a, b) => a - b),
+      }))
+    }
+
+    const activeGroups = row.cells
+      .filter((cell) => cell.activityCode && cell.activityCode !== 'Z')
+      .map((cell) => cell.group)
+
+    return [
+      {
+        name: row.schoolLabel ?? 'School arrival',
+        groups: Array.from(new Set(activeGroups)).sort((a, b) => a - b),
+      },
+    ]
   }
 
-  function setArrivalLeader(row: ProgrammeRow, staffId: string) {
-    const key = arrivalKey(row)
+  function arrivalKey(row: ProgrammeRow, schoolName: string) {
+    return `${row.day}::${row.id}::${encodeURIComponent(schoolName)}`
+  }
+
+  function setArrivalLeader(
+    row: ProgrammeRow,
+    schoolName: string,
+    staffId: string,
+  ) {
+    const key = arrivalKey(row, schoolName)
     const next = {
       ...arrivalAssignments,
       [key]: {
@@ -1017,18 +1036,16 @@ function ManagerApp({
       },
     }
     setArrivalAssignments(next)
-    localStorage.setItem(
-      ARRIVAL_ASSIGNMENTS_KEY,
-      JSON.stringify(next),
-    )
+    localStorage.setItem(ARRIVAL_ASSIGNMENTS_KEY, JSON.stringify(next))
   }
 
   function setArrivalGuide(
     row: ProgrammeRow,
+    schoolName: string,
     slotIndex: number,
     staffId: string,
   ) {
-    const key = arrivalKey(row)
+    const key = arrivalKey(row, schoolName)
     const current = arrivalAssignments[key] ?? { guideIds: [] }
     const guideIds = [...current.guideIds]
     guideIds[slotIndex] = staffId
@@ -1037,9 +1054,105 @@ function ManagerApp({
       [key]: { ...current, guideIds },
     }
     setArrivalAssignments(next)
-    localStorage.setItem(
-      ARRIVAL_ASSIGNMENTS_KEY,
-      JSON.stringify(next),
+    localStorage.setItem(ARRIVAL_ASSIGNMENTS_KEY, JSON.stringify(next))
+  }
+
+  function autoFillSchoolArrival(
+    row: ProgrammeRow,
+    schoolName: string,
+    groupNumbers: number[],
+  ) {
+    const key = arrivalKey(row, schoolName)
+    const current = arrivalAssignments[key] ?? { guideIds: [] }
+    if (!current.leaderId) {
+      setImportMessage(`Select the School Leader for ${schoolName} first.`)
+      return
+    }
+
+    const workingIds = new Set(
+      workingByDay[row.day] ?? staff.map((member) => member.id),
+    )
+    const sickIds = new Set(sicknessByDay[row.day] ?? [])
+    const busyIds = new Set<string>()
+
+    Object.entries(assignments).forEach(([cellAssignmentKey, staffId]) => {
+      const [rowId] = cellAssignmentKey.split('::')
+      const assignedRow = programme?.rows.find((item) => item.id === rowId)
+      if (
+        assignedRow?.day === row.day &&
+        assignedRow.session === row.session &&
+        staffId
+      ) {
+        busyIds.add(staffId)
+      }
+    })
+
+    Object.entries(arrivalAssignments).forEach(([assignmentKey, assignment]) => {
+      if (!assignmentKey.startsWith(`${row.day}::`)) return
+      if (assignmentKey === key) return
+      if (assignment.leaderId) busyIds.add(assignment.leaderId)
+      assignment.guideIds.filter(Boolean).forEach((id) => busyIds.add(id))
+    })
+
+    busyIds.add(current.leaderId)
+    const guideIds = Array.from(
+      { length: groupNumbers.length },
+      (_, index) => current.guideIds[index] ?? '',
+    )
+    const guideLoad = new Map<string, number>()
+    guideIds.filter(Boolean).forEach((id) => {
+      guideLoad.set(id, (guideLoad.get(id) ?? 0) + 1)
+      busyIds.add(id)
+    })
+
+    for (let index = 0; index < groupNumbers.length; index += 1) {
+      if (guideIds[index]) continue
+
+      let candidates = staff
+        .filter(
+          (member) =>
+            workingIds.has(member.id) &&
+            !sickIds.has(member.id) &&
+            member.id !== current.leaderId &&
+            !busyIds.has(member.id) &&
+            (arrivalStaffGroup === 'all' ||
+              resolvedRole(member) === arrivalStaffGroup),
+        )
+        .sort((a, b) => {
+          const roleDifference =
+            rolePriority(resolvedRole(a)) - rolePriority(resolvedRole(b))
+          return roleDifference || a.name.localeCompare(b.name)
+        })
+
+      if (!candidates.length) {
+        candidates = staff
+          .filter(
+            (member) =>
+              workingIds.has(member.id) &&
+              !sickIds.has(member.id) &&
+              member.id !== current.leaderId &&
+              (guideLoad.get(member.id) ?? 0) === 1 &&
+              (arrivalStaffGroup === 'all' ||
+                resolvedRole(member) === arrivalStaffGroup),
+          )
+          .sort((a, b) => a.name.localeCompare(b.name))
+      }
+
+      const chosen = candidates[0]
+      if (!chosen) continue
+      guideIds[index] = chosen.id
+      guideLoad.set(chosen.id, (guideLoad.get(chosen.id) ?? 0) + 1)
+      busyIds.add(chosen.id)
+    }
+
+    const next = {
+      ...arrivalAssignments,
+      [key]: { leaderId: current.leaderId, guideIds },
+    }
+    setArrivalAssignments(next)
+    localStorage.setItem(ARRIVAL_ASSIGNMENTS_KEY, JSON.stringify(next))
+    setImportMessage(
+      `Auto-filled ${schoolName}: one instructor per group where possible, with a maximum of two groups per instructor.`,
     )
   }
 
@@ -1131,9 +1244,17 @@ function ManagerApp({
     }
 
     for (const [key, arrival] of Object.entries(arrivalAssignments)) {
-      const [day, rowId] = key.split('::')
+      const [day, rowId, encodedSchoolName] = key.split('::')
       const row = programme.rows.find((item) => item.id === rowId)
       if (!row) continue
+
+      const schools = sessionThreeSchools(row)
+      const schoolName = encodedSchoolName
+        ? decodeURIComponent(encodedSchoolName)
+        : schools[0]?.name ?? row.schoolLabel ?? 'School arrival'
+      const school =
+        schools.find((item) => item.name === schoolName) ?? schools[0]
+      const groupNumbers = school?.groups ?? []
 
       if (arrival.leaderId) {
         const leader = staff.find((item) => item.id === arrival.leaderId)
@@ -1145,13 +1266,11 @@ function ManagerApp({
             session: row.session,
             activity_code: 'ARRIVAL',
             activity_name: 'School Leader – documents and welcome',
-            group_numbers: row.cells
-              .filter((cell) => cell.activityCode && cell.activityCode !== 'Z')
-              .map((cell) => cell.group),
+            group_numbers: groupNumbers,
             duty_type: 'arrival_leader',
             staff_email: email,
             staff_name: leader.name,
-            school_name: row.schoolLabel ?? null,
+            school_name: schoolName,
           })
         }
       }
@@ -1168,11 +1287,11 @@ function ManagerApp({
           session: row.session,
           activity_code: 'ARRIVAL',
           activity_name: 'Accommodation and fire alarm instructor',
-          group_numbers: [row.cells.filter((cell) => cell.activityCode && cell.activityCode !== 'Z')[index]?.group ?? index + 1],
+          group_numbers: groupNumbers[index] ? [groupNumbers[index]] : [],
           duty_type: 'arrival_instructor',
           staff_email: email,
           staff_name: guide.name,
-          school_name: row.schoolLabel ?? null,
+          school_name: schoolName,
         })
       })
     }
@@ -1737,179 +1856,227 @@ function ManagerApp({
                   </section>
                 )}
 
-                {arrivalRows
-                  .filter((row) => row.day === activeStaffingDay)
-                  .map((row) => {
-                    const dayGroupNumbers = Array.from(
-                      new Set(
-                        (programme?.rows ?? [])
-                          .filter((item) => item.day === row.day)
-                          .flatMap((item) =>
-                            item.cells
-                              .filter(
-                                (cell) =>
-                                  cell.activityCode &&
-                                  cell.activityCode !== 'Z',
-                              )
-                              .map((cell) => cell.group),
-                          ),
-                      ),
-                    ).sort((a, b) => a - b)
-                    const groupCount = Math.max(1, dayGroupNumbers.length)
-                    const guideSlots = groupCount
-                    const inferredSchoolLabel =
-                      row.schoolLabel ??
-                      row.cells
-                        .map((cell) => cell.activityCode)
-                        .find(
-                          (code) =>
-                            code &&
-                            code !== 'Z' &&
-                            !activities.some(
-                              (activity) => activity.code === code,
-                            ),
-                        ) ??
-                      'School arrival'
-                    const key = arrivalKey(row)
-                    const assignment =
-                      arrivalAssignments[key] ?? { guideIds: [] }
-                    const availableToday =
-                      workingByDay[activeStaffingDay] ??
-                      staff.map((member) => member.id)
-                    const sickToday =
-                      sicknessByDay[activeStaffingDay] ?? []
+                {(() => {
+                  const schoolOptions = arrivalRows
+                    .filter((row) => row.day === activeStaffingDay)
+                    .flatMap((row) =>
+                      sessionThreeSchools(row).map((school) => ({
+                        id: `${row.id}::${school.name}`,
+                        row,
+                        school,
+                      })),
+                    )
 
-                    const leaderOptions = staff
-                      .filter(
-                        (member) =>
-                          availableToday.includes(member.id) &&
-                          !sickToday.includes(member.id) &&
-                          !assignment.guideIds.includes(member.id),
-                      )
-                      .sort((a, b) => {
-                        const leaderRank = (member: StaffMember) => {
-                          const role = resolvedRole(member)
-                          if (role === 'teamLeader') return 0
-                          if (role === 'activityManager') return 1
-                          if (role === 'centreManager') return 2
-                          return 3
-                        }
-                        return leaderRank(a) - leaderRank(b)
-                      })
+                  if (!schoolOptions.length) return null
 
-                    const guideOptions = staff.filter(
+                  const selectedId =
+                    selectedArrivalSchoolByDay[activeStaffingDay] ??
+                    schoolOptions[0].id
+                  const selectedSchool =
+                    schoolOptions.find((item) => item.id === selectedId) ??
+                    schoolOptions[0]
+                  const { row, school } = selectedSchool
+                  const key = arrivalKey(row, school.name)
+                  const assignment =
+                    arrivalAssignments[key] ?? { guideIds: [] }
+                  const availableToday =
+                    workingByDay[activeStaffingDay] ??
+                    staff.map((member) => member.id)
+                  const sickToday = sicknessByDay[activeStaffingDay] ?? []
+                  const assignedElsewhere = new Set<string>()
+
+                  Object.entries(arrivalAssignments).forEach(
+                    ([otherKey, otherAssignment]) => {
+                      if (
+                        otherKey === key ||
+                        !otherKey.startsWith(`${activeStaffingDay}::`)
+                      ) {
+                        return
+                      }
+                      if (otherAssignment.leaderId) {
+                        assignedElsewhere.add(otherAssignment.leaderId)
+                      }
+                      otherAssignment.guideIds
+                        .filter(Boolean)
+                        .forEach((id) => assignedElsewhere.add(id))
+                    },
+                  )
+
+                  const leaderOptions = staff
+                    .filter(
                       (member) =>
                         availableToday.includes(member.id) &&
                         !sickToday.includes(member.id) &&
-                        member.id !== assignment.leaderId &&
-                        (arrivalStaffGroup === 'all' ||
-                          resolvedRole(member) === arrivalStaffGroup),
+                        !assignment.guideIds.includes(member.id) &&
+                        !assignedElsewhere.has(member.id),
                     )
+                    .sort((a, b) => {
+                      const leaderRank = (member: StaffMember) => {
+                        const role = resolvedRole(member)
+                        if (role === 'teamLeader') return 0
+                        if (role === 'activityManager') return 1
+                        if (role === 'centreManager') return 2
+                        return 3
+                      }
+                      return leaderRank(a) - leaderRank(b)
+                    })
 
-                    return (
-                      <section className="arrival-card" key={row.id}>
-                        <div className="arrival-card-heading">
-                          <div>
-                            <p className="eyebrow">School welcome and accommodation · Session 3</p>
-                            <h3>{inferredSchoolLabel}</h3>
-                            <p>
-                              {groupCount} group{groupCount === 1 ? '' : 's'} · one School Leader plus up to {guideSlots} group instructor{guideSlots === 1 ? '' : 's'}
-                            </p>
-                          </div>
+                  const guideOptions = staff.filter(
+                    (member) =>
+                      availableToday.includes(member.id) &&
+                      !sickToday.includes(member.id) &&
+                      member.id !== assignment.leaderId &&
+                      !assignedElsewhere.has(member.id) &&
+                      (arrivalStaffGroup === 'all' ||
+                        resolvedRole(member) === arrivalStaffGroup),
+                  )
+
+                  return (
+                    <section className="arrival-card">
+                      <div className="arrival-card-heading">
+                        <div>
+                          <p className="eyebrow">
+                            School welcome and accommodation · Session 3
+                          </p>
+                          <h3>{school.name}</h3>
+                          <p>
+                            {school.groups.length} group
+                            {school.groups.length === 1 ? '' : 's'} · one School
+                            Leader plus group instructors
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="arrival-staff-filter">
+                        <label>
+                          Select school from programme
+                          <select
+                            value={selectedSchool.id}
+                            onChange={(event) =>
+                              setSelectedArrivalSchoolByDay((current) => ({
+                                ...current,
+                                [activeStaffingDay]: event.target.value,
+                              }))
+                            }
+                          >
+                            {schoolOptions.map((option) => (
+                              <option key={option.id} value={option.id}>
+                                {option.school.name} · Groups{' '}
+                                {option.school.groups.join(', ')}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <label>
+                          Instructor staff group
+                          <select
+                            value={arrivalStaffGroup}
+                            onChange={(event) =>
+                              setArrivalStaffGroup(
+                                event.target.value as 'all' | StaffRole,
+                              )
+                            }
+                          >
+                            <option value="all">All working staff</option>
+                            <option value="staff">Staff</option>
+                            <option value="teamLeader">Team leaders</option>
+                            <option value="activityManager">
+                              Activities managers
+                            </option>
+                            <option value="centreManager">
+                              Centre managers
+                            </option>
+                          </select>
+                        </label>
+                      </div>
+
+                      <div className="arrival-assignment-grid">
+                        <label>
+                          School Leader
+                          <select
+                            value={assignment.leaderId ?? ''}
+                            onChange={(event) =>
+                              setArrivalLeader(
+                                row,
+                                school.name,
+                                event.target.value,
+                              )
+                            }
+                          >
+                            <option value="">Select School Leader</option>
+                            {leaderOptions.map((member) => (
+                              <option key={member.id} value={member.id}>
+                                {member.name}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+
+                        <div className="arrival-autofill-control">
+                          <button
+                            className="primary"
+                            disabled={!assignment.leaderId}
+                            onClick={() =>
+                              autoFillSchoolArrival(
+                                row,
+                                school.name,
+                                school.groups,
+                              )
+                            }
+                          >
+                            <WandSparkles size={17} />
+                            Auto-fill this school’s groups
+                          </button>
+                          {!assignment.leaderId && (
+                            <small>Select the School Leader first.</small>
+                          )}
                         </div>
 
-                        <div className="arrival-staff-filter">
-                          <label>
-                            Instructor staff group
+                        {school.groups.map((groupNumber, index) => (
+                          <label key={groupNumber}>
+                            Instructor for Group {groupNumber}
                             <select
-                              value={arrivalStaffGroup}
+                              value={assignment.guideIds[index] ?? ''}
                               onChange={(event) =>
-                                setArrivalStaffGroup(
-                                  event.target.value as
-                                    | 'all'
-                                    | StaffRole,
+                                setArrivalGuide(
+                                  row,
+                                  school.name,
+                                  index,
+                                  event.target.value,
                                 )
                               }
                             >
-                              <option value="all">All working staff</option>
-                              <option value="staff">Staff</option>
-                              <option value="teamLeader">Team leaders</option>
-                              <option value="activityManager">
-                                Activities managers
-                              </option>
-                              <option value="centreManager">
-                                Centre managers
-                              </option>
+                              <option value="">Select instructor</option>
+                              {guideOptions
+                                .filter((member) => {
+                                  const existingCount =
+                                    assignment.guideIds.filter(
+                                      (id, guideIndex) =>
+                                        guideIndex !== index &&
+                                        id === member.id,
+                                    ).length
+                                  return existingCount < 2
+                                })
+                                .map((member) => (
+                                  <option key={member.id} value={member.id}>
+                                    {member.name}
+                                  </option>
+                                ))}
                             </select>
                           </label>
-                          <p>
-                            The School Leader talks through documents while group instructors take children to accommodation and complete the fire alarm test. One instructor per group is preferred; one instructor may cover two groups when staffing is short.
-                          </p>
-                        </div>
+                        ))}
+                      </div>
 
-                        <div className="arrival-assignment-grid">
-                          <label>
-                            School Leader
-                            <select
-                              value={assignment.leaderId ?? ''}
-                              onChange={(event) =>
-                                setArrivalLeader(row, event.target.value)
-                              }
-                            >
-                              <option value="">Select School Leader</option>
-                              {leaderOptions.map((member) => (
-                                <option key={member.id} value={member.id}>
-                                  {member.name}
-                                </option>
-                              ))}
-                            </select>
-                          </label>
-
-                          {Array.from({ length: guideSlots }, (_, index) => {
-                            const groupNumber = index + 1
-                            return (
-                              <label key={index}>
-                                Instructor for Group {dayGroupNumbers[index] ?? groupNumber}
-                                <select
-                                  value={assignment.guideIds[index] ?? ''}
-                                  onChange={(event) =>
-                                    setArrivalGuide(
-                                      row,
-                                      index,
-                                      event.target.value,
-                                    )
-                                  }
-                                >
-                                  <option value="">Select instructor</option>
-                                  {guideOptions
-                                    .filter((member) => {
-                                      const existingCount =
-                                        assignment.guideIds.filter(
-                                          (id, guideIndex) =>
-                                            guideIndex !== index &&
-                                            id === member.id,
-                                        ).length
-                                      return existingCount < 2
-                                    })
-                                    .map((member) => (
-                                      <option
-                                        key={member.id}
-                                        value={member.id}
-                                      >
-                                        {member.name}
-                                      </option>
-                                    ))}
-                                </select>
-                              </label>
-                            )
-                          })}
-                        </div>
-                        <p className="arrival-note">
-                          Preferred staffing is one instructor per group. The same instructor can be selected for a maximum of two groups when staffing is short.
-                        </p>
-                      </section>
-                    )
-                  })}
+                      <p className="arrival-note">
+                        The leader talks through the school documents. Group
+                        instructors take the listed groups to accommodation and
+                        complete the fire alarm test. Published staff logins show
+                        the school name and exact group number.
+                      </p>
+                    </section>
+                  )
+                })()}
 
                 <div className="search-box">
                   <Search size={18} />
