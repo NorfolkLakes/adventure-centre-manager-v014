@@ -152,3 +152,42 @@ grant usage on schema public to authenticated;
 grant select, insert, update, delete on public.rota_assignments to authenticated;
 grant select, insert, update, delete on public.staff_availability to authenticated;
 grant usage, select on all sequences in schema public to authenticated;
+
+
+-- v0.32 holiday calendar and role permissions
+alter table public.profiles drop constraint if exists profiles_role_check;
+alter table public.profiles add constraint profiles_role_check
+  check (role in ('manager','staff','centreManager','activityManager','teamLeader'));
+
+create or replace function public.can_manage_holidays()
+returns boolean language sql stable security definer set search_path = '' as $$
+  select exists (select 1 from public.profiles where id = auth.uid() and role in ('manager','centreManager','activityManager'));
+$$;
+
+create or replace function public.can_view_holidays()
+returns boolean language sql stable security definer set search_path = '' as $$
+  select exists (select 1 from public.profiles where id = auth.uid() and role in ('manager','centreManager','activityManager','teamLeader'));
+$$;
+
+create table if not exists public.staff_holidays (
+  id uuid primary key default gen_random_uuid(),
+  staff_email text not null default '',
+  staff_name text not null,
+  start_date date not null,
+  end_date date not null,
+  note text,
+  created_at timestamptz not null default now(),
+  created_by uuid references auth.users(id),
+  check (end_date >= start_date)
+);
+alter table public.staff_holidays enable row level security;
+drop policy if exists "Holiday viewers read" on public.staff_holidays;
+create policy "Holiday viewers read" on public.staff_holidays for select to authenticated using (public.can_view_holidays());
+drop policy if exists "Holiday managers insert" on public.staff_holidays;
+create policy "Holiday managers insert" on public.staff_holidays for insert to authenticated with check (public.can_manage_holidays());
+drop policy if exists "Holiday managers update" on public.staff_holidays;
+create policy "Holiday managers update" on public.staff_holidays for update to authenticated using (public.can_manage_holidays()) with check (public.can_manage_holidays());
+drop policy if exists "Holiday managers delete" on public.staff_holidays;
+create policy "Holiday managers delete" on public.staff_holidays for delete to authenticated using (public.can_manage_holidays());
+grant select, insert, update, delete on public.staff_holidays to authenticated;
+do $$ begin alter publication supabase_realtime add table public.staff_holidays; exception when duplicate_object then null; end $$;

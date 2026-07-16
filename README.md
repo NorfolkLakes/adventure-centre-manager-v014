@@ -156,3 +156,10 @@ After deploying v0.20, run `supabase/setup.sql` once in the Supabase SQL Editor 
 - Arrival auto-fill shuffles eligible staff on every run rather than assigning alphabetically or by role order.
 - Daily Staffing displays a prominent warning when groups remain unassigned or the busiest session needs more staff than are available.
 - Accommodation navigation is replaced by School Notes. Every detected school has a notes box and a multi-staff assignment panel.
+
+
+## v0.32
+- Added Admin → Holidays monthly calendar.
+- Head of Centre and Activities Manager can add and remove holidays.
+- Added Team Leader login role with read-only holiday calendar access.
+- Instructors cannot access the holiday calendar.

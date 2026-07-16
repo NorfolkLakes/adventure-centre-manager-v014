@@ -2,6 +2,8 @@ import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Building2,
   CalendarDays,
+  CalendarRange,
+  ChevronRight,
   CheckCircle2,
   ChevronLeft,
   CircleAlert,
@@ -314,9 +316,11 @@ function arrivalSchoolName(row: ProgrammeRow) {
 function ManagerApp({
   accountEmail,
   onSignOut,
+  accountRole = 'centreManager',
 }: {
   accountEmail: string
   onSignOut: () => void
+  accountRole?: 'centreManager' | 'activityManager'
 }) {
   const [page, setPage] = useState<Page>('dashboard')
   const [programme, setProgramme] = useState<ProgrammeImport | null>(() =>
@@ -417,6 +421,12 @@ function ManagerApp({
   const [newStaffName, setNewStaffName] = useState('')
   const [newStaffRole, setNewStaffRole] = useState<StaffRole>('staff')
   const [newStaffQualifications, setNewStaffQualifications] = useState<string[]>([])
+  const [holidayMonth, setHolidayMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1))
+  const [holidays, setHolidays] = useState<{id:string;staff_email:string;staff_name:string;start_date:string;end_date:string;note:string|null}[]>([])
+  const [holidayStaffId, setHolidayStaffId] = useState('')
+  const [holidayStart, setHolidayStart] = useState('')
+  const [holidayEnd, setHolidayEnd] = useState('')
+  const [holidayNote, setHolidayNote] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -466,6 +476,68 @@ function ManagerApp({
     const channel = supabase.channel('manager-availability-updates').on('postgres_changes', { event: '*', schema: 'public', table: 'staff_availability' }, loadStaffAvailability).subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [accountEmail, staff])
+
+  async function loadHolidays() {
+    const { data, error } = await supabase
+      .from('staff_holidays')
+      .select('id,staff_email,staff_name,start_date,end_date,note')
+      .order('start_date')
+    if (error) setImportMessage(error.message)
+    else setHolidays((data ?? []) as typeof holidays)
+  }
+
+  useEffect(() => {
+    loadHolidays()
+    const channel = supabase.channel('holiday-calendar-updates')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'staff_holidays' }, loadHolidays)
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [])
+
+  async function addHoliday() {
+    const member = staff.find((item) => item.id === holidayStaffId)
+    if (!member || !holidayStart || !holidayEnd) {
+      setImportMessage('Choose a staff member and holiday dates.')
+      return
+    }
+    if (holidayEnd < holidayStart) {
+      setImportMessage('The holiday end date cannot be before the start date.')
+      return
+    }
+    const { error } = await supabase.from('staff_holidays').insert({
+      staff_email: (member.email ?? '').trim().toLowerCase(),
+      staff_name: member.name,
+      start_date: holidayStart,
+      end_date: holidayEnd,
+      note: holidayNote.trim() || null,
+    })
+    if (error) setImportMessage(error.message)
+    else {
+      setHolidayStaffId(''); setHolidayStart(''); setHolidayEnd(''); setHolidayNote('')
+      setImportMessage(`${member.name}'s holiday was added.`)
+      loadHolidays()
+    }
+  }
+
+  async function deleteHoliday(id: string) {
+    const { error } = await supabase.from('staff_holidays').delete().eq('id', id)
+    if (error) setImportMessage(error.message)
+    else loadHolidays()
+  }
+
+  function holidayCalendarDays() {
+    const first = new Date(holidayMonth.getFullYear(), holidayMonth.getMonth(), 1)
+    const start = new Date(first)
+    start.setDate(first.getDate() - ((first.getDay() + 6) % 7))
+    return Array.from({ length: 42 }, (_, index) => {
+      const date = new Date(start); date.setDate(start.getDate() + index); return date
+    })
+  }
+
+  function dateKey(date: Date) {
+    const year = date.getFullYear(); const month = String(date.getMonth()+1).padStart(2,'0'); const day = String(date.getDate()).padStart(2,'0')
+    return `${year}-${month}-${day}`
+  }
 
   function sessionDemandForDay(day: string) {
     if (!programme) return []
@@ -712,14 +784,30 @@ function ManagerApp({
     localStorage.setItem(STAFF_KEY, JSON.stringify(next))
   }
 
-  function setStaffRole(staffId: string, role: StaffRole) {
-    const next = staff.map((member) =>
-      member.id === staffId
-        ? { ...member, role, teamLeader: role === 'teamLeader' }
-        : member,
+  async function setStaffRole(staffId: string, role: StaffRole) {
+    const member = staff.find((item) => item.id === staffId)
+    const next = staff.map((item) =>
+      item.id === staffId
+        ? { ...item, role, teamLeader: role === 'teamLeader' }
+        : item,
     )
     setStaff(next)
     localStorage.setItem(STAFF_KEY, JSON.stringify(next))
+
+    if (member?.email) {
+      const profileRole = role === 'centreManager'
+        ? 'centreManager'
+        : role === 'activityManager'
+          ? 'activityManager'
+          : role === 'teamLeader'
+            ? 'teamLeader'
+            : 'staff'
+      const { error } = await supabase
+        .from('profiles')
+        .update({ role: profileRole })
+        .eq('email', member.email.trim().toLowerCase())
+      if (error) setImportMessage(`Role saved locally, but login access was not updated: ${error.message}`)
+    }
   }
 
   function updateStaffEmail(staffId: string, email: string) {
@@ -2348,6 +2436,11 @@ function ManagerApp({
                 <Users size={34} />
                 <div><h3>Staff</h3><p>Manage staff accounts, roles and availability.</p></div>
               </button>
+              <button className="admin-choice-card" onClick={() => setPage('holidays')}>
+                <CalendarRange size={25} />
+                <div><h3>Holidays</h3><p>View and manage the staff holiday calendar.</p></div>
+                <ChevronRight size={20} />
+              </button>
               <button className="admin-choice-card" onClick={() => setPage('signoffs')}>
                 <ShieldCheck size={34} />
                 <div><h3>Sign-off</h3><p>Search staff and manage activity sign-offs.</p></div>
@@ -2497,6 +2590,44 @@ function ManagerApp({
                   </div>
                 </article>
               ))}
+            </div>
+          </Panel>
+        )}
+
+        {page === 'holidays' && (
+          <Panel title="Staff holidays" onBack={() => setPage('admin')}>
+            <div className="holiday-summary">
+              <div><p className="eyebrow">Holiday calendar</p><h3>{holidayMonth.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}</h3></div>
+              <div className="holiday-month-actions">
+                <button className="secondary-action" onClick={() => setHolidayMonth(new Date(holidayMonth.getFullYear(), holidayMonth.getMonth()-1, 1))}>Previous</button>
+                <button className="secondary-action" onClick={() => setHolidayMonth(new Date())}>Today</button>
+                <button className="secondary-action" onClick={() => setHolidayMonth(new Date(holidayMonth.getFullYear(), holidayMonth.getMonth()+1, 1))}>Next</button>
+              </div>
+            </div>
+            <section className="holiday-editor">
+              <select value={holidayStaffId} onChange={(event) => setHolidayStaffId(event.target.value)}>
+                <option value="">Select staff member</option>
+                {staff.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}
+              </select>
+              <input type="date" value={holidayStart} onChange={(event) => setHolidayStart(event.target.value)} />
+              <input type="date" value={holidayEnd} onChange={(event) => setHolidayEnd(event.target.value)} />
+              <input value={holidayNote} onChange={(event) => setHolidayNote(event.target.value)} placeholder="Note (optional)" />
+              <button className="primary" onClick={addHoliday}>Add holiday</button>
+            </section>
+            <div className="holiday-weekdays">{['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map((day) => <strong key={day}>{day}</strong>)}</div>
+            <div className="holiday-calendar">
+              {holidayCalendarDays().map((date) => {
+                const key = dateKey(date)
+                const entries = holidays.filter((holiday) => holiday.start_date <= key && holiday.end_date >= key)
+                const today = key === dateKey(new Date())
+                return <article key={key} className={`holiday-day ${date.getMonth() !== holidayMonth.getMonth() ? 'outside' : ''} ${today ? 'today' : ''}`}>
+                  <span className="holiday-date">{date.getDate()}</span>
+                  {entries.map((holiday) => <div className="holiday-entry" key={holiday.id} title={holiday.note ?? ''}>
+                    <span>{holiday.staff_name}</span>
+                    <button onClick={() => deleteHoliday(holiday.id)} aria-label={`Delete ${holiday.staff_name} holiday`}>×</button>
+                  </div>)}
+                </article>
+              })}
             </div>
           </Panel>
         )}

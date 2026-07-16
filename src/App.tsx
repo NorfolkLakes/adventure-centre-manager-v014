@@ -8,7 +8,7 @@ type Profile = {
   id: string
   email: string
   display_name: string | null
-  role: 'manager' | 'staff'
+  role: 'manager' | 'staff' | 'centreManager' | 'activityManager' | 'teamLeader'
 }
 
 type RotaDuty = {
@@ -91,13 +91,18 @@ function App() {
     return <LoginScreen />
   }
 
-  if (profile?.role === 'manager') {
+  if (profile?.role === 'manager' || profile?.role === 'centreManager' || profile?.role === 'activityManager') {
     return (
       <ManagerApp
         accountEmail={profile.email || session.user.email || ''}
         onSignOut={signOut}
+        accountRole={profile.role === 'activityManager' ? 'activityManager' : 'centreManager'}
       />
     )
+  }
+
+  if (profile?.role === 'teamLeader') {
+    return <TeamLeaderHolidayView accountEmail={profile.email || session.user.email || ''} onSignOut={signOut} />
   }
 
   return (
@@ -107,6 +112,28 @@ function App() {
       onSignOut={signOut}
     />
   )
+}
+
+function TeamLeaderHolidayView({ accountEmail, onSignOut }: { accountEmail: string; onSignOut: () => void }) {
+  const [holidays, setHolidays] = useState<{id:string;staff_name:string;start_date:string;end_date:string;note:string|null}[]>([])
+  const [month, setMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1))
+  useEffect(() => {
+    async function load() {
+      const { data } = await supabase.from('staff_holidays').select('id,staff_name,start_date,end_date,note').order('start_date')
+      setHolidays((data ?? []) as typeof holidays)
+    }
+    load()
+    const channel = supabase.channel('team-leader-holidays').on('postgres_changes', { event: '*', schema: 'public', table: 'staff_holidays' }, load).subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [])
+  const dateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`
+  const first = new Date(month.getFullYear(), month.getMonth(), 1); const start = new Date(first); start.setDate(first.getDate()-((first.getDay()+6)%7))
+  const days = Array.from({length:42},(_,i)=>{const d=new Date(start);d.setDate(start.getDate()+i);return d})
+  return <main className="app-shell team-leader-shell">
+    <header className="app-header"><div><p className="eyebrow">Norfolk Lakes</p><h1>Holiday calendar</h1><small>{accountEmail} · Team Leader · View only</small></div><button className="secondary-action" onClick={onSignOut}><LogOut size={17}/>Sign out</button></header>
+    <section className="panel"><div className="holiday-summary"><h2>{month.toLocaleDateString('en-GB',{month:'long',year:'numeric'})}</h2><div className="holiday-month-actions"><button className="secondary-action" onClick={()=>setMonth(new Date(month.getFullYear(),month.getMonth()-1,1))}>Previous</button><button className="secondary-action" onClick={()=>setMonth(new Date())}>Today</button><button className="secondary-action" onClick={()=>setMonth(new Date(month.getFullYear(),month.getMonth()+1,1))}>Next</button></div></div>
+    <div className="holiday-weekdays">{['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(day=><strong key={day}>{day}</strong>)}</div><div className="holiday-calendar">{days.map(date=>{const key=dateKey(date); const entries=holidays.filter(h=>h.start_date<=key&&h.end_date>=key);return <article key={key} className={`holiday-day ${date.getMonth()!==month.getMonth()?'outside':''} ${key===dateKey(new Date())?'today':''}`}><span className="holiday-date">{date.getDate()}</span>{entries.map(h=><div className="holiday-entry readonly" key={h.id}>{h.staff_name}</div>)}</article>})}</div></section>
+  </main>
 }
 
 function LoginScreen() {
