@@ -100,6 +100,11 @@ function normaliseIdentity(value: unknown) {
   return normaliseText(value).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 }
 
+function availabilityKeyForMember(member: StaffMember) {
+  const email = (member.email ?? '').trim().toLowerCase()
+  return email || `staff-id:${member.id}`
+}
+
 function isSessionValue(value: unknown) {
   const text = normaliseText(value)
   return /^[1-9]\d*$/.test(text)
@@ -498,11 +503,13 @@ function ManagerApp({
     async function loadStaffAvailability() {
       const { data } = await supabase.from('staff_availability').select('staff_email,day,status')
       if (!data) return
-      const staffByEmail = new Map(staff.filter((member) => member.email).map((member) => [member.email!.trim().toLowerCase(), member.id]))
+      const staffByAvailabilityKey = new Map(
+        staff.map((member) => [availabilityKeyForMember(member), member.id]),
+      )
       const nextWorking = { ...workingByDay }
       const nextSickness = { ...sicknessByDay }
       for (const entry of data as {staff_email:string;day:string;status:'available'|'holiday'|'sick'}[]) {
-        const staffId = staffByEmail.get(entry.staff_email.toLowerCase())
+        const staffId = staffByAvailabilityKey.get(entry.staff_email.trim().toLowerCase())
         if (!staffId) continue
         const working = new Set(nextWorking[entry.day] ?? staff.map((member) => member.id))
         const sick = new Set(nextSickness[entry.day] ?? [])
@@ -746,14 +753,10 @@ function ManagerApp({
       setImportMessage('Select a staff member and sickness date.')
       return
     }
-    const email = (member.email ?? '').trim().toLowerCase()
-    if (!email) {
-      setImportMessage('Add this staff member’s login email in Staff Management first.')
-      return
-    }
+    const availabilityKey = availabilityKeyForMember(member)
     const alreadySick = (sicknessByDay[holidaySickDate] ?? []).includes(member.id)
     const { error } = await supabase.from('staff_availability').upsert({
-      staff_email: email,
+      staff_email: availabilityKey,
       day: holidaySickDate,
       status: alreadySick ? 'available' : 'sick',
       updated_at: new Date().toISOString(),
@@ -2570,11 +2573,11 @@ function ManagerApp({
                         const populatedGroups = row.cells
                         const assignment = arrivalAssignment(row)
                         const availableToday = workingByDay[activeStaffingDay] ?? staff.map((member) => member.id)
-                        const sickToday = sicknessByDay[activeStaffingDay] ?? []
+                        const unavailableToday = unavailableStaffIdsForDay(activeStaffingDay)
                         const usedElsewhere = arrivalStaffUsedByOtherSchools(row)
 
-                        const leaderOptions = staff.filter((member) => availableToday.includes(member.id) && !sickToday.includes(member.id) && ['staff', 'teamLeader'].includes(resolvedRole(member)) && !usedElsewhere.has(member.id) && !assignment.guideIds.includes(member.id))
-                        const guideOptions = staff.filter((member) => availableToday.includes(member.id) && !sickToday.includes(member.id) && member.id !== assignment.leaderId && !usedElsewhere.has(member.id) && (arrivalStaffGroup === 'all' || resolvedRole(member) === arrivalStaffGroup))
+                        const leaderOptions = staff.filter((member) => availableToday.includes(member.id) && !unavailableToday.has(member.id) && ['staff', 'teamLeader'].includes(resolvedRole(member)) && !usedElsewhere.has(member.id) && !assignment.guideIds.includes(member.id))
+                        const guideOptions = staff.filter((member) => availableToday.includes(member.id) && !unavailableToday.has(member.id) && member.id !== assignment.leaderId && !usedElsewhere.has(member.id) && (arrivalStaffGroup === 'all' || resolvedRole(member) === arrivalStaffGroup))
 
                         return (
                           <section className={`arrival-card school-tone-${(schoolIndex % 6) + 1}`} key={row.id}>
@@ -2721,9 +2724,9 @@ function ManagerApp({
                   <section className="staffing-shortage-alert" role="alert">
                     <CircleAlert size={24} />
                     <div>
-                      <strong>Staffing warning for {activeStaffingDay}</strong>
+                      <strong>Not enough staff in today</strong>
                       <p>
-                        {`${selectedDayCapacityShortfall} more staff ${selectedDayCapacityShortfall === 1 ? 'member is' : 'members are'} needed to cover the full day. ${selectedDayBusiest?.total ?? 0} required, ${availableTodayCount} available.`}
+                        {`${activeStaffingDay} cannot be fully staffed. You need ${selectedDayCapacityShortfall} more instructor${selectedDayCapacityShortfall === 1 ? '' : 's'} to cover every activity. ${selectedDayBusiest?.total ?? 0} required, ${availableTodayCount} available.`}
                       </p>
                     </div>
                   </section>

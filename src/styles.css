@@ -1224,11 +1224,11 @@ button { cursor: pointer; }
   gap: 12px;
   margin: 14px 0;
   padding: 15px 16px;
-  border: 1px solid #efb36f;
-  border-left: 6px solid #d96c13;
+  border: 1px solid #fca5a5;
+  border-left: 6px solid #dc2626;
   border-radius: 15px;
-  background: #fff3e3;
-  color: #71390d;
+  background: #fef2f2;
+  color: #991b1b;
 }
 .staffing-shortage-alert strong { display: block; margin-bottom: 4px; font-size: 1rem; }
 .staffing-shortage-alert p { margin: 0; line-height: 1.45; }
