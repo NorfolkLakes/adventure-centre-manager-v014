@@ -11,6 +11,36 @@ type Profile = {
   role: 'manager' | 'staff' | 'centreManager' | 'activityManager' | 'teamLeader'
 }
 
+
+const WEEKDAY_ORDER: Record<string, number> = {
+  MON: 1, MONDAY: 1,
+  TUE: 2, TUES: 2, TUESDAY: 2,
+  WED: 3, WEDNESDAY: 3,
+  THU: 4, THUR: 4, THURS: 4, THURSDAY: 4,
+  FRI: 5, FRIDAY: 5,
+  SAT: 6, SATURDAY: 6,
+  SUN: 7, SUNDAY: 7,
+}
+
+function weekdayRank(value: string) {
+  const key = value.trim().toUpperCase().replace(/[^A-Z]/g, '')
+  return WEEKDAY_ORDER[key] ?? 99
+}
+
+function displayProgrammeDay(value: string) {
+  const key = value.trim().toUpperCase().replace(/[^A-Z]/g, '')
+  const names: Record<string, string> = {
+    MON: 'Monday', MONDAY: 'Monday',
+    TUE: 'Tuesday', TUES: 'Tuesday', TUESDAY: 'Tuesday',
+    WED: 'Wednesday', WEDNESDAY: 'Wednesday',
+    THU: 'Thursday', THUR: 'Thursday', THURS: 'Thursday', THURSDAY: 'Thursday',
+    FRI: 'Friday', FRIDAY: 'Friday',
+    SAT: 'Saturday', SATURDAY: 'Saturday',
+    SUN: 'Sunday', SUNDAY: 'Sunday',
+  }
+  return names[key] ?? value
+}
+
 type RotaDuty = {
   id: string
   programme_name: string
@@ -244,20 +274,22 @@ function StaffRota({
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
   const [selectedDay, setSelectedDay] = useState('')
-  const [availability, setAvailability] = useState<Record<string, 'available' | 'holiday' | 'sick'>>({})
+  const [holidays, setHolidays] = useState<{ id: string; start_date: string; end_date: string; note: string | null }[]>([])
+  const [holidayMonth, setHolidayMonth] = useState(() => new Date())
 
-
-  async function setDayAvailability(day: string, status: 'available' | 'holiday' | 'sick') {
-    const { error } = await supabase.from('staff_availability').upsert({
-      staff_email: accountEmail.toLowerCase(), day, status, updated_at: new Date().toISOString(),
-    }, { onConflict: 'staff_email,day' })
+  async function loadMyHolidays() {
+    const monthStart = new Date(holidayMonth.getFullYear(), holidayMonth.getMonth(), 1)
+    const monthEnd = new Date(holidayMonth.getFullYear(), holidayMonth.getMonth() + 1, 0)
+    const dateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+    const { data, error } = await supabase
+      .from('staff_holidays')
+      .select('id,start_date,end_date,note')
+      .eq('staff_email', accountEmail.toLowerCase())
+      .lte('start_date', dateKey(monthEnd))
+      .gte('end_date', dateKey(monthStart))
+      .order('start_date')
     if (error) setMessage(error.message)
-    else setAvailability((current) => ({ ...current, [day]: status }))
-  }
-
-  async function loadAvailability() {
-    const { data } = await supabase.from('staff_availability').select('day,status')
-    if (data) setAvailability(Object.fromEntries(data.map((item: {day:string,status:'available'|'holiday'|'sick'}) => [item.day,item.status])))
+    else setHolidays((data ?? []) as typeof holidays)
   }
 
   async function loadDuties() {
@@ -273,16 +305,23 @@ function StaffRota({
     if (error) {
       setMessage(error.message)
     } else {
-      const nextDuties = (data ?? []) as RotaDuty[]
+      const nextDuties = ((data ?? []) as RotaDuty[]).sort((a, b) => {
+        const dayDifference = weekdayRank(a.day) - weekdayRank(b.day)
+        if (dayDifference !== 0) return dayDifference
+        return Number(a.session) - Number(b.session)
+      })
       setDuties(nextDuties)
-      setSelectedDay((current) => current || nextDuties[0]?.day || '')
+      setSelectedDay((current) =>
+        current && nextDuties.some((duty) => duty.day === current)
+          ? current
+          : nextDuties[0]?.day || '',
+      )
     }
     setLoading(false)
   }
 
   useEffect(() => {
     loadDuties()
-    loadAvailability()
 
     const channel = supabase
       .channel('staff-rota-updates')
@@ -293,12 +332,26 @@ function StaffRota({
       )
       .subscribe()
 
+    const holidayChannel = supabase
+      .channel(`my-holidays-${accountEmail}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'staff_holidays' },
+        () => loadMyHolidays(),
+      )
+      .subscribe()
+
     return () => {
       supabase.removeChannel(channel)
+      supabase.removeChannel(holidayChannel)
     }
   }, [])
 
-  const days = Array.from(new Set(duties.map((duty) => duty.day)))
+  useEffect(() => {
+    loadMyHolidays()
+  }, [holidayMonth, accountEmail])
+
+  const days = Array.from(new Set(duties.map((duty) => duty.day))).sort((a, b) => weekdayRank(a) - weekdayRank(b))
 
   return (
     <div className="staff-app">
@@ -338,21 +391,15 @@ function StaffRota({
                   className={selectedDay === day ? 'active' : ''}
                   onClick={() => setSelectedDay(day)}
                 >
-                  {day}
+                  {displayProgrammeDay(day)}
                 </button>
               ))}
             </div>
-            <section className="availability-card">
-              <div><p className="eyebrow">My availability</p><h2>{selectedDay}</h2><p>Tell the rota builder whether you are available, on holiday or sick.</p></div>
-              <div className="availability-buttons">
-                {(['available','holiday','sick'] as const).map((status) => <button key={status} className={availability[selectedDay] === status ? `active ${status}` : status} onClick={() => setDayAvailability(selectedDay,status)}>{status === 'available' ? 'Available' : status === 'holiday' ? 'Holiday' : 'Sick'}</button>)}
-              </div>
-            </section>
             <section className="staff-day">
               <div className="staff-day-heading">
                 <div>
                   <p className="eyebrow">Your duties</p>
-                  <h2>{selectedDay}</h2>
+                  <h2>{displayProgrammeDay(selectedDay)}</h2>
                 </div>
                 <span>
                   {duties.filter((duty) => duty.day === selectedDay).length}{' '}
@@ -373,13 +420,15 @@ function StaffRota({
                         </div>
                         <span className="live-badge">Live</span>
                       </div>
-                      <h3>{duty.activity_name}</h3>
+                      <h3>{duty.duty_type.startsWith('arrival_') ? 'Arrivals' : duty.activity_name}</h3>
                       {duty.school_name && (
                         <p className="school-name">{duty.school_name}</p>
                       )}
                       {duty.duty_type.startsWith('arrival_') && (
                         <div className="arrival-duty-details">
-                          {duty.building_name && <p><strong>Accommodation:</strong> {duty.building_name}</p>}
+                          {duty.school_name && <p><strong>School:</strong> {duty.school_name}</p>}
+                          {duty.group_numbers.length > 0 && <p><strong>Group{duty.group_numbers.length > 1 ? 's' : ''}:</strong> {duty.group_numbers.map((group) => `G${group}`).join(', ')}</p>}
+                          {duty.building_name && <p><strong>Building:</strong> {duty.building_name}</p>}
                           {duty.party_leader_name && duty.duty_type !== 'arrival_leader' && <p><strong>Party Leader:</strong> {duty.party_leader_name}</p>}
                         </div>
                       )}
@@ -387,7 +436,7 @@ function StaffRota({
                         {duty.group_numbers.length
                           ? `Group${
                               duty.group_numbers.length > 1 ? 's' : ''
-                            } ${duty.group_numbers.join(', ')}`
+                            } ${duty.group_numbers.map((group) => `G${group}`).join(', ')}`
                           : 'No group'}
                       </div>
                     </article>
@@ -396,6 +445,32 @@ function StaffRota({
             </section>
           </>
         )}
+
+        <section className="my-holiday-panel">
+          <div className="my-holiday-heading">
+            <div>
+              <p className="eyebrow">My holiday</p>
+              <h2>{holidayMonth.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}</h2>
+            </div>
+            <div className="my-holiday-actions">
+              <button onClick={() => setHolidayMonth(new Date(holidayMonth.getFullYear(), holidayMonth.getMonth() - 1, 1))}>Previous</button>
+              <button onClick={() => setHolidayMonth(new Date())}>This month</button>
+              <button onClick={() => setHolidayMonth(new Date(holidayMonth.getFullYear(), holidayMonth.getMonth() + 1, 1))}>Next</button>
+            </div>
+          </div>
+          {holidays.length ? (
+            <div className="my-holiday-list">
+              {holidays.map((holiday) => (
+                <article key={holiday.id}>
+                  <strong>{new Date(`${holiday.start_date}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} – {new Date(`${holiday.end_date}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</strong>
+                  {holiday.note && <span>{holiday.note}</span>}
+                </article>
+              ))}
+            </div>
+          ) : (
+            <p className="my-holiday-empty">No holiday booked this month.</p>
+          )}
+        </section>
       </main>
     </div>
   )

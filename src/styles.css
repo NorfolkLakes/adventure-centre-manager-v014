@@ -1370,3 +1370,13 @@ button { cursor: pointer; }
 .holiday-entry.sick-entry { background:#fee2e2; color:#991b1b; border:1px solid #fecaca; }
 .last-updated-live { font-size:.78rem; color:#475569; max-width:220px; text-align:right; line-height:1.25; }
 @media (max-width: 900px) { .last-updated-live { display:none; } }
+
+.last-updated-footer {
+  margin: 24px auto 12px;
+  padding: 10px 18px;
+  max-width: 1480px;
+  width: calc(100% - 40px);
+  color: #000;
+  font-size: .82rem;
+  text-align: center;
+}
