@@ -204,53 +204,91 @@ function isKnownProgrammeActivity(value: string) {
   return Boolean(normalised) && PROGRAMME_ACTIVITY_VALUES.has(normalised)
 }
 
-function schoolNamesInRow(row: ProgrammeRow) {
+function looksLikeSchoolName(value: string) {
+  const normalised = normalisedProgrammeValue(value)
+  if (!normalised || normalised === 'Z' || isKnownProgrammeActivity(normalised)) {
+    return false
+  }
+
+  return /[A-Z]/i.test(normalised) && normalised.length >= 4
+}
+
+type ArrivalSchoolSegment = {
+  schoolName: string
+  cells: ProgrammeRow['cells']
+}
+
+function arrivalSchoolSegments(row: ProgrammeRow): ArrivalSchoolSegment[] {
   if (row.session !== '3' || !isArrivalDay(row.day)) {
     return []
   }
 
-  const inlineNames = row.cells
-    .map((cell) => cell.activityCode.trim())
-    .filter((value) => {
-      if (!value || value.toUpperCase() === 'Z') return false
-      if (isKnownProgrammeActivity(value)) return false
-      return /[A-Z]/i.test(value) && value.length >= 4
-    })
-    .map((value) => value.replace(/\s+/g, ' ').trim())
+  const sortedCells = [...row.cells]
+    .filter((cell) => cell.group >= 1 && cell.group <= 30)
+    .sort((a, b) => a.group - b.group)
 
-  const uniqueInline = Array.from(
-    new Map(inlineNames.map((name) => [normalisedProgrammeValue(name), name])).values(),
-  )
+  const segments: ArrivalSchoolSegment[] = []
+  let current: ArrivalSchoolSegment | null = null
 
-  if (uniqueInline.length) return uniqueInline
-  return row.schoolLabel?.trim() ? [row.schoolLabel.trim()] : []
+  for (const cell of sortedCells) {
+    const value = cell.activityCode.trim()
+
+    if (looksLikeSchoolName(value)) {
+      current = {
+        schoolName: value.replace(/\s+/g, ' ').trim(),
+        cells: [{ ...cell, activityCode: value }],
+      }
+      segments.push(current)
+      continue
+    }
+
+    if (value && value.toUpperCase() !== 'Z' && isKnownProgrammeActivity(value)) {
+      current = null
+      continue
+    }
+
+    if (current && (!value || value.toUpperCase() === 'Z')) {
+      current.cells.push({ ...cell, activityCode: current.schoolName })
+    }
+  }
+
+  if (!segments.length && row.schoolLabel?.trim()) {
+    return [{
+      schoolName: row.schoolLabel.trim(),
+      cells: sortedCells.filter((cell) => !cell.activityCode || cell.activityCode.toUpperCase() === 'Z'),
+    }]
+  }
+
+  return segments
+}
+
+function schoolNamesInRow(row: ProgrammeRow) {
+  return arrivalSchoolSegments(row).map((segment) => segment.schoolName)
 }
 
 function arrivalRowsFromProgrammeRow(row: ProgrammeRow): ProgrammeRow[] {
-  return schoolNamesInRow(row).map((schoolName) => {
-    const schoolKey = normalisedProgrammeValue(schoolName)
-    const matchingCells = row.cells.filter(
-      (cell) => normalisedProgrammeValue(cell.activityCode) === schoolKey,
-    )
+  return arrivalSchoolSegments(row).map((segment) => {
+    const schoolKey = normalisedProgrammeValue(segment.schoolName)
 
     return {
       ...row,
       id: `${row.id}::arrival::${schoolKey.replace(/[^A-Z0-9]+/g, '-')}`,
-      schoolLabel: schoolName,
-      cells: matchingCells.length ? matchingCells : row.cells,
+      schoolLabel: segment.schoolName,
+      cells: segment.cells,
     }
   })
 }
 
 function activityCellsForRow(row: ProgrammeRow) {
-  const schoolKeys = new Set(
-    schoolNamesInRow(row).map((name) => normalisedProgrammeValue(name)),
+  const arrivalGroups = new Set(
+    arrivalSchoolSegments(row).flatMap((segment) => segment.cells.map((cell) => cell.group)),
   )
 
   return row.cells.filter((cell) => {
     const value = cell.activityCode.trim()
     if (!value || value.toUpperCase() === 'Z') return false
-    return !schoolKeys.has(normalisedProgrammeValue(value))
+    if (arrivalGroups.has(cell.group)) return false
+    return isKnownProgrammeActivity(value)
   })
 }
 
@@ -1578,7 +1616,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.26</span></div>
+          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.27</span></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -1788,7 +1826,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to a building, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v0.26</span>
+                  <span className="release-pill">v0.27</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
