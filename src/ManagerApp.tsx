@@ -1344,7 +1344,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <h1>Adventure Centre Manager</h1>
+          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.19</span></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -1381,23 +1381,37 @@ function ManagerApp({
 
         {page === 'dashboard' && (
           <>
-            <section className="hero">
-              <p className="eyebrow">Programme control</p>
-              <h2>{programme?.title ?? 'Upload today’s programme'}</h2>
-              <p>
-                Import the Excel programme, make same-day changes and generate
-                qualified staffing from the same grid.
-              </p>
-              <button
-                className="hero-upload"
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <FileSpreadsheet size={20} />
-                {programme ? 'Replace programme' : 'Upload Excel programme'}
-              </button>
+            <section className="hero command-hero">
+              <div className="hero-copy">
+                <div className="hero-kicker"><ShieldCheck size={17}/><span>Live operations command centre</span></div>
+                <p className="eyebrow">Today at Norfolk Lakes</p>
+                <h2>{programme?.title ?? 'Upload today’s programme'}</h2>
+                <p>
+                  Control programme changes, staffing, availability, qualifications
+                  and daily operational checks from one live dashboard.
+                </p>
+                <div className="hero-actions">
+                  <button className="hero-upload" onClick={() => fileInputRef.current?.click()}>
+                    <FileSpreadsheet size={20} />
+                    {programme ? 'Replace programme' : 'Upload Excel programme'}
+                  </button>
+                  <button className="hero-secondary" onClick={() => setPage('staffing')}>
+                    <Users size={19}/> Open daily staffing
+                  </button>
+                </div>
+              </div>
+              <div className="hero-live-card">
+                <span className="live-indicator"><span/>LIVE</span>
+                <strong>{availableTodayCount}</strong>
+                <small>staff available today</small>
+                <div className={staffingShortages ? 'hero-alert warning' : 'hero-alert ready'}>
+                  {staffingShortages ? `${staffingShortages} staffing gaps need attention` : 'Programme fully staffed'}
+                </div>
+              </div>
             </section>
 
-            <section className="stats-grid">
+            <div className="section-heading"><div><p className="eyebrow">Operational overview</p><h2>What needs your attention</h2></div><span>Live from the current programme</span></div>
+            <section className="stats-grid operations-stats">
               <Stat
                 icon={<CalendarDays />}
                 value={programme?.rows.length ?? 0}
@@ -1424,13 +1438,14 @@ function ManagerApp({
               </article>
             </section>
 
-            <section className="v018-command-centre">
-              <div className="ai-builder-card">
+            <div className="section-heading"><div><p className="eyebrow">Smart operations</p><h2>Run the centre faster</h2></div><span>Automation and daily assurance</span></div>
+            <section className="v019-command-centre">
+              <div className="ai-builder-card v019-ai-card">
                 <Bot size={28} />
                 <div><p className="eyebrow">AI rota builder</p><h3>Build the complete rota</h3><p>Balances workload and respects availability, qualifications and session conflicts.</p></div>
                 <button className="primary" onClick={aiBuildEntireRota}><WandSparkles size={17}/> Build entire rota</button>
               </div>
-              <div className="equipment-check-card">
+              <div className="equipment-check-card v019-equipment-card">
                 <div><p className="eyebrow">Daily operations</p><h3>Equipment checks</h3></div>
                 {equipmentChecks.map((item) => <button key={item.id} className={item.complete ? 'equipment-item complete' : 'equipment-item'} onClick={() => toggleEquipmentCheck(item.id)}><CheckCircle2 size={18}/><span>{item.name}</span><small>{item.complete ? 'Complete' : 'Outstanding'}</small></button>)}
               </div>
