@@ -110,6 +110,7 @@ function LoginScreen() {
   const [password, setPassword] = useState('')
   const [message, setMessage] = useState('')
   const [selectedDay, setSelectedDay] = useState('')
+  const [availability, setAvailability] = useState<Record<string, 'available' | 'holiday' | 'sick'>>({})
   const [busy, setBusy] = useState(false)
 
   async function submit(event: FormEvent) {
@@ -213,6 +214,21 @@ function StaffRota({
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
   const [selectedDay, setSelectedDay] = useState('')
+  const [availability, setAvailability] = useState<Record<string, 'available' | 'holiday' | 'sick'>>({})
+
+
+  async function setDayAvailability(day: string, status: 'available' | 'holiday' | 'sick') {
+    const { error } = await supabase.from('staff_availability').upsert({
+      staff_email: accountEmail.toLowerCase(), day, status, updated_at: new Date().toISOString(),
+    }, { onConflict: 'staff_email,day' })
+    if (error) setMessage(error.message)
+    else setAvailability((current) => ({ ...current, [day]: status }))
+  }
+
+  async function loadAvailability() {
+    const { data } = await supabase.from('staff_availability').select('day,status')
+    if (data) setAvailability(Object.fromEntries(data.map((item: {day:string,status:'available'|'holiday'|'sick'}) => [item.day,item.status])))
+  }
 
   async function loadDuties() {
     setLoading(true)
@@ -236,6 +252,7 @@ function StaffRota({
 
   useEffect(() => {
     loadDuties()
+    loadAvailability()
 
     const channel = supabase
       .channel('staff-rota-updates')
@@ -277,7 +294,7 @@ function StaffRota({
             <h2>No duties published yet</h2>
             <p>
               Ask your manager to add your login email to your staff record
-              and press Publish staff rota.
+              and make sure your login email matches your staff record. Rota changes appear automatically.
             </p>
           </section>
         )}
@@ -295,6 +312,12 @@ function StaffRota({
                 </button>
               ))}
             </div>
+            <section className="availability-card">
+              <div><p className="eyebrow">My availability</p><h2>{selectedDay}</h2><p>Tell the rota builder whether you are available, on holiday or sick.</p></div>
+              <div className="availability-buttons">
+                {(['available','holiday','sick'] as const).map((status) => <button key={status} className={availability[selectedDay] === status ? `active ${status}` : status} onClick={() => setDayAvailability(selectedDay,status)}>{status === 'available' ? 'Available' : status === 'holiday' ? 'Holiday' : 'Sick'}</button>)}
+              </div>
+            </section>
             <section className="staff-day">
               <div className="staff-day-heading">
                 <div>

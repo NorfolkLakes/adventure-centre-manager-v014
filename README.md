@@ -1,4 +1,4 @@
-# Adventure Centre Manager v0.14
+# Adventure Centre Manager v0.18
 
 This version adds the first cloud login and staff rota system.
 
@@ -72,8 +72,15 @@ The browser uses only the Supabase publishable key. Row Level Security policies 
 - Staff screens refresh automatically when the manager changes the rota
 - Excel printing now includes a Staff Room Wall Rota sheet
 
-## v0.15 Session 3 staffing
-- Adds one School Leader for documents and welcome.
-- Auto-assigns one instructor per group where possible.
-- Allows one instructor to cover a maximum of two groups when staffing is short.
-- Publishes the correct group numbers to staff accounts.
+
+## v0.18 Commercial operations release
+
+- Live Supabase rota syncing with realtime staff-phone updates
+- Staff self-service Available / Holiday / Sick status
+- Manager auto-fill consumes staff availability automatically
+- Qualification expiry dates and expiry-aware assignment
+- Whole-programme AI rota builder with workload balancing and conflict prevention
+- Dashboard metrics for schools, availability, shortages and expiring qualifications
+- Outstanding equipment-check dashboard
+
+After deploying v0.18, run `supabase/setup.sql` once in the Supabase SQL Editor to add the availability table and policies.

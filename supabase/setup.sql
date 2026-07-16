@@ -110,9 +110,32 @@ to authenticated
 using (public.is_manager());
 
 -- Realtime support for staff rota updates.
-alter publication supabase_realtime add table public.rota_assignments;
+do $$ begin
+  alter publication supabase_realtime add table public.rota_assignments;
+exception when duplicate_object then null; end $$;
 
 -- IMPORTANT:
 -- 1. Create your own account through the app.
 -- 2. In Supabase Table Editor -> profiles, change your role from staff to manager.
 -- 3. Staff create their accounts with the exact email entered on Staff Management.
+
+
+-- v0.18 staff self-service availability
+create table if not exists public.staff_availability (
+  id uuid primary key default gen_random_uuid(),
+  staff_email text not null,
+  day text not null,
+  status text not null check (status in ('available','holiday','sick')),
+  updated_at timestamptz not null default now(),
+  unique (staff_email, day)
+);
+alter table public.staff_availability enable row level security;
+drop policy if exists "Staff manage own availability" on public.staff_availability;
+create policy "Staff manage own availability" on public.staff_availability for all to authenticated
+using (lower(staff_email)=lower(coalesce(auth.jwt()->>'email','')) or public.is_manager())
+with check (lower(staff_email)=lower(coalesce(auth.jwt()->>'email','')) or public.is_manager());
+drop policy if exists "Managers read availability" on public.staff_availability;
+create policy "Managers read availability" on public.staff_availability for select to authenticated using (public.is_manager() or lower(staff_email)=lower(coalesce(auth.jwt()->>'email','')));
+do $$ begin
+  alter publication supabase_realtime add table public.staff_availability;
+exception when duplicate_object then null; end $$;

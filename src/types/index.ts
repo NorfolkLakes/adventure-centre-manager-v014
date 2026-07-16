@@ -41,6 +41,7 @@ export type StaffMember = {
   signOffs?: Record<string, string>
   role?: StaffRole
   teamLeader?: boolean
+  qualificationExpiries?: Record<string, string>
 }
 
 export type StaffingAssignment = Record<string, string>

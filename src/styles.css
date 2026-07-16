@@ -1117,24 +1117,6 @@ button { cursor: pointer; }
 .duty-arrival_leader { border-left-color: #8c62c4; }
 .duty-arrival_instructor { border-left-color: #db8b36; }
 
-.arrival-school-toolbar {
-  display: flex;
-  align-items: end;
-  justify-content: space-between;
-  gap: 14px;
-  margin: 16px 0 12px;
-  padding: 14px;
-  border: 1px solid #cfe0da;
-  border-radius: 16px;
-  background: #f4f9f7;
-}
-.arrival-school-toolbar label { display: grid; gap: 6px; flex: 1; font-weight: 800; color: #234f49; }
-.arrival-school-toolbar select { min-height: 46px; padding: 0 12px; border: 1px solid #bfcfca; border-radius: 11px; background: #fff; }
-.arrival-school-toolbar span { padding-bottom: 12px; color: #617570; font-weight: 750; white-space: nowrap; }
-.arrival-card-heading { align-items: center; }
-.arrival-autofill { flex-shrink: 0; }
-@media (max-width: 700px) {
-  .arrival-school-toolbar, .arrival-card-heading { align-items: stretch; flex-direction: column; }
-  .arrival-school-toolbar span { padding-bottom: 0; }
-  .arrival-autofill { width: 100%; justify-content: center; }
-}
+
+/* v0.18 command centre */
+.v018-command-centre{display:grid;gap:14px;margin:16px 0}.ai-builder-card,.equipment-check-card,.availability-card{padding:18px;border-radius:18px;background:#fff;box-shadow:0 10px 28px rgba(26,74,64,.1)}.ai-builder-card{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:16px}.ai-builder-card h3,.equipment-check-card h3,.availability-card h2{margin:3px 0}.ai-builder-card p,.availability-card p{margin:4px 0;color:#667875}.equipment-check-card{display:grid;gap:8px}.equipment-item{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px;padding:11px;border:1px solid #dce7e3;border-radius:11px;background:#fff;text-align:left}.equipment-item.complete{background:#e7f5ee;color:#17685a}.expiry-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:12px}.expiry-grid label{display:grid;gap:4px;font-size:.75rem;font-weight:800;color:#536965}.expiry-grid input{padding:8px;border:1px solid #cbd8d4;border-radius:8px}.availability-card{display:flex;justify-content:space-between;align-items:center;gap:14px;margin-bottom:14px}.availability-buttons{display:flex;flex-wrap:wrap;gap:8px}.availability-buttons button{padding:10px 13px;border:1px solid #ccd9d5;border-radius:10px;background:#fff;font-weight:800;text-transform:capitalize}.availability-buttons button.active.available{background:#dff3e9;border-color:#2f9c6a}.availability-buttons button.active.holiday{background:#fff1d6;border-color:#db9b2f}.availability-buttons button.active.sick{background:#fbe3e3;border-color:#d65a5a}@media(max-width:700px){.ai-builder-card{grid-template-columns:1fr}.availability-card{align-items:stretch;flex-direction:column}.availability-buttons button{flex:1}.stats-grid{grid-template-columns:repeat(2,1fr)}}

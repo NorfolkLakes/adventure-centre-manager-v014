@@ -16,6 +16,9 @@ import {
   UserRoundCheck,
   Trash2,
   LogOut,
+  Bot,
+  ClipboardCheck,
+  Clock3,
   X,
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
@@ -42,6 +45,9 @@ const SICKNESS_KEY = 'acm-sickness-by-day'
 const WORKING_KEY = 'acm-working-by-day'
 const ACTIVITIES_KEY = 'acm-activities'
 const ARRIVAL_ASSIGNMENTS_KEY = 'acm-arrival-assignments'
+const EQUIPMENT_CHECKS_KEY = 'acm-equipment-checks'
+
+type EquipmentCheck = { id: string; name: string; complete: boolean; updatedAt: string }
 
 function readJson<T>(key: string, fallback: T): T {
   try {
@@ -276,7 +282,14 @@ function ManagerApp({
   const [arrivalStaffGroup, setArrivalStaffGroup] = useState<
     'all' | StaffRole
   >('all')
-  const [selectedArrivalSchoolId, setSelectedArrivalSchoolId] = useState('')
+  const [equipmentChecks, setEquipmentChecks] = useState<EquipmentCheck[]>(() =>
+    readJson(EQUIPMENT_CHECKS_KEY, [
+      { id: 'water', name: 'Watersports equipment checked', complete: false, updatedAt: '' },
+      { id: 'ppe', name: 'Climbing PPE checked', complete: false, updatedAt: '' },
+      { id: 'vehicles', name: 'Centre vehicles checked', complete: false, updatedAt: '' },
+      { id: 'first-aid', name: 'First-aid kits checked', complete: false, updatedAt: '' },
+    ]),
+  )
   const [showAddStaff, setShowAddStaff] = useState(false)
   const [newStaffName, setNewStaffName] = useState('')
   const [newStaffRole, setNewStaffRole] = useState<StaffRole>('staff')
@@ -289,6 +302,36 @@ function ManagerApp({
       Array.from(new Set(programme.rows.map((row) => row.day))),
     )
   }, [programme, staff])
+
+
+  useEffect(() => {
+    if (!accountEmail || !staff.length) return
+    async function loadStaffAvailability() {
+      const { data } = await supabase.from('staff_availability').select('staff_email,day,status')
+      if (!data) return
+      const staffByEmail = new Map(staff.filter((member) => member.email).map((member) => [member.email!.trim().toLowerCase(), member.id]))
+      const nextWorking = { ...workingByDay }
+      const nextSickness = { ...sicknessByDay }
+      for (const entry of data as {staff_email:string;day:string;status:'available'|'holiday'|'sick'}[]) {
+        const staffId = staffByEmail.get(entry.staff_email.toLowerCase())
+        if (!staffId) continue
+        const working = new Set(nextWorking[entry.day] ?? staff.map((member) => member.id))
+        const sick = new Set(nextSickness[entry.day] ?? [])
+        if (entry.status === 'available') { working.add(staffId); sick.delete(staffId) }
+        if (entry.status === 'holiday') { working.delete(staffId); sick.delete(staffId) }
+        if (entry.status === 'sick') { working.delete(staffId); sick.add(staffId) }
+        nextWorking[entry.day] = Array.from(working)
+        nextSickness[entry.day] = Array.from(sick)
+      }
+      setWorkingByDay(nextWorking)
+      setSicknessByDay(nextSickness)
+      localStorage.setItem(WORKING_KEY, JSON.stringify(nextWorking))
+      localStorage.setItem(SICKNESS_KEY, JSON.stringify(nextSickness))
+    }
+    loadStaffAvailability()
+    const channel = supabase.channel('manager-availability-updates').on('postgres_changes', { event: '*', schema: 'public', table: 'staff_availability' }, loadStaffAvailability).subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [accountEmail, staff])
 
   function sessionDemandForDay(day: string) {
     if (!programme) return []
@@ -670,6 +713,53 @@ function ManagerApp({
     setImportMessage(`All staffing assignments were cleared for ${day}.`)
   }
 
+  function qualificationIsValid(member: StaffMember, code: string) {
+    if (!member.qualifications.includes(code)) return false
+    const expiry = member.qualificationExpiries?.[code]
+    if (!expiry) return true
+    return new Date(`${expiry}T23:59:59`).getTime() >= Date.now()
+  }
+
+  function updateQualificationExpiry(staffId: string, code: string, expiry: string) {
+    const next = staff.map((member) => member.id === staffId ? {
+      ...member,
+      qualificationExpiries: { ...(member.qualificationExpiries ?? {}), [code]: expiry },
+    } : member)
+    setStaff(next)
+    localStorage.setItem(STAFF_KEY, JSON.stringify(next))
+  }
+
+  function toggleEquipmentCheck(id: string) {
+    const next = equipmentChecks.map((item) => item.id === id ? {
+      ...item, complete: !item.complete, updatedAt: new Date().toISOString(),
+    } : item)
+    setEquipmentChecks(next)
+    localStorage.setItem(EQUIPMENT_CHECKS_KEY, JSON.stringify(next))
+  }
+
+  function aiBuildEntireRota() {
+    if (!programme) return
+    let next: StaffingAssignment = { ...assignments }
+    const workload = new Map<string, number>()
+    const sortedRows = [...programme.rows].sort((a,b) => a.day.localeCompare(b.day) || Number(a.session)-Number(b.session))
+    for (const row of sortedRows) {
+      const workingIds = new Set(workingByDay[row.day] ?? staff.map((m) => m.id))
+      const sickIds = new Set(sicknessByDay[row.day] ?? [])
+      for (const cell of row.cells) {
+        if (!cell.activityCode || cell.activityCode === 'Z') continue
+        const key = cellKey(row.id, cell.group)
+        if (next[key]) { workload.set(next[key], (workload.get(next[key]) ?? 0) + 1); continue }
+        const candidates = staff.filter((m) => workingIds.has(m.id) && !sickIds.has(m.id) && qualificationIsValid(m, cell.activityCode))
+          .filter((m) => !sortedRows.some((other) => other.day === row.day && other.session === row.session && other.cells.some((c) => next[cellKey(other.id,c.group)] === m.id)))
+          .sort((a,b) => (rolePriority(resolvedRole(a))-rolePriority(resolvedRole(b))) || ((workload.get(a.id)??0)-(workload.get(b.id)??0)) || a.name.localeCompare(b.name))
+        if (candidates[0]) { next[key]=candidates[0].id; workload.set(candidates[0].id,(workload.get(candidates[0].id)??0)+1) }
+      }
+    }
+    setAssignments(next)
+    localStorage.setItem(ASSIGNMENT_KEY, JSON.stringify(next))
+    setImportMessage('AI rota builder completed the programme using availability, valid qualifications, workload balancing and conflict prevention.')
+  }
+
   function autoFillStaffing(day: string) {
     if (!programme || !day) return
 
@@ -678,50 +768,25 @@ function ManagerApp({
       workingByDay[day] ?? staff.map((member) => member.id),
     )
     const nextAssignments: StaffingAssignment = { ...assignments }
-    const nextArrivalAssignments = { ...arrivalAssignments }
 
-    // Remove assignments for staff who are not available before rebuilding gaps.
+    // Remove assignments for sick staff on this day before rebuilding gaps.
     programme.rows
       .filter((row) => row.day === day)
       .forEach((row) =>
         row.cells.forEach((cell) => {
           const key = cellKey(row.id, cell.group)
           const assignedId = nextAssignments[key]
-          if (
-            assignedId &&
-            (!workingIds.has(assignedId) || sickIds.has(assignedId))
-          ) {
-            delete nextAssignments[key]
-          }
+          if (assignedId && sickIds.has(assignedId)) delete nextAssignments[key]
         }),
       )
 
-    for (const row of programme.rows.filter(
-      (item) => item.day === day && item.session === '3' && item.schoolLabel,
-    )) {
-      const key = arrivalKey(row)
-      const current = nextArrivalAssignments[key] ?? { guideIds: [] }
-      const leaderAvailable =
-        current.leaderId &&
-        workingIds.has(current.leaderId) &&
-        !sickIds.has(current.leaderId)
-      const guideIds = current.guideIds.map((id) =>
-        id && workingIds.has(id) && !sickIds.has(id) ? id : '',
-      )
-      nextArrivalAssignments[key] = {
-        leaderId: leaderAvailable ? current.leaderId : undefined,
-        guideIds,
-      }
-    }
-
     const workload = new Map<string, number>()
-    Object.values(nextAssignments).forEach((staffId) => {
+    Object.entries(nextAssignments).forEach(([, staffId]) => {
       workload.set(staffId, (workload.get(staffId) ?? 0) + 1)
     })
 
     const dayRows = programme.rows.filter((row) => row.day === day)
 
-    // Fill normal qualified activity assignments first.
     for (const row of dayRows) {
       for (const cell of row.cells) {
         if (!cell.activityCode || cell.activityCode === 'Z') continue
@@ -734,7 +799,7 @@ function ManagerApp({
             (member) =>
               workingIds.has(member.id) &&
               !sickIds.has(member.id) &&
-              member.qualifications.includes(cell.activityCode),
+              qualificationIsValid(member, cell.activityCode),
           )
           .filter((member) => {
             return !dayRows.some(
@@ -748,6 +813,7 @@ function ManagerApp({
             )
           })
           .sort((a, b) => {
+            // Strict priority: regular staff first, then team leaders, activities manager, centre manager.
             const priorityDifference =
               rolePriority(resolvedRole(a)) - rolePriority(resolvedRole(b))
             if (priorityDifference !== 0) return priorityDifference
@@ -767,258 +833,10 @@ function ManagerApp({
       }
     }
 
-    // Session 3: assign one School Leader, then one instructor per group where
-    // possible. Only pair two groups to one instructor when staffing is short.
-    const arrivalRowsForDay = dayRows.filter(
-      (row) => row.session === '3' && row.schoolLabel,
-    )
-
-    const arrivalUsedInSession = new Set<string>()
-
-    for (const row of arrivalRowsForDay) {
-      const key = arrivalKey(row)
-      const populatedGroups = row.cells
-        .filter((cell) => cell.activityCode && cell.activityCode !== 'Z')
-        .map((cell) => cell.group)
-      const current = nextArrivalAssignments[key] ?? { guideIds: [] }
-
-      const busyInSession = new Set<string>()
-      dayRows
-        .filter((item) => item.session === row.session)
-        .forEach((item) =>
-          item.cells.forEach((cell) => {
-            const assigned = nextAssignments[cellKey(item.id, cell.group)]
-            if (assigned) busyInSession.add(assigned)
-          }),
-        )
-
-      arrivalUsedInSession.forEach((id) => busyInSession.add(id))
-      current.guideIds.filter(Boolean).forEach((id) => busyInSession.add(id))
-      if (current.leaderId) busyInSession.add(current.leaderId)
-
-      if (!current.leaderId) {
-        const leader = staff
-          .filter(
-            (member) =>
-              workingIds.has(member.id) &&
-              !sickIds.has(member.id) &&
-              !busyInSession.has(member.id),
-          )
-          .sort((a, b) => {
-            const leaderRank = (member: StaffMember) => {
-              const role = resolvedRole(member)
-              if (role === 'teamLeader') return 0
-              if (role === 'activityManager') return 1
-              if (role === 'centreManager') return 2
-              return 3
-            }
-            const rankDifference = leaderRank(a) - leaderRank(b)
-            if (rankDifference !== 0) return rankDifference
-            return (workload.get(a.id) ?? 0) - (workload.get(b.id) ?? 0)
-          })[0]
-
-        if (leader) {
-          current.leaderId = leader.id
-          busyInSession.add(leader.id)
-          workload.set(leader.id, (workload.get(leader.id) ?? 0) + 1)
-        }
-      }
-
-      const guideIds = Array.from(
-        { length: populatedGroups.length },
-        (_, index) => current.guideIds[index] ?? '',
-      )
-      const guideLoad = new Map<string, number>()
-      guideIds.filter(Boolean).forEach((id) =>
-        guideLoad.set(id, (guideLoad.get(id) ?? 0) + 1),
-      )
-
-      for (let index = 0; index < populatedGroups.length; index += 1) {
-        if (guideIds[index]) continue
-
-        let candidates = staff
-          .filter(
-            (member) =>
-              workingIds.has(member.id) &&
-              !sickIds.has(member.id) &&
-              member.id !== current.leaderId &&
-              !busyInSession.has(member.id),
-          )
-          .sort((a, b) => {
-            const roleDifference =
-              rolePriority(resolvedRole(a)) - rolePriority(resolvedRole(b))
-            if (roleDifference !== 0) return roleDifference
-            return (workload.get(a.id) ?? 0) - (workload.get(b.id) ?? 0)
-          })
-
-        // If everyone is already used, allow an arrival instructor to cover a
-        // second group, but never more than two groups.
-        if (!candidates.length) {
-          candidates = staff
-            .filter(
-              (member) =>
-                workingIds.has(member.id) &&
-                !sickIds.has(member.id) &&
-                member.id !== current.leaderId &&
-                (guideLoad.get(member.id) ?? 0) === 1,
-            )
-            .sort((a, b) =>
-              (workload.get(a.id) ?? 0) - (workload.get(b.id) ?? 0),
-            )
-        }
-
-        const chosen = candidates[0]
-        if (chosen) {
-          guideIds[index] = chosen.id
-          const previousGuideLoad = guideLoad.get(chosen.id) ?? 0
-          guideLoad.set(chosen.id, previousGuideLoad + 1)
-          if (previousGuideLoad === 0) busyInSession.add(chosen.id)
-          workload.set(chosen.id, (workload.get(chosen.id) ?? 0) + 1)
-        }
-      }
-
-      nextArrivalAssignments[key] = {
-        leaderId: current.leaderId,
-        guideIds,
-      }
-      if (current.leaderId) arrivalUsedInSession.add(current.leaderId)
-      guideIds.filter(Boolean).forEach((id) => arrivalUsedInSession.add(id))
-    }
-
     setAssignments(nextAssignments)
-    setArrivalAssignments(nextArrivalAssignments)
     localStorage.setItem(ASSIGNMENT_KEY, JSON.stringify(nextAssignments))
-    localStorage.setItem(
-      ARRIVAL_ASSIGNMENTS_KEY,
-      JSON.stringify(nextArrivalAssignments),
-    )
     setImportMessage(
-      `Auto-filled ${day}, including a School Leader and Session 3 group instructors. One instructor per group was used where possible; groups were paired only when staffing was short.`,
-    )
-  }
-
-  function autoFillArrivalSchool(row: ProgrammeRow) {
-    if (!programme) return
-
-    const day = row.day
-    const sickIds = new Set(sicknessByDay[day] ?? [])
-    const workingIds = new Set(
-      workingByDay[day] ?? staff.map((member) => member.id),
-    )
-    const key = arrivalKey(row)
-    const nextArrivalAssignments = { ...arrivalAssignments }
-    const current = nextArrivalAssignments[key] ?? { guideIds: [] }
-    const populatedGroups = row.cells
-      .filter((cell) => cell.activityCode && cell.activityCode !== 'Z')
-      .map((cell) => cell.group)
-
-    const usedByOtherSchools = new Set<string>()
-    programme.rows
-      .filter(
-        (item) =>
-          item.day === day &&
-          item.session === '3' &&
-          item.schoolLabel &&
-          item.id !== row.id,
-      )
-      .forEach((item) => {
-        const other = nextArrivalAssignments[arrivalKey(item)]
-        if (other?.leaderId) usedByOtherSchools.add(other.leaderId)
-        other?.guideIds.filter(Boolean).forEach((id) => usedByOtherSchools.add(id))
-      })
-
-    const validExistingLeader =
-      current.leaderId &&
-      workingIds.has(current.leaderId) &&
-      !sickIds.has(current.leaderId) &&
-      !usedByOtherSchools.has(current.leaderId)
-        ? current.leaderId
-        : undefined
-
-    const validGuideIds = Array.from(
-      { length: populatedGroups.length },
-      (_, index) => {
-        const id = current.guideIds[index]
-        return id &&
-          workingIds.has(id) &&
-          !sickIds.has(id) &&
-          !usedByOtherSchools.has(id) &&
-          id !== validExistingLeader
-          ? id
-          : ''
-      },
-    )
-
-    let leaderId = validExistingLeader
-    const guideLoad = new Map<string, number>()
-    validGuideIds.filter(Boolean).forEach((id) =>
-      guideLoad.set(id, (guideLoad.get(id) ?? 0) + 1),
-    )
-
-    if (!leaderId) {
-      const leaderRank = (member: StaffMember) => {
-        const role = resolvedRole(member)
-        if (role === 'teamLeader') return 0
-        if (role === 'activityManager') return 1
-        if (role === 'centreManager') return 2
-        return 3
-      }
-      leaderId = staff
-        .filter(
-          (member) =>
-            workingIds.has(member.id) &&
-            !sickIds.has(member.id) &&
-            !usedByOtherSchools.has(member.id) &&
-            !guideLoad.has(member.id),
-        )
-        .sort((a, b) => leaderRank(a) - leaderRank(b) || a.name.localeCompare(b.name))[0]
-        ?.id
-    }
-
-    for (let index = 0; index < validGuideIds.length; index += 1) {
-      if (validGuideIds[index]) continue
-
-      let candidate = staff
-        .filter(
-          (member) =>
-            workingIds.has(member.id) &&
-            !sickIds.has(member.id) &&
-            !usedByOtherSchools.has(member.id) &&
-            member.id !== leaderId &&
-            !guideLoad.has(member.id),
-        )
-        .sort((a, b) =>
-          rolePriority(resolvedRole(a)) - rolePriority(resolvedRole(b)) ||
-          a.name.localeCompare(b.name),
-        )[0]
-
-      if (!candidate) {
-        candidate = staff
-          .filter(
-            (member) =>
-              workingIds.has(member.id) &&
-              !sickIds.has(member.id) &&
-              !usedByOtherSchools.has(member.id) &&
-              member.id !== leaderId &&
-              (guideLoad.get(member.id) ?? 0) === 1,
-          )
-          .sort((a, b) => a.name.localeCompare(b.name))[0]
-      }
-
-      if (candidate) {
-        validGuideIds[index] = candidate.id
-        guideLoad.set(candidate.id, (guideLoad.get(candidate.id) ?? 0) + 1)
-      }
-    }
-
-    nextArrivalAssignments[key] = { leaderId, guideIds: validGuideIds }
-    setArrivalAssignments(nextArrivalAssignments)
-    localStorage.setItem(
-      ARRIVAL_ASSIGNMENTS_KEY,
-      JSON.stringify(nextArrivalAssignments),
-    )
-    setImportMessage(
-      `Auto-filled ${row.schoolLabel ?? 'school'} for Session 3 using all available staff.`,
+      `Auto-filled qualified staff for ${day}. Regular staff were used first, followed by team leaders, activities manager and centre manager.`,
     )
   }
 
@@ -1200,7 +1018,7 @@ function ManagerApp({
           (workingByDay[selectedStaffingCell.row.day] ??
             staff.map((item) => item.id)
           ).includes(member.id) &&
-          member.qualifications.includes(selectedStaffingCode) &&
+          qualificationIsValid(member, selectedStaffingCode) &&
           !(sicknessByDay[selectedStaffingCell.row.day] ?? []).includes(member.id) &&
           !isDoubleBooked(
             member.id,
@@ -1275,7 +1093,7 @@ function ManagerApp({
             day,
             session: row.session,
             activity_code: 'ARRIVAL',
-            activity_name: 'School Leader – documents and welcome',
+            activity_name: 'School arrival team leader',
             group_numbers: row.cells
               .filter((cell) => cell.activityCode && cell.activityCode !== 'Z')
               .map((cell) => cell.group),
@@ -1298,8 +1116,8 @@ function ManagerApp({
           day,
           session: row.session,
           activity_code: 'ARRIVAL',
-          activity_name: 'Accommodation and fire alarm instructor',
-          group_numbers: [row.cells.filter((cell) => cell.activityCode && cell.activityCode !== 'Z')[index]?.group ?? index + 1],
+          activity_name: 'School arrival instructor',
+          group_numbers: [index + 1],
           duty_type: 'arrival_instructor',
           staff_email: email,
           staff_name: guide.name,
@@ -1487,14 +1305,6 @@ function ManagerApp({
     programme?.rows.filter(
       (row) => row.schoolLabel && row.session === '3',
     ) ?? []
-  const arrivalRowsForActiveDay = arrivalRows.filter(
-    (row) => row.day === activeStaffingDay,
-  )
-  const activeArrivalSchoolId = arrivalRowsForActiveDay.some(
-    (row) => row.id === selectedArrivalSchoolId,
-  )
-    ? selectedArrivalSchoolId
-    : arrivalRowsForActiveDay[0]?.id ?? ''
 
   const selectedDayDemand = sessionDemandForDay(activeStaffingDay)
   const selectedDayBusiest = busiestSessionForDay(activeStaffingDay)
@@ -1510,6 +1320,16 @@ function ManagerApp({
       return row?.day === activeStaffingDay
     })
   })
+
+  const schoolsOnSite = new Set(programme?.rows.map((row) => row.schoolLabel).filter(Boolean) ?? []).size
+  const availableTodayCount = activeStaffingDay ? (workingByDay[activeStaffingDay] ?? staff.map((m) => m.id)).filter((id) => !(sicknessByDay[activeStaffingDay] ?? []).includes(id)).length : staff.length
+  const staffingShortages = populatedCells.filter(({row,cell}) => !assignments[cellKey(row.id,cell.group)]).length
+  const expiringQualifications = staff.flatMap((member) => Object.entries(member.qualificationExpiries ?? {}).map(([code,date]) => ({member,code,date}))).filter((item) => {
+    if (!item.date) return false
+    const days = (new Date(`${item.date}T23:59:59`).getTime()-Date.now())/86400000
+    return days >= 0 && days <= 60
+  })
+  const outstandingEquipmentChecks = equipmentChecks.filter((item) => !item.complete).length
 
   return (
     <div className="app-shell">
@@ -1588,11 +1408,11 @@ function ManagerApp({
                 value={populatedCells.length}
                 label="Activity places"
               />
-              <Stat
-                icon={<Users />}
-                value={programmeBusiest?.total ?? 0}
-                label="Maximum staff needed"
-              />
+              <Stat icon={<Users />} value={schoolsOnSite} label="Schools on site" />
+              <Stat icon={<UserRoundCheck />} value={availableTodayCount} label="Staff available" />
+              <Stat icon={<CircleAlert />} value={staffingShortages} label="Staffing shortages" />
+              <Stat icon={<Clock3 />} value={expiringQualifications.length} label="Qualifications expiring" />
+              <Stat icon={<ClipboardCheck />} value={outstandingEquipmentChecks} label="Equipment checks due" />
               <article className="stat-card busiest-card">
                 <span><CircleAlert /></span>
                 <strong>
@@ -1602,6 +1422,18 @@ function ManagerApp({
                 </strong>
                 <small>Busiest day and session</small>
               </article>
+            </section>
+
+            <section className="v018-command-centre">
+              <div className="ai-builder-card">
+                <Bot size={28} />
+                <div><p className="eyebrow">AI rota builder</p><h3>Build the complete rota</h3><p>Balances workload and respects availability, qualifications and session conflicts.</p></div>
+                <button className="primary" onClick={aiBuildEntireRota}><WandSparkles size={17}/> Build entire rota</button>
+              </div>
+              <div className="equipment-check-card">
+                <div><p className="eyebrow">Daily operations</p><h3>Equipment checks</h3></div>
+                {equipmentChecks.map((item) => <button key={item.id} className={item.complete ? 'equipment-item complete' : 'equipment-item'} onClick={() => toggleEquipmentCheck(item.id)}><CheckCircle2 size={18}/><span>{item.name}</span><small>{item.complete ? 'Complete' : 'Outstanding'}</small></button>)}
+              </div>
             </section>
 
             <section className="action-grid">
@@ -1877,32 +1709,8 @@ function ManagerApp({
                   </section>
                 )}
 
-                {arrivalRowsForActiveDay.length > 0 && (
-                  <section className="arrival-school-toolbar">
-                    <label>
-                      School arriving in Session 3
-                      <select
-                        value={activeArrivalSchoolId}
-                        onChange={(event) =>
-                          setSelectedArrivalSchoolId(event.target.value)
-                        }
-                      >
-                        {arrivalRowsForActiveDay.map((row) => (
-                          <option key={row.id} value={row.id}>
-                            {row.schoolLabel}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <span>
-                      {arrivalRowsForActiveDay.length} school
-                      {arrivalRowsForActiveDay.length === 1 ? '' : 's'} arriving
-                    </span>
-                  </section>
-                )}
-
-                {arrivalRowsForActiveDay
-                  .filter((row) => row.id === activeArrivalSchoolId)
+                {arrivalRows
+                  .filter((row) => row.day === activeStaffingDay)
                   .map((row) => {
                     const populatedGroups = row.cells.filter(
                       (cell) => cell.activityCode && cell.activityCode !== 'Z',
@@ -1918,23 +1726,12 @@ function ManagerApp({
                     const sickToday =
                       sicknessByDay[activeStaffingDay] ?? []
 
-                    const leaderOptions = staff
-                      .filter(
-                        (member) =>
-                          availableToday.includes(member.id) &&
-                          !sickToday.includes(member.id) &&
-                          !assignment.guideIds.includes(member.id),
-                      )
-                      .sort((a, b) => {
-                        const leaderRank = (member: StaffMember) => {
-                          const role = resolvedRole(member)
-                          if (role === 'teamLeader') return 0
-                          if (role === 'activityManager') return 1
-                          if (role === 'centreManager') return 2
-                          return 3
-                        }
-                        return leaderRank(a) - leaderRank(b)
-                      })
+                    const leaderOptions = staff.filter(
+                      (member) =>
+                        availableToday.includes(member.id) &&
+                        !sickToday.includes(member.id) &&
+                        resolvedRole(member) === 'teamLeader',
+                    )
 
                     const guideOptions = staff.filter(
                       (member) =>
@@ -1949,19 +1746,14 @@ function ManagerApp({
                       <section className="arrival-card" key={row.id}>
                         <div className="arrival-card-heading">
                           <div>
-                            <p className="eyebrow">School welcome and accommodation · Session 3</p>
+                            <p className="eyebrow">School arrival · Session 3</p>
                             <h3>{row.schoolLabel}</h3>
                             <p>
-                              {groupCount} group{groupCount === 1 ? '' : 's'} · one School Leader plus up to {guideSlots} group instructor{guideSlots === 1 ? '' : 's'}
+                              {groupCount} group{groupCount === 1 ? '' : 's'} ·{' '}
+                              {guideSlots} group instructor slot
+                              {guideSlots === 1 ? '' : 's'}
                             </p>
                           </div>
-                          <button
-                            className="primary arrival-autofill"
-                            onClick={() => autoFillArrivalSchool(row)}
-                          >
-                            <WandSparkles size={18} />
-                            Auto-fill this school
-                          </button>
                         </div>
 
                         <div className="arrival-staff-filter">
@@ -1989,20 +1781,22 @@ function ManagerApp({
                             </select>
                           </label>
                           <p>
-                            The School Leader talks through documents while group instructors take children to accommodation and complete the fire alarm test. One instructor per group is preferred; one instructor may cover two groups when staffing is short.
+                            School-arrival instructors do not need an activity
+                            qualification. They only need to be working and not
+                            marked sick.
                           </p>
                         </div>
 
                         <div className="arrival-assignment-grid">
                           <label>
-                            School Leader
+                            Team leader
                             <select
                               value={assignment.leaderId ?? ''}
                               onChange={(event) =>
                                 setArrivalLeader(row, event.target.value)
                               }
                             >
-                              <option value="">Select School Leader</option>
+                              <option value="">Select team leader</option>
                               {leaderOptions.map((member) => (
                                 <option key={member.id} value={member.id}>
                                   {member.name}
@@ -2012,7 +1806,7 @@ function ManagerApp({
                           </label>
 
                           {Array.from({ length: guideSlots }, (_, index) => {
-                            const groupNumber = populatedGroups[index]?.group ?? index + 1
+                            const groupNumber = index + 1
                             return (
                               <label key={index}>
                                 Instructor for Group {groupNumber}
@@ -2051,7 +1845,8 @@ function ManagerApp({
                           })}
                         </div>
                         <p className="arrival-note">
-                          Preferred staffing is one instructor per group. The same instructor can be selected for a maximum of two groups when staffing is short.
+                          Each group has its own instructor selector. The same
+                          instructor can be selected for up to two groups.
                         </p>
                       </section>
                     )
@@ -2414,6 +2209,14 @@ function ManagerApp({
                           <small>{member.signOffs[activity.code]}</small>
                         )}
                       </button>
+                    ))}
+                  </div>
+                  <div className="expiry-grid">
+                    {member.qualifications.map((code) => (
+                      <label key={`${member.id}-${code}-expiry`}>
+                        <span>{code} expiry</span>
+                        <input type="date" value={member.qualificationExpiries?.[code] ?? ''} onChange={(event) => updateQualificationExpiry(member.id, code, event.target.value)} />
+                      </label>
                     ))}
                   </div>
                 </article>
