@@ -1263,3 +1263,12 @@ button { cursor: pointer; }
 }
 .compact-weather-card h3, .compact-weather-card p { margin: 0; }
 .compact-weather-card .eyebrow { margin-bottom: .25rem; }
+
+
+.admin-choice-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; }
+.admin-choice-card { display:flex; align-items:center; gap:18px; padding:24px; text-align:left; border:1px solid var(--border, #d9e1ea); border-radius:18px; background:#fff; cursor:pointer; }
+.admin-choice-card:hover { transform:translateY(-1px); box-shadow:0 10px 25px rgba(15,23,42,.08); }
+.admin-choice-card h3 { margin:0 0 5px; }
+.admin-choice-card p { margin:0; color:#64748b; }
+.signoff-search { margin:16px 0 20px; }
+@media (max-width:700px){ .admin-choice-grid{grid-template-columns:1fr;} }

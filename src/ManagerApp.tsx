@@ -64,6 +64,16 @@ function shuffled<T>(items: T[]): T[] {
   return next
 }
 
+const accommodationNames = ['Kingfisher', 'Swan', 'Grebe', 'Bittern', 'Mallard', 'Teal']
+
+function accommodationName(buildingNumber: number) {
+  return accommodationNames[buildingNumber - 1] ?? `Building ${buildingNumber}`
+}
+
+function normaliseActivityText(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ')
+}
+
 function normaliseText(value: unknown) {
   return String(value ?? '').trim()
 }
@@ -397,6 +407,7 @@ function ManagerApp({
   const [showSickPanel, setShowSickPanel] = useState(false)
   const [showWorkingPanel, setShowWorkingPanel] = useState(false)
   const [showActivityManager, setShowActivityManager] = useState(false)
+  const [signoffSearch, setSignoffSearch] = useState('')
   const [newActivityCode, setNewActivityCode] = useState('')
   const [newActivityName, setNewActivityName] = useState('')
   const [arrivalStaffGroup, setArrivalStaffGroup] = useState<
@@ -876,6 +887,22 @@ function ManagerApp({
     setImportMessage('AI rota builder completed the programme using availability, valid qualifications, workload balancing and conflict prevention.')
   }
 
+  function isWaterActivity(code: string) {
+    const activity = activities.find((item) => item.code === code)
+    const text = normaliseActivityText(`${code} ${activity?.name ?? ''}`)
+    return ['water', 'sailing', 'kayak', 'canoe', 'paddle', 'raft', 'sup', 'windsurf'].some((term) => text.includes(term))
+  }
+
+  function hadWaterInPreviousPairedSession(staffId: string, day: string, session: string, currentAssignments: StaffingAssignment) {
+    const previousSession = session === '2' ? '1' : session === '4' ? '3' : ''
+    if (!previousSession || !programme) return false
+    return programme.rows
+      .filter((row) => row.day === day && row.session === previousSession)
+      .some((row) => activityCellsForRow(row).some((cell) =>
+        currentAssignments[cellKey(row.id, cell.group)] === staffId && isWaterActivity(cell.activityCode),
+      ))
+  }
+
   function autoFillStaffing(day: string) {
     if (!programme || !day) return
 
@@ -929,16 +956,19 @@ function ManagerApp({
             )
           })
           .sort((a, b) => {
-            // Strict priority: regular staff first, then team leaders, activities manager, centre manager.
-            const priorityDifference =
-              rolePriority(resolvedRole(a)) - rolePriority(resolvedRole(b))
+            if (isWaterActivity(cell.activityCode) && (row.session === '2' || row.session === '4')) {
+              const aWaterContinuity = hadWaterInPreviousPairedSession(a.id, day, row.session, nextAssignments)
+              const bWaterContinuity = hadWaterInPreviousPairedSession(b.id, day, row.session, nextAssignments)
+              if (aWaterContinuity !== bWaterContinuity) return aWaterContinuity ? -1 : 1
+            }
+
+            const priorityDifference = rolePriority(resolvedRole(a)) - rolePriority(resolvedRole(b))
             if (priorityDifference !== 0) return priorityDifference
 
-            const workloadDifference =
-              (workload.get(a.id) ?? 0) - (workload.get(b.id) ?? 0)
+            const workloadDifference = (workload.get(a.id) ?? 0) - (workload.get(b.id) ?? 0)
             if (workloadDifference !== 0) return workloadDifference
 
-            return a.name.localeCompare(b.name)
+            return Math.random() - 0.5
           })
 
         const chosen = candidates[0]
@@ -1094,7 +1124,7 @@ function ManagerApp({
 
   function flatLabel(flatId: string) {
     const [building, flat] = flatId.split('-')
-    return `Building ${building} · Flat ${flat}`
+    return `${accommodationName(Number(building))} · Flat ${flat}`
   }
 
   function accommodationSummary(flatIds: string[] = []) {
@@ -1109,7 +1139,7 @@ function ManagerApp({
     })
     return Array.from(byBuilding.entries())
       .sort(([a], [b]) => a - b)
-      .map(([building, flats]) => `Building ${building} — Flats ${flats.sort((a, b) => a - b).join(', ')}`)
+      .map(([building, flats]) => `${accommodationName(building)} — Flats ${flats.sort((a, b) => a - b).join(', ')}`)
       .join('; ')
   }
 
@@ -1206,6 +1236,7 @@ function ManagerApp({
         workingIds.has(member.id) &&
         !sickIds.has(member.id) &&
         !unavailableIds.has(member.id) &&
+        !['centreManager', 'activityManager'].includes(resolvedRole(member)) &&
         (arrivalStaffGroup === 'all' || resolvedRole(member) === arrivalStaffGroup),
       ),
     )
@@ -1244,6 +1275,7 @@ function ManagerApp({
         workingIds.has(member.id) &&
         !sickIds.has(member.id) &&
         !reserved.has(member.id) &&
+        !['centreManager', 'activityManager'].includes(resolvedRole(member)) &&
         (arrivalStaffGroup === 'all' || resolvedRole(member) === arrivalStaffGroup),
       ),
     )
@@ -1858,7 +1890,7 @@ function ManagerApp({
                   <div>
                     <p className="eyebrow">Programme-driven arrivals</p>
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
-                    <p>School names are taken directly from the uploaded programme. Allocate each school to a building, choose its Party Leader and staff the groups here.</p>
+                    <p>School names are taken directly from the uploaded programme. Allocate each school to accommodation, choose its Party Leader and staff the groups here.</p>
                   </div>
                   <span className="release-pill">v0.30</span>
                 </section>
@@ -1912,13 +1944,13 @@ function ManagerApp({
 
                             <section className="flat-allocation-section">
                               <div className="flat-allocation-heading">
-                                <div><strong>Accommodation allocation</strong><span>Select any combination of flats across Buildings 1–6.</span></div>
+                                <div><strong>Accommodation allocation</strong><span>Select any combination of flats across Kingfisher, Swan, Grebe, Bittern, Mallard and Teal.</span></div>
                                 <span>{assignment.flatIds?.length ?? 0} flat{assignment.flatIds?.length === 1 ? '' : 's'} selected</span>
                               </div>
                               <div className="building-flat-grid">
                                 {[1,2,3,4,5,6].map((building) => (
                                   <fieldset className="building-flat-picker" key={building}>
-                                    <legend>Building {building}</legend>
+                                    <legend>{accommodationName(building)}</legend>
                                     {[1,2,3,4,5].map((flat) => {
                                       const flatId = `${building}-${flat}`
                                       const usedByAnotherSchool = flatsUsedByOtherSchools(row).has(flatId)
@@ -2269,7 +2301,7 @@ function ManagerApp({
             <button className="back" onClick={() => setPage('dashboard')}><ChevronLeft size={18} />Dashboard</button>
             <p className="eyebrow">School information</p>
             <h2>School Notes</h2>
-            <p className="page-intro">Add operational notes for every school detected in the uploaded programme and choose which staff members are linked to those notes.</p>
+            <p className="page-intro">Add operational notes for every school detected in the uploaded programme.</p>
 
             {!arrivalRows.length ? (
               <section className="empty-arrivals-state">
@@ -2281,7 +2313,6 @@ function ManagerApp({
               <div className="school-notes-grid">
                 {arrivalRows.map((row) => {
                   const assignment = arrivalAssignment(row)
-                  const selectedNoteStaff = assignment.noteStaffIds ?? []
                   return (
                     <article className="school-note-card" key={row.id}>
                       <div className="school-note-card-head">
@@ -2290,7 +2321,6 @@ function ManagerApp({
                           <h3>{arrivalSchoolName(row)}</h3>
                           <span>{row.cells.length} group{row.cells.length === 1 ? '' : 's'} · Groups {row.cells.map((cell) => cell.group).join(', ')}</span>
                         </div>
-                        <span className="school-note-staff-count">{selectedNoteStaff.length} staff linked</span>
                       </div>
 
                       <label className="school-note-field">
@@ -2303,32 +2333,6 @@ function ManagerApp({
                         />
                       </label>
 
-                      <div className="school-note-staff">
-                        <strong>Assign staff to this school note</strong>
-                        <p>Select everyone who should be linked to this school’s information.</p>
-                        <div className="school-note-staff-grid">
-                          {staff.map((member) => {
-                            const selected = selectedNoteStaff.includes(member.id)
-                            return (
-                              <button
-                                type="button"
-                                key={member.id}
-                                className={selected ? 'active' : ''}
-                                onClick={() =>
-                                  updateArrivalDetails(row, {
-                                    noteStaffIds: selected
-                                      ? selectedNoteStaff.filter((id) => id !== member.id)
-                                      : [...selectedNoteStaff, member.id],
-                                  })
-                                }
-                              >
-                                {member.name}
-                                <span>{selected ? 'Assigned' : roleLabel(resolvedRole(member))}</span>
-                              </button>
-                            )
-                          })}
-                        </div>
-                      </div>
                     </article>
                   )
                 })}
@@ -2337,8 +2341,23 @@ function ManagerApp({
           </section>
         )}
 
+        {page === 'admin' && (
+          <Panel title="Admin" onBack={() => setPage('dashboard')}>
+            <section className="admin-choice-grid">
+              <button className="admin-choice-card" onClick={() => setPage('staff')}>
+                <Users size={34} />
+                <div><h3>Staff</h3><p>Manage staff accounts, roles and availability.</p></div>
+              </button>
+              <button className="admin-choice-card" onClick={() => setPage('signoffs')}>
+                <ShieldCheck size={34} />
+                <div><h3>Sign-off</h3><p>Search staff and manage activity sign-offs.</p></div>
+              </button>
+            </section>
+          </Panel>
+        )}
+
         {page === 'staff' && (
-          <Panel title="Staff management" onBack={() => setPage('dashboard')}>
+          <Panel title="Staff management" onBack={() => setPage('admin')}>
             <div className="staff-page-toolbar">
               <div>
                 <p>
@@ -2483,7 +2502,7 @@ function ManagerApp({
         )}
 
         {page === 'signoffs' && (
-          <Panel title="Staff sign-offs" onBack={() => setPage('dashboard')}>
+          <Panel title="Staff sign-offs" onBack={() => setPage('admin')}>
             <div className="signoff-toolbar">
               <p>
                 {staff.length} staff members loaded. Edit sign-offs and manage
@@ -2497,6 +2516,15 @@ function ManagerApp({
               >
                 Manage activities
               </button>
+            </div>
+
+            <div className="search-box signoff-search">
+              <Search size={18} />
+              <input
+                value={signoffSearch}
+                onChange={(event) => setSignoffSearch(event.target.value)}
+                placeholder="Search staff by name"
+              />
             </div>
 
             {showActivityManager && (
@@ -2547,7 +2575,7 @@ function ManagerApp({
             )}
 
             <div className="signoff-list">
-              {staff.map((member) => (
+              {staff.filter((member) => member.name.toLowerCase().includes(signoffSearch.trim().toLowerCase())).map((member) => (
                 <article className="signoff-card" key={member.id}>
                   <div className="signoff-card-heading">
                     <div>
