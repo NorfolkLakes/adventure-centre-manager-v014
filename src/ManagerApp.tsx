@@ -282,6 +282,7 @@ function ManagerApp({
   const [arrivalStaffGroup, setArrivalStaffGroup] = useState<
     'all' | StaffRole
   >('all')
+  const [selectedArrivalRowId, setSelectedArrivalRowId] = useState('')
   const [equipmentChecks, setEquipmentChecks] = useState<EquipmentCheck[]>(() =>
     readJson(EQUIPMENT_CHECKS_KEY, [
       { id: 'water', name: 'Watersports equipment checked', complete: false, updatedAt: '' },
@@ -992,6 +993,84 @@ function ManagerApp({
     )
   }
 
+  function autoFillArrivalSchool(row: ProgrammeRow) {
+    const key = arrivalKey(row)
+    const current = arrivalAssignments[key] ?? { guideIds: [] }
+    if (!current.leaderId) {
+      setImportMessage(`Select the School Leader for ${row.schoolLabel ?? 'this school'} before using auto-fill.`)
+      return
+    }
+
+    const populatedGroups = row.cells.filter(
+      (cell) => cell.activityCode && cell.activityCode !== 'Z',
+    )
+    const workingIds = new Set(
+      workingByDay[row.day] ?? staff.map((member) => member.id),
+    )
+    const sickIds = new Set(sicknessByDay[row.day] ?? [])
+
+    const unavailableIds = new Set<string>([current.leaderId])
+
+    for (const [otherKey, otherAssignment] of Object.entries(arrivalAssignments)) {
+      if (otherKey === key) continue
+      const [otherDay, otherRowId] = otherKey.split('::')
+      const otherRow = programme?.rows.find((item) => item.id === otherRowId)
+      if (otherDay !== row.day || otherRow?.session !== row.session) continue
+      if (otherAssignment.leaderId) unavailableIds.add(otherAssignment.leaderId)
+      otherAssignment.guideIds.filter(Boolean).forEach((id) => unavailableIds.add(id))
+    }
+
+    programme?.rows
+      .filter((item) => item.day === row.day && item.session === row.session)
+      .forEach((item) =>
+        item.cells.forEach((cell) => {
+          const assignedId = assignments[cellKey(item.id, cell.group)]
+          if (assignedId) unavailableIds.add(assignedId)
+        }),
+      )
+
+    const candidates = staff
+      .filter(
+        (member) =>
+          workingIds.has(member.id) &&
+          !sickIds.has(member.id) &&
+          !unavailableIds.has(member.id) &&
+          (arrivalStaffGroup === 'all' ||
+            resolvedRole(member) === arrivalStaffGroup),
+      )
+      .sort((a, b) => {
+        const priorityDifference =
+          rolePriority(resolvedRole(a)) - rolePriority(resolvedRole(b))
+        return priorityDifference || a.name.localeCompare(b.name)
+      })
+
+    const guideIds: string[] = []
+    const useOnePerGroup = candidates.length >= populatedGroups.length
+    const requiredGuides = useOnePerGroup
+      ? populatedGroups.length
+      : Math.ceil(populatedGroups.length / 2)
+    const selected = candidates.slice(0, requiredGuides)
+
+    populatedGroups.forEach((_, index) => {
+      const candidateIndex = useOnePerGroup ? index : Math.floor(index / 2)
+      guideIds[index] = selected[candidateIndex]?.id ?? ''
+    })
+
+    const next = {
+      ...arrivalAssignments,
+      [key]: { ...current, guideIds },
+    }
+    setArrivalAssignments(next)
+    localStorage.setItem(ARRIVAL_ASSIGNMENTS_KEY, JSON.stringify(next))
+
+    const unfilled = guideIds.filter((id) => !id).length
+    setImportMessage(
+      unfilled
+        ? `${row.schoolLabel}: auto-fill completed, but ${unfilled} group${unfilled === 1 ? '' : 's'} still need an instructor.`
+        : `${row.schoolLabel}: arrival staffing auto-filled without double-booking staff from another school.`,
+    )
+  }
+
   function assignStaff(staffId?: string) {
     if (!selectedStaffingCell) return
     const key = cellKey(
@@ -1093,10 +1172,8 @@ function ManagerApp({
             day,
             session: row.session,
             activity_code: 'ARRIVAL',
-            activity_name: 'School arrival team leader',
-            group_numbers: row.cells
-              .filter((cell) => cell.activityCode && cell.activityCode !== 'Z')
-              .map((cell) => cell.group),
+            activity_name: 'School Leader',
+            group_numbers: [],
             duty_type: 'arrival_leader',
             staff_email: email,
             staff_name: leader.name,
@@ -1104,6 +1181,10 @@ function ManagerApp({
           })
         }
       }
+
+      const arrivalGroups = row.cells.filter(
+        (cell) => cell.activityCode && cell.activityCode !== 'Z',
+      )
 
       arrival.guideIds.forEach((staffId, index) => {
         if (!staffId) return
@@ -1116,8 +1197,8 @@ function ManagerApp({
           day,
           session: row.session,
           activity_code: 'ARRIVAL',
-          activity_name: 'School arrival instructor',
-          group_numbers: [index + 1],
+          activity_name: 'Accommodation / Fire Alarm Instructor',
+          group_numbers: arrivalGroups[index] ? [arrivalGroups[index].group] : [],
           duty_type: 'arrival_instructor',
           staff_email: email,
           staff_name: guide.name,
@@ -1306,6 +1387,14 @@ function ManagerApp({
       (row) => row.schoolLabel && row.session === '3',
     ) ?? []
 
+  const arrivalRowsForDay = arrivalRows.filter(
+    (row) => row.day === activeStaffingDay,
+  )
+  const activeArrivalRow =
+    arrivalRowsForDay.find((row) => row.id === selectedArrivalRowId) ??
+    arrivalRowsForDay[0] ??
+    null
+
   const selectedDayDemand = sessionDemandForDay(activeStaffingDay)
   const selectedDayBusiest = busiestSessionForDay(activeStaffingDay)
   const programmeBusiest = busiestSessionAcrossProgramme()
@@ -1344,7 +1433,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.19</span></div>
+          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.20</span></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -1724,9 +1813,30 @@ function ManagerApp({
                   </section>
                 )}
 
-                {arrivalRows
-                  .filter((row) => row.day === activeStaffingDay)
-                  .map((row) => {
+                {arrivalRowsForDay.length > 0 && (
+                  <section className="arrival-school-selector">
+                    <div>
+                      <p className="eyebrow">Session 3 school arrival</p>
+                      <h3>Select a school</h3>
+                      <p>Choose one of the schools arriving today, select its School Leader, then auto-fill the accommodation groups.</p>
+                    </div>
+                    <label>
+                      School
+                      <select
+                        value={activeArrivalRow?.id ?? ''}
+                        onChange={(event) => setSelectedArrivalRowId(event.target.value)}
+                      >
+                        {arrivalRowsForDay.map((schoolRow) => (
+                          <option key={schoolRow.id} value={schoolRow.id}>
+                            {schoolRow.schoolLabel}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </section>
+                )}
+
+                {activeArrivalRow && [activeArrivalRow].map((row) => {
                     const populatedGroups = row.cells.filter(
                       (cell) => cell.activityCode && cell.activityCode !== 'Z',
                     )
@@ -1804,14 +1914,14 @@ function ManagerApp({
 
                         <div className="arrival-assignment-grid">
                           <label>
-                            Team leader
+                            School Leader
                             <select
                               value={assignment.leaderId ?? ''}
                               onChange={(event) =>
                                 setArrivalLeader(row, event.target.value)
                               }
                             >
-                              <option value="">Select team leader</option>
+                              <option value="">Select School Leader</option>
                               {leaderOptions.map((member) => (
                                 <option key={member.id} value={member.id}>
                                   {member.name}
@@ -1821,7 +1931,7 @@ function ManagerApp({
                           </label>
 
                           {Array.from({ length: guideSlots }, (_, index) => {
-                            const groupNumber = index + 1
+                            const groupNumber = populatedGroups[index]?.group ?? index + 1
                             return (
                               <label key={index}>
                                 Instructor for Group {groupNumber}
@@ -1859,9 +1969,23 @@ function ManagerApp({
                             )
                           })}
                         </div>
+                        <div className="arrival-actions">
+                          <button
+                            className="primary"
+                            disabled={!assignment.leaderId}
+                            onClick={() => autoFillArrivalSchool(row)}
+                          >
+                            <WandSparkles size={18} />
+                            Auto-fill this school
+                          </button>
+                          <span>
+                            {assignment.leaderId
+                              ? 'The selected School Leader will not receive a group.'
+                              : 'Select the School Leader first.'}
+                          </span>
+                        </div>
                         <p className="arrival-note">
-                          Each group has its own instructor selector. The same
-                          instructor can be selected for up to two groups.
+                          The programme’s real group numbers are used. Auto-fill gives one instructor per group when possible, or one instructor for two groups when staffing is short.
                         </p>
                       </section>
                     )
