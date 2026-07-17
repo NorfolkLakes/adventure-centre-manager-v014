@@ -141,11 +141,30 @@ function parseProgrammeWorkbook(
   })[0]
 
   const { sheetName, rows, dayRow } = candidate
+  const worksheet = workbook.Sheets[sheetName]
   const groupHeaderRow = rows[dayRow + 1] ?? []
+
+  // Excel stores a merged heading only in the first cell of the merged range.
+  // Build a lookup that repeats that displayed value across the exact merged
+  // columns so school group counts follow the visible programme layout.
+  const mergedValues = new Map<string, string>()
+  for (const merge of worksheet['!merges'] ?? []) {
+    const anchor = worksheet[XLSX.utils.encode_cell(merge.s)]
+    const value = normaliseText(anchor?.w ?? anchor?.v)
+    if (!value) continue
+
+    for (let row = merge.s.r; row <= merge.e.r; row += 1) {
+      for (let column = merge.s.c; column <= merge.e.c; column += 1) {
+        mergedValues.set(`${row}:${column}`, value)
+      }
+    }
+  }
 
   const groupColumns: { column: number; group: number }[] = []
   for (let column = 2; column < groupHeaderRow.length; column += 1) {
-    const parsed = Number(normaliseText(groupHeaderRow[column]))
+    const header = normaliseText(groupHeaderRow[column])
+    const match = header.match(/^G?\s*(\d{1,2})$/i)
+    const parsed = match ? Number(match[1]) : Number.NaN
     if (Number.isInteger(parsed) && parsed >= 1 && parsed <= 30) {
       groupColumns.push({ column, group: parsed })
     }
@@ -183,10 +202,15 @@ function parseProgrammeWorkbook(
       continue
     }
 
-    const cells = groupColumns.map(({ column, group }) => ({
-      group,
-      activityCode: normaliseText(row[column]).toUpperCase(),
-    }))
+    const cells = groupColumns.map(({ column, group }) => {
+      const directValue = normaliseText(row[column])
+      const mergedValue = mergedValues.get(`${rowIndex}:${column}`) ?? ''
+
+      return {
+        group,
+        activityCode: (directValue || mergedValue).toUpperCase(),
+      }
+    })
 
     const populatedCells = cells.filter((cell) => cell.activityCode)
     if (!populatedCells.length) continue
@@ -272,26 +296,54 @@ function arrivalSchoolSegments(row: ProgrammeRow): ArrivalSchoolSegment[] {
 
   const segments: ArrivalSchoolSegment[] = []
   let current: ArrivalSchoolSegment | null = null
+  let currentUsesMergedSpan = false
 
-  for (const cell of sortedCells) {
+  for (let index = 0; index < sortedCells.length; index += 1) {
+    const cell = sortedCells[index]
     const value = cell.activityCode.trim()
 
     if (looksLikeSchoolName(value)) {
-      current = {
-        schoolName: value.replace(/\s+/g, ' ').trim(),
-        cells: [{ ...cell, activityCode: value }],
+      const schoolName = value.replace(/\s+/g, ' ').trim()
+      const schoolKey = normalisedProgrammeValue(schoolName)
+      const previousKey = current
+        ? normalisedProgrammeValue(current.schoolName)
+        : ''
+      const nextValue = sortedCells[index + 1]?.activityCode.trim() ?? ''
+      const repeatedIntoNextCell =
+        looksLikeSchoolName(nextValue) &&
+        normalisedProgrammeValue(nextValue) === schoolKey
+
+      if (current && previousKey === schoolKey) {
+        current.cells.push({ ...cell, activityCode: schoolName })
+        currentUsesMergedSpan = true
+      } else {
+        current = {
+          schoolName,
+          cells: [{ ...cell, activityCode: schoolName }],
+        }
+        segments.push(current)
+        currentUsesMergedSpan = repeatedIntoNextCell
       }
-      segments.push(current)
       continue
     }
 
     if (value && value.toUpperCase() !== 'Z' && isKnownProgrammeActivity(value)) {
       current = null
+      currentUsesMergedSpan = false
       continue
     }
 
     if (current && (!value || value.toUpperCase() === 'Z')) {
-      current.cells.push({ ...cell, activityCode: current.schoolName })
+      // Legacy programmes sometimes put the school name in one cell followed by
+      // blanks. Keep supporting that. When the workbook supplied an explicit
+      // merged span, however, stop at the edge of that span instead of counting
+      // every remaining blank group column as part of the school.
+      if (currentUsesMergedSpan) {
+        current = null
+        currentUsesMergedSpan = false
+      } else {
+        current.cells.push({ ...cell, activityCode: current.schoolName })
+      }
     }
   }
 
@@ -2376,7 +2428,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.45</span></div>
+          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.46</span></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -2623,7 +2675,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to accommodation, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v0.45</span>
+                  <span className="release-pill">v0.46</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
