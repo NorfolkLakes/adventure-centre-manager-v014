@@ -295,11 +295,19 @@ After deploying v0.20, run `supabase/setup.sql` once in the Supabase SQL Editor 
 - Excel files are editable and configured to fit the sheet onto a printable page.
 
 
-## v0.54
+## v0.55
 - Payroll export now uses every current app staff member rather than matching old template names.
 - Payroll names are grouped by role.
 - Days worked, holidays and sickness are loaded from the selected monthly Days Off calendar.
 
 
-## v0.54
+## v0.55
 Adds permanent and loan staff lifecycle management, Former Staff and Loan Staff History pages, preserved sign-offs on reactivation/conversion, Staff IDs, and Payroll Sync controls.
+
+
+## v0.55 payroll update
+- Uses the Jun sheet as the permanent payroll layout and staff-name master.
+- Adds each generated month to the same annual workbook.
+- Prevents duplicate month creation.
+- Calculates new permanent staff from their employment start date to the end of the selected month.
+- Excludes weekends, loan staff, OFF days, holidays and sickness from worked-day totals.

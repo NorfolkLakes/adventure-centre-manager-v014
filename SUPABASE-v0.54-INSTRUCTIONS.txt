@@ -1,0 +1,8 @@
+Adventure Centre Manager v0.54
+
+This release stores staff lifecycle records locally in the shared app state/local browser storage, matching the existing staff implementation. No destructive database migration is required.
+
+After replacing the project files, run:
+  rm -rf node_modules
+  npm ci --no-audit --no-fund
+  npm run build

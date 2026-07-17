@@ -1224,11 +1224,11 @@ button { cursor: pointer; }
   gap: 12px;
   margin: 14px 0;
   padding: 15px 16px;
-  border: 1px solid #efb36f;
-  border-left: 6px solid #d96c13;
+  border: 1px solid #fca5a5;
+  border-left: 6px solid #dc2626;
   border-radius: 15px;
-  background: #fff3e3;
-  color: #71390d;
+  background: #fef2f2;
+  color: #991b1b;
 }
 .staffing-shortage-alert strong { display: block; margin-bottom: 4px; font-size: 1rem; }
 .staffing-shortage-alert p { margin: 0; line-height: 1.45; }
@@ -1371,14 +1371,232 @@ button { cursor: pointer; }
 .last-updated-live { font-size:.78rem; color:#475569; max-width:220px; text-align:right; line-height:1.25; }
 @media (max-width: 900px) { .last-updated-live { display:none; } }
 
-/* v0.39 instructor holiday summary */
-.my-holiday-panel{margin-top:16px;padding:18px;border-radius:18px;background:#fff;box-shadow:0 10px 28px rgba(26,74,64,.1)}
-.my-holiday-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
-.my-holiday-heading h2{margin:3px 0}
-.my-holiday-actions{display:flex;gap:7px;flex-wrap:wrap}
-.my-holiday-actions button{border:1px solid #cbd8d4;background:#fff;border-radius:9px;padding:8px 10px;font-weight:750;cursor:pointer}
-.my-holiday-list{display:grid;gap:8px;margin-top:14px}
-.my-holiday-list article{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:11px 13px;border-radius:11px;background:#eaf2ff;border:1px solid #d7e6ff}
-.my-holiday-list span{color:#536965;font-size:.86rem}
-.my-holiday-empty{margin:14px 0 0;color:#667875}
-@media(max-width:600px){.my-holiday-list article{align-items:flex-start;flex-direction:column}.my-holiday-actions button{flex:1}}
+.last-updated-footer {
+  margin: 24px auto 12px;
+  padding: 10px 18px;
+  max-width: 1480px;
+  width: calc(100% - 40px);
+  color: #000;
+  font-size: .82rem;
+  text-align: center;
+}
+
+/* v0.41 water support */
+.water-support-panel { margin:18px 0; padding:18px; border:1px solid #9dc9c1; border-radius:16px; background:#f3faf8; display:grid; gap:14px; }
+.water-support-panel h3 { margin:2px 0 4px; }
+.water-support-panel p { margin:0; }
+.water-support-list { display:grid; gap:10px; }
+.water-support-list article { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:12px; background:#fff; border:1px solid #cfe2de; border-radius:12px; }
+.water-support-list article div { display:flex; flex-direction:column; gap:3px; }
+.water-support-list article span { color:#61736f; font-size:.82rem; }
+.water-support-list select { min-width:210px; }
+@media (max-width:700px) { .water-support-list article { align-items:stretch; flex-direction:column; } .water-support-list select { width:100%; min-width:0; } }
+
+
+/* v0.42 instructor duty clarity */
+.staff-day-tabs button { display:inline-flex; align-items:center; justify-content:center; gap:7px; }
+.today-day-badge { padding:2px 6px; border-radius:999px; background:#dff4ec; color:#155f51; font-size:.64rem; font-weight:900; }
+.staff-day-tabs button.active .today-day-badge { background:rgba(255,255,255,.2); color:inherit; }
+.duty-arrival_instructor, .duty-arrival_leader { border-left:5px solid #2878b5; background:linear-gradient(135deg,#f7fbff,#fff); }
+.arrival-duty-details { display:grid; gap:7px; margin-top:10px; padding:11px 12px; border-radius:12px; background:#edf6fb; }
+.arrival-duty-details p { margin:0; line-height:1.35; }
+.arrival-duty-details .missing-duty-detail { color:#8a4b15; }
+
+/* v0.43 water-lead confirmations and logs */
+.logs-toolbar{display:flex;gap:12px;align-items:center;margin-bottom:18px}.logs-toolbar .search-box{flex:1}.logs-toolbar select{min-width:190px}.logs-list{display:grid;gap:12px}.log-card{border:1px solid #d8dee8;border-radius:14px;padding:16px;background:#fff}.log-card-top{display:flex;justify-content:space-between;gap:12px}.log-card-top time,.log-card small{color:#5d6778}.log-card h3{margin:10px 0 4px}.log-card p{margin:4px 0}.modal-backdrop{position:fixed;inset:0;background:rgba(14,22,35,.58);display:grid;place-items:center;padding:20px;z-index:1000}.water-confirmation-modal{width:min(620px,100%);background:#fff;border-radius:20px;padding:26px;box-shadow:0 24px 70px rgba(0,0,0,.3)}.water-confirmation-modal h2{margin:10px 0}.water-confirmation-modal p{line-height:1.5}.confirmation-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:20px}.confirmation-actions button{flex:1;min-width:150px}
+
+
+.qualification-shortage-alert {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  margin: 16px 0;
+  padding: 16px 18px;
+  border: 2px solid #b91c1c;
+  border-radius: 14px;
+  background: #fee2e2;
+  color: #111827;
+}
+.qualification-shortage-alert > svg { color: #b91c1c; flex: 0 0 auto; }
+.qualification-shortage-alert strong { color: #991b1b; font-size: 1rem; }
+.qualification-shortage-alert p { margin: 4px 0 8px; }
+.qualification-shortage-alert ul { margin: 0; padding-left: 20px; }
+.qualification-shortage-alert li + li { margin-top: 5px; }
+.staffing-card.qualification-missing,
+.compact-my-session-row.qualification-missing { border-color: #dc2626; background: #fff1f2; }
+.qualification-missing-text,
+.my-session-qualification-warning { color: #b91c1c; font-weight: 800; }
+.my-session-qualification-warning { white-space: nowrap; }
+
+
+/* v0.47 staffing views */
+.staffing-view-switch {
+  display: inline-flex;
+  gap: 4px;
+  margin: 0 0 14px;
+  padding: 4px;
+  border: 1px solid #cbdad5;
+  border-radius: 12px;
+  background: #f3f7f5;
+}
+
+.staffing-view-switch button {
+  min-height: 38px;
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 9px;
+  color: #4d625d;
+  background: transparent;
+  font-weight: 850;
+}
+
+.staffing-view-switch button.active {
+  color: #fff;
+  background: #1c7567;
+  box-shadow: 0 4px 12px rgba(28, 117, 103, .18);
+}
+
+.staffing-calendar-wrap {
+  overflow-x: auto;
+  margin-top: 16px;
+  padding-bottom: 8px;
+  border: 1px solid #d8e2df;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.staffing-calendar {
+  display: grid;
+  min-width: max-content;
+}
+
+.staffing-calendar-corner,
+.staffing-calendar-day,
+.staffing-calendar-session,
+.staffing-calendar-cell {
+  border-right: 1px solid #dde6e3;
+  border-bottom: 1px solid #dde6e3;
+}
+
+.staffing-calendar-corner,
+.staffing-calendar-session {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: #f4f8f6;
+}
+
+.staffing-calendar-corner {
+  display: grid;
+  place-items: center;
+  min-height: 52px;
+  font-size: .74rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+
+.staffing-calendar-day {
+  min-height: 52px;
+  padding: 10px;
+  border-top: 0;
+  border-left: 0;
+  color: #315b53;
+  background: #f4f8f6;
+  font-weight: 900;
+}
+
+.staffing-calendar-day.active {
+  color: #fff;
+  background: #1c7567;
+}
+
+.staffing-calendar-session {
+  display: grid;
+  place-items: start center;
+  min-height: 112px;
+  padding: 16px 8px;
+  color: #315b53;
+  font-weight: 950;
+}
+
+.staffing-calendar-cell {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 112px;
+  padding: 9px;
+  background: #fbfdfc;
+}
+
+.staffing-calendar-card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 8px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid #d5e1dd;
+  border-radius: 10px;
+  text-align: left;
+  color: #263d38;
+  background: #fff;
+}
+
+.staffing-calendar-card strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.staffing-calendar-card span {
+  font-weight: 900;
+}
+
+.staffing-calendar-card small,
+.staffing-calendar-card em {
+  grid-column: 1 / -1;
+  color: #687b77;
+  font-style: normal;
+}
+
+.staffing-calendar-card.ready {
+  border-left: 4px solid #2f8a70;
+}
+
+.staffing-calendar-card.needs {
+  border-left: 4px solid #c88a2b;
+}
+
+.staffing-calendar-card.qualification-missing {
+  border-left: 4px solid #b94c40;
+  background: #fff5f3;
+}
+
+.staffing-calendar-card.qualification-missing em {
+  color: #a43f35;
+  font-weight: 850;
+}
+
+.staffing-calendar-empty {
+  padding: 10px;
+  color: #90a09c;
+  font-size: .78rem;
+}
+
+/* v0.48 Days Off */
+.days-off-toolbar,.days-off-range-editor,.weekly-sheet-heading,.week-nav,.days-off-legend{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.days-off-toolbar{justify-content:space-between;margin-bottom:16px}.days-off-range-editor{display:grid;grid-template-columns:1.2fr .8fr 1fr 1fr auto;margin-bottom:18px}.days-off-range-editor select,.days-off-range-editor input{padding:10px;border:1px solid #ccd6d2;border-radius:9px}.day-off-entry{display:flex;justify-content:space-between;gap:6px;padding:4px 6px;margin-top:4px;border-radius:6px;font-size:.72rem}.weekly-sheet-heading{justify-content:space-between;margin:8px 0 12px}.weekly-sheet-heading h2,.weekly-sheet-heading p{margin:0}.weekly-grid{display:grid;border-top:2px solid #222;border-left:2px solid #222;overflow:auto}.weekly-grid>div{min-height:48px;border-right:1px solid #222;border-bottom:1px solid #222;padding:7px}.weekly-head{display:grid;place-items:center;text-align:center;background:#f0f0f0}.weekly-head span{font-size:.75rem}.staff-name-cell{font-weight:700;background:#fafafa}.day-off-cell{display:grid;place-items:center}.day-off-cell select{width:100%;border:0;background:transparent;font-weight:700;text-align:center}.status-off{background:#f4df83!important}.status-hol{background:#b9e7a9!important}.status-sick{background:#ef9b9b!important}.status-am_off{background:#b9d9f5!important}.status-pm_off{background:#f5c58c!important}.days-off-legend{margin-top:12px}.days-off-legend span{padding:6px 12px;border:1px solid #444;font-weight:800}.print-only{display:none}.staffing-view-toggle{display:flex;gap:5px}.staffing-view-toggle button{padding:9px 12px;border:1px solid #cbd5d1;background:#fff;border-radius:8px}.staffing-view-toggle button.active{background:#174f43;color:#fff}
+@media(max-width:850px){.days-off-range-editor{grid-template-columns:1fr 1fr}.weekly-grid{font-size:.78rem}}
+@media print{body[data-print-days-off] .top-nav,body[data-print-days-off] .app-header,body[data-print-days-off] .no-print,body[data-print-days-off] .last-updated-footer{display:none!important}body[data-print-days-off] .panel{box-shadow:none!important;border:0!important;padding:0!important}body[data-print-days-off="month"] .print-week-sheet{display:none!important}body[data-print-days-off="week"] .print-month-sheet{display:none!important}body[data-print-days-off] .print-only{display:block!important}body[data-print-days-off] .weekly-grid{overflow:visible;grid-template-columns:155px repeat(7,1fr)!important;font-size:10px}body[data-print-days-off] .weekly-grid>div{min-height:34px;padding:4px}body[data-print-days-off] .holiday-day{min-height:85px;border-radius:0}body[data-print-days-off]{background:#fff}@page{size:landscape;margin:8mm}}
+
+.days-off-export-actions{display:flex;gap:10px;flex-wrap:wrap}.daily-days-off{display:grid;gap:16px}.daily-days-off-grid{display:grid;grid-template-columns:minmax(170px,1.2fr) minmax(130px,.7fr) minmax(220px,1.5fr);border-top:1px solid #94a3b8;border-left:1px solid #94a3b8}.daily-days-off-grid>div{min-height:48px;padding:10px;border-right:1px solid #94a3b8;border-bottom:1px solid #94a3b8;display:flex;align-items:center}.daily-head{font-weight:800;justify-content:center;background:#e2e8f0}.daily-availability{font-weight:600}.daily-days-off-grid .day-off-cell{justify-content:center}.daily-days-off-grid select{width:100%}@media(max-width:760px){.daily-days-off-grid{grid-template-columns:1fr}.daily-head{display:none!important}.daily-days-off-grid>div{border-top:0}.days-off-export-actions{width:100%}.days-off-export-actions button{flex:1}}
+
+.staff-name-cell{display:flex;flex-direction:column;justify-content:center}.staff-name-cell small{font-size:.68rem;font-weight:600;color:#64748b;margin-top:2px}.keyboard-cell{cursor:pointer;outline:none}.keyboard-cell.selected-cell,.keyboard-cell:focus{box-shadow:inset 0 0 0 3px #174f43;position:relative;z-index:1}.keyboard-hint{margin:10px 0 0;font-size:.82rem;color:#475569}.status-sick strong:empty{display:block;min-height:1em}
+
+.blank-red-cell select{color:transparent}.blank-red-cell select option{color:#111}
+
+.keyboard-key{margin-top:14px;border:1px solid #cbd5e1;border-radius:10px;padding:12px;background:#f8fafc}.keyboard-key-heading{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:10px}.keyboard-key-heading span{font-size:.78rem;color:#64748b}.keyboard-key-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(155px,1fr));gap:7px}.keyboard-key-grid span{display:flex;align-items:center;gap:7px;min-height:36px;padding:6px 8px;border:1px solid #d7dee7;border-radius:7px;background:#fff;font-size:.82rem}.keyboard-key-grid kbd{display:inline-grid;place-items:center;min-width:30px;padding:3px 7px;border:1px solid #94a3b8;border-bottom-width:2px;border-radius:5px;background:#fff;font-family:inherit;font-weight:800;color:#0f172a}.keyboard-key-grid .key-off{background:#f4df83}.keyboard-key-grid .key-hol{background:#b9e7a9}.keyboard-key-grid .key-sick{background:#ef9b9b}.keyboard-key-grid .key-am{background:#b9d9f5}.keyboard-key-grid .key-pm{background:#f5c58c}.days-off-help-backdrop{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;padding:20px;background:rgba(15,23,42,.55)}.days-off-help-dialog{width:min(720px,100%);max-height:88vh;overflow:auto;border-radius:14px;background:#fff;padding:20px;box-shadow:0 24px 70px rgba(15,23,42,.3)}.days-off-help-header{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}.days-off-help-header h2,.days-off-help-header p{margin-top:0}.days-off-help-dialog h3{margin:20px 0 8px}.days-off-help-dialog p{margin:0;color:#334155}.help-key-grid{grid-template-columns:repeat(2,minmax(0,1fr))}@media(max-width:620px){.help-key-grid{grid-template-columns:1fr}.days-off-help-dialog{padding:15px}.keyboard-key-grid{grid-template-columns:1fr}}
+.payroll-download-panel{margin-top:24px;padding:18px;border:1px solid var(--border);border-radius:16px;display:flex;align-items:center;justify-content:space-between;gap:18px;background:var(--surface-soft)}
+.payroll-download-panel h3{margin:0 0 5px}.payroll-download-panel p{margin:0;max-width:760px}.payroll-download-panel button{flex:0 0 auto}
+@media(max-width:720px){.payroll-download-panel{align-items:stretch;flex-direction:column}.payroll-download-panel button{width:100%;justify-content:center}}
+
+.staff-toolbar-actions,.payroll-actions,.history-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.loan-badge{display:inline-flex;padding:4px 8px;border-radius:999px;background:#dcecff;color:#235b8a;font-size:.7rem;font-weight:850}.staff-code{display:block;color:#71827e;margin-top:4px}.history-list{display:grid;gap:12px}.history-card{display:flex;justify-content:space-between;gap:18px;align-items:center;padding:16px;border:1px solid #d9e4e0;border-radius:14px;background:#fff}.history-card h3,.history-card p{margin:0 0 6px}.history-card small{display:block;margin-top:4px;color:#61736f}@media(max-width:700px){.history-card{align-items:stretch;flex-direction:column}.history-actions{flex-direction:column;align-items:stretch}}

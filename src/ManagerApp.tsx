@@ -845,135 +845,206 @@ function ManagerApp({
     return resolvedRole(member)
   }
 
-  function payrollStaff() {
-    const rank: Record<string, number> = { centreManager: 0, activityManager: 1, teamLeader: 2, staff: 3 }
-    return staff.filter((member) => member.employmentType !== 'loan').sort((a, b) => {
-      const roleDifference = (rank[payrollRoleForMember(a)] ?? 9) - (rank[payrollRoleForMember(b)] ?? 9)
-      return roleDifference || a.name.localeCompare(b.name, 'en-GB', { sensitivity: 'base' })
+  function payrollStaff(month: Date) {
+    const monthEnd = new Date(month.getFullYear(), month.getMonth() + 1, 0)
+    return staff.filter((member) => {
+      if (member.employmentType === 'loan') return false
+      if (!member.startDate) return true
+      return parseDateKey(member.startDate) <= monthEnd
     })
   }
 
   function payrollTotalsForMember(member: StaffMember, month: Date) {
     const year = month.getFullYear(), monthIndex = month.getMonth()
     const monthStart = new Date(year, monthIndex, 1), monthEnd = new Date(year, monthIndex + 1, 0)
-    const today = new Date(); today.setHours(0, 0, 0, 0)
-    const calculationDate = today < monthStart ? new Date(monthStart.getTime() - 86400000) : today > monthEnd ? monthEnd : today
+    const employmentStart = member.startDate ? parseDateKey(member.startDate) : monthStart
+    const effectiveStart = employmentStart > monthStart ? employmentStart : monthStart
+    if (effectiveStart > monthEnd) return { workedDays: 0, holidayDays: 0, sickDays: 0 }
+
     const entries = daysOff.filter((entry) => {
       const d = parseDateKey(entry.day)
-      return entry.staff_id === member.id && d.getFullYear() === year && d.getMonth() === monthIndex
+      return entry.staff_id === member.id && d >= effectiveStart && d <= monthEnd
     })
     const entryByDay = new Map(entries.map((entry) => [entry.day, entry]))
-    let actualWorkedDays = 0
-    for (let day = new Date(monthStart); day <= calculationDate; day.setDate(day.getDate() + 1)) {
+    let workedDays = 0
+    let holidayDays = 0
+    let sickDays = 0
+
+    for (let day = new Date(effectiveStart); day <= monthEnd; day.setDate(day.getDate() + 1)) {
+      if (day.getDay() === 0 || day.getDay() === 6) continue
       const entry = entryByDay.get(dateKey(day))
-      if (!entry || entry.status === 'am_off' || entry.status === 'pm_off') actualWorkedDays += 1
+      if (entry?.status === 'hol') holidayDays += 1
+      else if (entry?.status === 'sick') sickDays += 1
+      else if (!entry || entry.status === 'am_off' || entry.status === 'pm_off') workedDays += 1
     }
-    let projectedWorkedDays = 0
-    const projectionStart = new Date(Math.max(monthStart.getTime(), calculationDate.getTime() + 86400000))
-    for (let day = projectionStart; day <= monthEnd; day.setDate(day.getDate() + 1)) {
-      const entry = entryByDay.get(dateKey(day))
-      if (day.getDay() >= 1 && day.getDay() <= 5 && !(entry && ['off','hol','sick'].includes(entry.status))) projectedWorkedDays += 1
+
+    return { workedDays, holidayDays, sickDays }
+  }
+
+  function payrollNameMatches(member: StaffMember, payrollName: string) {
+    const memberKey = normaliseIdentity(member.name)
+    const payrollKey = normaliseIdentity(payrollName)
+    if (!memberKey || !payrollKey) return false
+    if (memberKey === payrollKey) return true
+    const aliases: Record<string, string[]> = {
+      ash: ['hampton ashley', 'ashley hampton'],
+      ashley: ['hampton ashley', 'ashley hampton'],
+      jess: ['hulse jessica', 'jessica hulse'],
+      jessica: ['hulse jessica', 'jessica hulse'],
+      joe: ['dickinson joseph', 'joseph dickinson'],
+      joseph: ['dickinson joseph', 'joseph dickinson'],
+      issy: ['ramdin isabelle', 'isabelle ramdin'],
+      isabelle: ['ramdin isabelle', 'isabelle ramdin'],
+      ollie: ['smith oliver', 'oliver smith'],
+      oliver: ['smith oliver', 'oliver smith'],
+      tom: ['green thomas', 'thomas green'],
+      'tom g': ['green thomas', 'thomas green'],
+      'tom w': ['woodroffe thomas', 'thomas woodroffe'],
+      sam: ['ballinger sam', 'sam ballinger'],
+      'sam b': ['ballinger sam', 'sam ballinger'],
+      harry: ['callaghan harry', 'harry callaghan'],
+      'harry c': ['callaghan harry', 'harry callaghan'],
+      rafe: ['bolt rafe', 'rafe bolt'],
+      aubrey: ['rion jr aubrey', 'aubrey rion jr'],
     }
-    return {
-      workedDays: actualWorkedDays + projectedWorkedDays,
-      holidayDays: entries.filter((entry) => entry.status === 'hol').length,
-      sickDays: entries.filter((entry) => entry.status === 'sick').length,
+    if ((aliases[memberKey] ?? []).includes(payrollKey)) return true
+    const memberTokens = memberKey.split(' ').filter((token) => token.length > 1)
+    const payrollTokens = payrollKey.split(' ').filter((token) => token.length > 1)
+    return memberTokens.every((token) => payrollTokens.includes(token)) || payrollTokens.every((token) => memberTokens.includes(token))
+  }
+
+  function arrayBufferToBase64(buffer: ArrayBuffer) {
+    const bytes = new Uint8Array(buffer)
+    let binary = ''
+    for (let index = 0; index < bytes.length; index += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(index, Math.min(index + 0x8000, bytes.length)))
     }
+    return btoa(binary)
+  }
+
+  function base64ToArrayBuffer(value: string) {
+    const binary = atob(value)
+    const bytes = new Uint8Array(binary.length)
+    for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index)
+    return bytes.buffer
   }
 
   async function downloadPayroll() {
     if (!canManageHolidays) return
     try {
       setImportMessage('Preparing payroll workbook…')
-      const response = await fetch(`${import.meta.env.BASE_URL}instructor-payroll-template.xlsx`)
-      if (!response.ok) throw new Error('Payroll template could not be loaded.')
-      const workbook = XLSX.read(await response.arrayBuffer(), { type: 'array', cellStyles: true, cellDates: true })
+      const year = holidayMonth.getFullYear()
       const monthName = holidayMonth.toLocaleDateString('en-GB', { month: 'short' })
-      let sheetName = workbook.SheetNames.find((name) => name.toLowerCase() === monthName.toLowerCase())
-      if (!sheetName || workbook.Sheets[sheetName]?.['!ref'] === 'A1') {
-        const sourceName = [...workbook.SheetNames].reverse().find((name) => workbook.Sheets[name]?.['!ref'] && workbook.Sheets[name]['!ref'] !== 'A1')
-        if (!sourceName) throw new Error('The payroll template has no populated monthly sheet.')
-        sheetName = monthName
-        workbook.Sheets[sheetName] = structuredClone(workbook.Sheets[sourceName])
-        if (!workbook.SheetNames.includes(sheetName)) workbook.SheetNames.push(sheetName)
+      const workbookStorageKey = `acm-payroll-workbook-${year}`
+      const generatedMonthsKey = `acm-payroll-generated-months-${year}`
+      const generatedMonths = JSON.parse(localStorage.getItem(generatedMonthsKey) ?? '[]') as string[]
+      if (generatedMonths.includes(monthName)) {
+        throw new Error(`The ${monthName} payroll sheet already exists in this year's payroll workbook.`)
       }
-      const worksheet = workbook.Sheets[sheetName]
-      const members = payrollStaff()
-      const roleTitles: Record<string, string> = {
-        centreManager: 'Head of Centre',
-        activityManager: 'Activities Manager',
-        teamLeader: 'Team Leaders',
-        staff: 'Instructors',
+
+      let workbook: XLSX.WorkBook
+      const storedWorkbook = localStorage.getItem(workbookStorageKey)
+      if (storedWorkbook) {
+        workbook = XLSX.read(base64ToArrayBuffer(storedWorkbook), { type: 'array', cellStyles: true, cellDates: true })
+      } else {
+        const response = await fetch(`${import.meta.env.BASE_URL}instructor-payroll-template.xlsx`)
+        if (!response.ok) throw new Error('Payroll template could not be loaded.')
+        workbook = XLSX.read(await response.arrayBuffer(), { type: 'array', cellStyles: true, cellDates: true })
       }
-      const roleCodes: Record<string, string> = {
-        centreManager: 'HOC',
-        activityManager: 'AM',
-        teamLeader: 'TL',
-        staff: 'Inst',
+
+      const juneName = workbook.SheetNames.find((name) => name.toLowerCase() === 'jun')
+      if (!juneName || !workbook.Sheets[juneName]?.['!ref'] || workbook.Sheets[juneName]['!ref'] === 'A1') {
+        throw new Error('The payroll template does not contain a populated Jun sheet.')
       }
-      const sourceHeadingRows: Record<string, number> = { centreManager: 4, activityManager: 4, teamLeader: 7, staff: 13 }
-      const sourceStaffRows: Record<string, number> = { centreManager: 5, activityManager: 5, teamLeader: 8, staff: 14 }
-      const copyRowFormatting = (sourceRowOneBased: number, targetRowOneBased: number) => {
+      const juneWorksheet = workbook.Sheets[juneName]
+      const targetWorksheet = structuredClone(juneWorksheet)
+      workbook.Sheets[monthName] = targetWorksheet
+      if (!workbook.SheetNames.includes(monthName)) workbook.SheetNames.push(monthName)
+
+      const members = payrollStaff(holidayMonth)
+      const usedMemberIds = new Set<string>()
+      const roleCode: Record<ReturnType<typeof payrollRoleForMember>, string> = {
+        centreManager: 'HOC', activityManager: 'AM', teamLeader: 'TL', staff: 'Inst',
+      }
+      const roleRows: Record<ReturnType<typeof payrollRoleForMember>, number[]> = {
+        centreManager: [3], activityManager: [5], teamLeader: [8, 9, 10, 11], staff: [],
+      }
+      const juneRange = XLSX.utils.decode_range(juneWorksheet['!ref'] ?? 'A1:R40')
+      for (let row = 13; row <= juneRange.e.r; row += 1) {
+        const code = normaliseText(juneWorksheet[XLSX.utils.encode_cell({ r: row, c: 6 })]?.v)
+        if (code === 'Inst') roleRows.staff.push(row + 1)
+      }
+
+      const setCell = (rowOneBased: number, column: number, value: string | number) => {
+        const address = XLSX.utils.encode_cell({ r: rowOneBased - 1, c: column })
+        const existing = targetWorksheet[address] ?? {}
+        targetWorksheet[address] = { ...existing, t: typeof value === 'number' ? 'n' : 's', v: value, w: String(value) }
+      }
+      const copyRow = (sourceRowOneBased: number, targetRowOneBased: number) => {
         for (let column = 0; column < 18; column += 1) {
           const sourceAddress = XLSX.utils.encode_cell({ r: sourceRowOneBased - 1, c: column })
           const targetAddress = XLSX.utils.encode_cell({ r: targetRowOneBased - 1, c: column })
-          const sourceCell = worksheet[sourceAddress]
-          const targetCell = worksheet[targetAddress] ?? { t: 's', v: '' }
-          worksheet[targetAddress] = { ...targetCell, ...(sourceCell?.s !== undefined ? { s: structuredClone(sourceCell.s) } : {}), ...(sourceCell?.z !== undefined ? { z: sourceCell.z } : {}) }
+          const sourceCell = juneWorksheet[sourceAddress]
+          if (sourceCell) targetWorksheet[targetAddress] = structuredClone(sourceCell)
+          else delete targetWorksheet[targetAddress]
         }
-        if (worksheet['!rows']?.[sourceRowOneBased - 1]) {
-          worksheet['!rows'] ??= []
-          worksheet['!rows']![targetRowOneBased - 1] = structuredClone(worksheet['!rows']![sourceRowOneBased - 1])
-        }
-      }
-      const setCell = (rowOneBased: number, column: number, value: string | number) => {
-        const address = XLSX.utils.encode_cell({ r: rowOneBased - 1, c: column })
-        const existing = worksheet[address] ?? {}
-        worksheet[address] = { ...existing, t: typeof value === 'number' ? 'n' : 's', v: value, w: String(value) }
-      }
-      const clearRowValues = (rowOneBased: number) => {
-        for (let column = 0; column < 18; column += 1) {
-          const address = XLSX.utils.encode_cell({ r: rowOneBased - 1, c: column })
-          if (!worksheet[address]) continue
-          const { s, z } = worksheet[address]
-          worksheet[address] = { t: 's', v: '', ...(s !== undefined ? { s } : {}), ...(z !== undefined ? { z } : {}) }
+        if (juneWorksheet['!rows']?.[sourceRowOneBased - 1]) {
+          targetWorksheet['!rows'] ??= []
+          targetWorksheet['!rows']![targetRowOneBased - 1] = structuredClone(juneWorksheet['!rows']![sourceRowOneBased - 1])
         }
       }
 
-      const requiredRows = members.length + 8
-      const lastRow = Math.max(XLSX.utils.decode_range(worksheet['!ref'] ?? 'A1:R40').e.r + 1, requiredRows + 3)
-      for (let row = 3; row <= lastRow; row += 1) clearRowValues(row)
+      const templateEntries = roleRows.centreManager.concat(roleRows.activityManager, roleRows.teamLeader, roleRows.staff)
+      for (const rowOneBased of templateEntries) {
+        const payrollName = normaliseText(juneWorksheet[XLSX.utils.encode_cell({ r: rowOneBased - 1, c: 1 })]?.v)
+        const role = normaliseText(juneWorksheet[XLSX.utils.encode_cell({ r: rowOneBased - 1, c: 6 })]?.v)
+        const matchingMember = members.find((member) => !usedMemberIds.has(member.id) && payrollNameMatches(member, payrollName))
+        if (matchingMember) {
+          usedMemberIds.add(matchingMember.id)
+          const totals = payrollTotalsForMember(matchingMember, holidayMonth)
+          setCell(rowOneBased, 8, totals.workedDays)
+          setCell(rowOneBased, 9, totals.holidayDays)
+          setCell(rowOneBased, 10, totals.sickDays)
+        } else if (payrollName && ['HOC', 'AM', 'TL', 'Inst'].includes(role)) {
+          setCell(rowOneBased, 8, 0)
+          setCell(rowOneBased, 9, 0)
+          setCell(rowOneBased, 10, 0)
+        }
+      }
 
-      let outputRow = 3
-      let staffNumber = 1
-      ;(['centreManager', 'activityManager', 'teamLeader', 'staff'] as const).forEach((role) => {
-        const roleMembers = members.filter((member) => payrollRoleForMember(member) === role)
-        if (!roleMembers.length) return
-        copyRowFormatting(sourceHeadingRows[role], outputRow)
-        clearRowValues(outputRow)
-        setCell(outputRow, 1, roleTitles[role])
-        outputRow += 1
-        roleMembers.forEach((member) => {
-          copyRowFormatting(sourceStaffRows[role], outputRow)
-          clearRowValues(outputRow)
+      let outputLastRow = juneRange.e.r + 1
+      const appendMembers = members.filter((member) => !usedMemberIds.has(member.id))
+      const roleOrder = ['centreManager', 'activityManager', 'teamLeader', 'staff'] as const
+      for (const role of roleOrder) {
+        for (const member of appendMembers.filter((item) => payrollRoleForMember(item) === role)) {
+          outputLastRow += 1
+          const sourceRow = role === 'centreManager' ? 3 : role === 'activityManager' ? 5 : role === 'teamLeader' ? 8 : 14
+          copyRow(sourceRow, outputLastRow)
+          for (const column of [2, 3, 4, 5, 7, 11, 12, 13, 16, 17]) setCell(outputLastRow, column, '')
+          setCell(outputLastRow, 0, outputLastRow - 2)
+          setCell(outputLastRow, 1, member.name)
+          setCell(outputLastRow, 6, roleCode[role])
           const totals = payrollTotalsForMember(member, holidayMonth)
-          setCell(outputRow, 0, staffNumber)
-          setCell(outputRow, 1, member.name)
-          setCell(outputRow, 6, roleCodes[role])
-          setCell(outputRow, 8, totals.workedDays)
-          setCell(outputRow, 9, totals.holidayDays)
-          setCell(outputRow, 10, totals.sickDays)
-          staffNumber += 1
-          outputRow += 1
-        })
-      })
-      worksheet['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: Math.max(outputRow - 1, 2), c: 17 } })
+          setCell(outputLastRow, 8, totals.workedDays)
+          setCell(outputLastRow, 9, totals.holidayDays)
+          setCell(outputLastRow, 10, totals.sickDays)
+          usedMemberIds.add(member.id)
+        }
+      }
 
-      const output = XLSX.write(workbook, { bookType: 'xlsx', type: 'array', cellStyles: true })
+      targetWorksheet['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: outputLastRow - 1, c: 17 } })
+      generatedMonths.push(monthName)
+      localStorage.setItem(generatedMonthsKey, JSON.stringify(generatedMonths))
+
+      const output = XLSX.write(workbook, { bookType: 'xlsx', type: 'array', cellStyles: true }) as ArrayBuffer
+      localStorage.setItem(workbookStorageKey, arrayBufferToBase64(output))
       const url = URL.createObjectURL(new Blob([output], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }))
-      const link = document.createElement('a'); link.href = url; link.download = `Instructor-payroll-${holidayMonth.getFullYear()}-${String(holidayMonth.getMonth()+1).padStart(2,'0')}.xlsx`; link.click()
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `Norfolk-Lakes-Payroll-${year}.xlsx`
+      link.click()
       setTimeout(() => URL.revokeObjectURL(url), 1000)
-      setImportMessage(`Payroll downloaded for ${members.length} staff. Days Off, holidays and sickness were taken from the ${monthName} calendar; remaining weekdays were estimated to month end.`)
+      setImportMessage(`${monthName} was added to Norfolk-Lakes-Payroll-${year}.xlsx. The Jun names and layout were retained, and new staff were calculated from their employment start date to month end.`)
     } catch (error) {
       setImportMessage(error instanceof Error ? error.message : 'Payroll could not be downloaded.')
     }
@@ -3848,7 +3919,7 @@ function ManagerApp({
             </section>}
 
             {canManageHolidays && <section className="payroll-download-panel no-print">
-              <div><h3>Monthly payroll</h3><p>Uses your payroll template and fills Number of days worked, Holidays Taken and Sick Leave. Future days are estimated as a five-day Monday-to-Friday week.</p></div>
+              <div><h3>Monthly payroll</h3><p>Uses the Jun payroll layout and adds each new month to the same annual Excel workbook. New staff are calculated from their employment start date to month end.</p></div>
               <div className="payroll-actions"><button className="secondary-action" onClick={payrollSync}><History size={17}/>Payroll Sync</button><button className="primary" onClick={downloadPayroll}><FileSpreadsheet size={17}/>Download Payroll</button>{payrollSyncAt && <small>Last synced {new Date(payrollSyncAt).toLocaleString('en-GB')}</small>}</div>
             </section>}
 
