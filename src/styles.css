@@ -1629,7 +1629,7 @@ button { cursor: pointer; }
 @media(max-width:900px){.staffing-day-tabs{grid-template-columns:repeat(4,minmax(0,1fr))}}
 @media(max-width:520px){.staffing-day-tabs{grid-template-columns:repeat(2,minmax(0,1fr))}.staffing-management-row>button,.staffing-download-row>button{flex:1 1 100%}}
 
-/* v0.60 staffing toolbar, day navigation and on-screen zoom */
+/* v0.61 staffing toolbar, day navigation and on-screen zoom */
 .staffing-view-toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:12px}
 .staffing-zoom-controls{display:flex;align-items:center;gap:7px;padding:6px 8px;border:1px solid #d5e3de;border-radius:10px;background:#fff}
 .staffing-zoom-controls button{min-width:38px;height:36px;border:1px solid #c5d3ce;border-radius:8px;background:#fff;font-weight:900;font-size:1.05rem;cursor:pointer}

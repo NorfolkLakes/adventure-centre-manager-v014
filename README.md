@@ -338,3 +338,12 @@ Adds permanent and loan staff lifecycle management, Former Staff and Loan Staff 
 - Preserves template layout, merged cells, borders, column widths, row heights, session times and print settings.
 - Activities and group numbers remain in separate columns.
 - Blue water, pink ropes, green holiday, red sickness and yellow time-off colours.
+
+
+## v0.61
+
+- Daily staffing download contains one worksheet and one selected-day table only.
+- Weekly staffing download contains only the top Monday-Sunday table strip, with no historic or duplicate tables.
+- Empty/unstaffed days remain blank and uncoloured.
+- Activity and absence colours are applied only from current app data.
+- The unused Plan B worksheet is removed from staffing downloads.

@@ -112,8 +112,8 @@ function readZipEntries(input: Uint8Array) {
   return entries
 }
 
-async function rewriteXlsxPackage(input: Uint8Array, replacements: Record<string, Uint8Array>) {
-  const entries = readZipEntries(input)
+async function rewriteXlsxPackage(input: Uint8Array, replacements: Record<string, Uint8Array>, excludedPaths: Set<string> = new Set()) {
+  const entries = readZipEntries(input).filter((entry) => !excludedPaths.has(entry.name))
   const localParts: Uint8Array[] = []
   const centralParts: Uint8Array[] = []
   let localOffset = 0
@@ -3089,11 +3089,69 @@ function ManagerApp({
     // Daily downloads always use the first A:M block so they open and print
     // exactly like the original paper template. Weekly downloads retain all
     // original Monday-Sunday blocks.
+    const dayHasStaffingData = (day: string) => {
+      const rowIds = new Set(sourceProgramme.rows.filter((row) => row.day === day).map((row) => row.id))
+      const hasAssignments = Object.entries(sourceAssignments).some(([key, staffId]) => rowIds.has(key.split('::')[0]) && Boolean(staffId))
+      const isoDay = dateForProgrammeDay(sourceProgramme, day)
+      return hasAssignments || (sourceSickness[day] ?? []).length > 0 || sourceDaysOff.some((entry) => entry.day === isoDay) || Object.prototype.hasOwnProperty.call(sourceWorking, day)
+    }
+
     const blocksToFill = selectedDays.length === 1
       ? [{ key: selectedKeys[0], label: selectedDays[0], start: 0 }]
-      : originalBlocks.filter((block) => selectedKeys.includes(block.key))
+      : originalBlocks.filter((block) => selectedKeys.includes(block.key) && Boolean(sourceDayFor(block.key)) && dayHasStaffingData(sourceDayFor(block.key)!))
 
-    // Clear values only. The original cell styles, borders, conditional
+    // Remove every copied table below the first row of day blocks. The source
+    // workbook contains additional historic/layout tables down to row 324;
+    // exports must contain only the single top staffing strip.
+    const maxColumn = selectedDays.length === 1 ? 12 : 108
+    const sheetData = worksheetDocument.getElementsByTagNameNS(ns, 'sheetData')[0]
+    Array.from(sheetData?.children ?? []).forEach((rowElement) => {
+      const rowNumber = Number((rowElement as Element).getAttribute('r') ?? '0')
+      if (rowNumber > 38) {
+        rowElement.parentNode?.removeChild(rowElement)
+        return
+      }
+      Array.from((rowElement as Element).children).forEach((cellElement) => {
+        const address = (cellElement as Element).getAttribute('r') ?? ''
+        const match = address.match(/^([A-Z]+)(\d+)$/)
+        if (!match) return
+        let column = 0
+        for (const character of match[1]) column = column * 26 + character.charCodeAt(0) - 64
+        if (column - 1 > maxColumn) cellElement.parentNode?.removeChild(cellElement)
+      })
+    })
+
+    const columns = worksheetDocument.getElementsByTagNameNS(ns, 'cols')[0]
+    Array.from(columns?.children ?? []).forEach((columnElement) => {
+      const min = Number((columnElement as Element).getAttribute('min') ?? '1')
+      const max = Number((columnElement as Element).getAttribute('max') ?? String(min))
+      const allowedMax = maxColumn + 1
+      if (min > allowedMax) columnElement.parentNode?.removeChild(columnElement)
+      else if (max > allowedMax) (columnElement as Element).setAttribute('max', String(allowedMax))
+    })
+
+    const mergeCells = worksheetDocument.getElementsByTagNameNS(ns, 'mergeCells')[0]
+    Array.from(mergeCells?.children ?? []).forEach((mergeElement) => {
+      const range = (mergeElement as Element).getAttribute('ref') ?? ''
+      const addresses = range.split(':')
+      const outside = addresses.some((address) => {
+        const match = address.match(/^([A-Z]+)(\d+)$/)
+        if (!match) return true
+        let column = 0
+        for (const character of match[1]) column = column * 26 + character.charCodeAt(0) - 64
+        return column - 1 > maxColumn || Number(match[2]) > 38
+      })
+      if (outside) mergeElement.parentNode?.removeChild(mergeElement)
+    })
+    if (mergeCells) mergeCells.setAttribute('count', String(mergeCells.children.length))
+
+    // Template conditional-format ranges include old tables and can introduce
+    // stray colours. Export colours are written explicitly from current data.
+    Array.from(worksheetDocument.getElementsByTagNameNS(ns, 'conditionalFormatting')).forEach((element) => element.parentNode?.removeChild(element))
+    Array.from(worksheetDocument.getElementsByTagNameNS(ns, 'rowBreaks')).forEach((element) => element.parentNode?.removeChild(element))
+    Array.from(worksheetDocument.getElementsByTagNameNS(ns, 'colBreaks')).forEach((element) => element.parentNode?.removeChild(element))
+
+    // Clear values only. The original cell styles, borders,
     // formatting, row heights, column widths, merged cells and print setup stay.
     originalBlocks.forEach((block) => {
       for (let row = 2; row <= 37; row += 1) {
@@ -3148,26 +3206,59 @@ function ManagerApp({
       })
     })
 
-    if (selectedDays.length === 1) {
-      const dimension = worksheetDocument.getElementsByTagNameNS(ns, 'dimension')[0]
-      dimension?.setAttribute('ref', 'A1:M38')
-      // Keep the original print settings and limit the used range to one day.
-    }
+    const lastColumn = selectedDays.length === 1 ? 'M' : 'DE'
+    const dimension = worksheetDocument.getElementsByTagNameNS(ns, 'dimension')[0]
+    dimension?.setAttribute('ref', `A1:${lastColumn}38`)
 
     const replacements: Record<string, Uint8Array> = {
       [sheetPath]: zipEncoder.encode(serializer.serializeToString(worksheetDocument)),
       [stylesPath]: zipEncoder.encode(serializer.serializeToString(stylesDocument)),
     }
+    const excludedPaths = new Set<string>(['xl/worksheets/sheet2.xml', 'xl/worksheets/_rels/sheet2.xml.rels'])
+
+    // Keep only the actual staffing worksheet. The uploaded workbook also has
+    // a Plan B sheet, which must never appear in downloaded staffing files.
     const workbookEntry = zipEntries.find((entry) => entry.name === 'xl/workbook.xml')
-    if (selectedDays.length === 1 && workbookEntry) {
+    if (workbookEntry) {
       const workbookXml = await zipInflate(workbookEntry.compressed, workbookEntry.method)
       const workbookDocument = parser.parseFromString(zipDecoder.decode(workbookXml), 'application/xml')
+      const sheetsElement = workbookDocument.getElementsByTagNameNS(ns, 'sheets')[0]
+      Array.from(sheetsElement?.children ?? []).forEach((sheetElement) => {
+        if ((sheetElement as Element).getAttribute('name') !== 'Sheet1') sheetElement.parentNode?.removeChild(sheetElement)
+      })
+      const workbookView = workbookDocument.getElementsByTagNameNS(ns, 'workbookView')[0]
+      workbookView?.setAttribute('activeTab', '0')
+      workbookView?.setAttribute('firstSheet', '0')
       Array.from(workbookDocument.getElementsByTagNameNS(ns, 'definedName')).forEach((definedName) => {
-        if (definedName.getAttribute('name') === '_xlnm.Print_Area') definedName.textContent = "'Sheet1'!$A$1:$M$38"
+        if (definedName.getAttribute('name') === '_xlnm.Print_Area') definedName.textContent = `'Sheet1'!$A$1:$${lastColumn}$38`
+        definedName.setAttribute('localSheetId', '0')
       })
       replacements['xl/workbook.xml'] = zipEncoder.encode(serializer.serializeToString(workbookDocument))
     }
-    const output = await rewriteXlsxPackage(templateBytes, replacements)
+
+    const relsPath = 'xl/_rels/workbook.xml.rels'
+    const relsEntry = zipEntries.find((entry) => entry.name === relsPath)
+    if (relsEntry) {
+      const relsXml = await zipInflate(relsEntry.compressed, relsEntry.method)
+      const relsDocument = parser.parseFromString(zipDecoder.decode(relsXml), 'application/xml')
+      Array.from(relsDocument.documentElement.children).forEach((relationship) => {
+        if ((relationship as Element).getAttribute('Target')?.endsWith('worksheets/sheet2.xml')) relationship.parentNode?.removeChild(relationship)
+      })
+      replacements[relsPath] = zipEncoder.encode(serializer.serializeToString(relsDocument))
+    }
+
+    const contentTypesPath = '[Content_Types].xml'
+    const contentTypesEntry = zipEntries.find((entry) => entry.name === contentTypesPath)
+    if (contentTypesEntry) {
+      const contentTypesXml = await zipInflate(contentTypesEntry.compressed, contentTypesEntry.method)
+      const contentTypesDocument = parser.parseFromString(zipDecoder.decode(contentTypesXml), 'application/xml')
+      Array.from(contentTypesDocument.documentElement.children).forEach((override) => {
+        if ((override as Element).getAttribute('PartName') === '/xl/worksheets/sheet2.xml') override.parentNode?.removeChild(override)
+      })
+      replacements[contentTypesPath] = zipEncoder.encode(serializer.serializeToString(contentTypesDocument))
+    }
+
+    const output = await rewriteXlsxPackage(templateBytes, replacements, excludedPaths)
     const blob = new Blob([output], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
@@ -3317,7 +3408,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.60</span></div>
+          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.61</span></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -3529,7 +3620,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to accommodation, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v0.60</span>
+                  <span className="release-pill">v0.61</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
