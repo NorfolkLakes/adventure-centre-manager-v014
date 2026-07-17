@@ -1,4 +1,4 @@
-import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { ChangeEvent, Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Building2,
   CalendarDays,
@@ -485,6 +485,7 @@ function ManagerApp({
     [programme],
   )
   const [selectedStaffingDay, setSelectedStaffingDay] = useState('')
+  const [staffingView, setStaffingView] = useState<'activity' | 'calendar'>('activity')
   const activeStaffingDay =
     selectedStaffingDay && programmeDays.includes(selectedStaffingDay)
       ? selectedStaffingDay
@@ -2337,6 +2338,17 @@ function ManagerApp({
       .includes(query.toLowerCase())
   })
 
+  const staffingCalendarCells = populatedCells.filter(({ row, cell }) => {
+    const staffId = assignments[cellKey(row.id, cell.group)]
+    const staffName = staff.find((member) => member.id === staffId)?.name ?? ''
+    return `${row.day} ${row.session} group ${cell.group} ${cell.activityCode} ${activityName(cell.activityCode)} ${staffName}`
+      .toLowerCase()
+      .includes(query.toLowerCase())
+  })
+  const staffingCalendarSessions = Array.from(
+    new Set(staffingCalendarCells.map(({ row }) => row.session)),
+  ).sort((a, b) => Number(a) - Number(b))
+
   const arrivalRows = programme?.rows.flatMap(arrivalRowsFromProgrammeRow) ?? []
 
   const arrivalRowsForDay = arrivalRows.filter(
@@ -2428,7 +2440,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.46</span></div>
+          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.47</span></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -2518,41 +2530,6 @@ function ManagerApp({
                 </strong>
                 <small>Busiest day and session</small>
               </article>
-            </section>
-
-            <section className="manager-my-sessions compact-my-sessions panel">
-              <div className="compact-my-sessions-head">
-                <div><p className="eyebrow">My rota</p><h2>My Sessions</h2></div>
-                {effectiveMySessions.length > 0 && (
-                  <select value={selectedMySessionsDay} onChange={(event) => setSelectedMySessionsDay(event.target.value)} aria-label="Choose My Sessions day">
-                    {Array.from(new Set(effectiveMySessions.map((duty) => duty.day))).map((day) => <option key={day} value={day}>{day}</option>)}
-                  </select>
-                )}
-                <select className="my-staff-link-select" value={myStaffMember?.id ?? ''} onChange={(event) => linkMyStaffProfile(event.target.value)} aria-label="Link My Sessions to staff profile">
-                  <option value="">Link my staff profile</option>
-                  {staff.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}
-                </select>
-              </div>
-              {mySessionsLoading ? (
-                <div className="compact-my-sessions-empty">Loading sessions…</div>
-              ) : effectiveMySessions.length === 0 ? (
-                <div className="compact-my-sessions-empty"><CalendarDays size={20} /><span>No sessions found. Check the linked staff profile above.</span></div>
-              ) : (
-                <div className="compact-my-session-list">
-                  {effectiveMySessions.filter((duty) => duty.day === selectedMySessionsDay).map((duty) => (
-                    <article className={`compact-my-session-row duty-${duty.duty_type} ${duty.duty_type === 'activity' && duty.activity_code && myStaffMember && !qualificationIsValid(myStaffMember, duty.activity_code) ? 'qualification-missing' : ''}`} key={duty.id}>
-                      <strong>S{duty.session}</strong>
-                      <div><b>{duty.activity_name}</b><span>{[
-                        duty.school_name,
-                        duty.group_numbers?.length ? `G${duty.group_numbers.join(' & G')}` : null,
-                        duty.building_name,
-                      ].filter(Boolean).join(' · ') || 'Published duty'}</span></div>
-                      <em>{duty.duty_type === 'activity' ? 'Instructor' : duty.duty_type === 'arrival_leader' ? 'Party Leader' : 'Arrival'}</em>
-                      {duty.duty_type === 'activity' && duty.activity_code && myStaffMember && !qualificationIsValid(myStaffMember, duty.activity_code) && <small className="my-session-qualification-warning">⚠ Not signed off</small>}
-                    </article>
-                  ))}
-                </div>
-              )}
             </section>
 
             <div className="section-heading"><div><p className="eyebrow">Smart operations</p><h2>Run the centre faster</h2></div><span>Automation and daily assurance</span></div>
@@ -2675,7 +2652,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to accommodation, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v0.46</span>
+                  <span className="release-pill">v0.47</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
@@ -2788,6 +2765,20 @@ function ManagerApp({
               <EmptyProgramme onUpload={() => fileInputRef.current?.click()} />
             ) : (
               <>
+                <div className="staffing-view-switch" role="group" aria-label="Staffing view">
+                  <button
+                    className={staffingView === 'activity' ? 'active' : ''}
+                    onClick={() => setStaffingView('activity')}
+                  >
+                    Activity View
+                  </button>
+                  <button
+                    className={staffingView === 'calendar' ? 'active' : ''}
+                    onClick={() => setStaffingView('calendar')}
+                  >
+                    Calendar View
+                  </button>
+                </div>
                 <div className="staffing-controls">
                   <div className="day-tabs" role="tablist" aria-label="Staffing day">
                     {programmeDays.map((day) => (
@@ -3062,53 +3053,108 @@ function ManagerApp({
                   </section>
                 )}
 
-                <div className="staffing-grid">
-                  {filteredStaffingCells.map(({ row, cell }) => {
-                    const key = cellKey(row.id, cell.group)
-                    const assignedStaff = staff.find(
-                      (member) => member.id === assignments[key],
-                    )
-                    const qualificationMissing = Boolean(assignedStaff && !qualificationIsValid(assignedStaff, cell.activityCode))
-                    return (
-                      <article
-                        className={`staffing-card ${qualificationMissing ? 'qualification-missing' : assignedStaff ? 'ready' : 'needs'}`}
-                        key={key}
-                      >
-                        <div className="staffing-card-top">
-                          <span>
-                            {row.day} · Session {row.session}
-                          </span>
-                          <span>
-                            {qualificationMissing ? 'Qualification missing' : assignedStaff ? 'Ready' : 'Needs instructor'}
-                          </span>
-                        </div>
-                        <h3>{activityName(cell.activityCode)}</h3>
-                        <p>
-                          Group {cell.group} · {cell.activityCode}
-                        </p>
-                        <div className="assignment-row">
-                          <div>
-                            <small>Instructor</small>
-                            <strong>
-                              {assignedStaff?.name ?? 'Not assigned'}
-                            </strong>
-                            {qualificationMissing && <small className="qualification-missing-text">Not signed off for {activityName(cell.activityCode)}</small>}
+                {staffingView === 'activity' ? (
+                  <div className="staffing-grid">
+                    {filteredStaffingCells.map(({ row, cell }) => {
+                      const key = cellKey(row.id, cell.group)
+                      const assignedStaff = staff.find(
+                        (member) => member.id === assignments[key],
+                      )
+                      const qualificationMissing = Boolean(assignedStaff && !qualificationIsValid(assignedStaff, cell.activityCode))
+                      return (
+                        <article
+                          className={`staffing-card ${qualificationMissing ? 'qualification-missing' : assignedStaff ? 'ready' : 'needs'}`}
+                          key={key}
+                        >
+                          <div className="staffing-card-top">
+                            <span>
+                              {row.day} · Session {row.session}
+                            </span>
+                            <span>
+                              {qualificationMissing ? 'Qualification missing' : assignedStaff ? 'Ready' : 'Needs instructor'}
+                            </span>
                           </div>
-                          <button
-                            onClick={() =>
-                              setSelectedStaffingCell({
-                                row,
-                                group: cell.group,
-                              })
-                            }
-                          >
-                            {assignedStaff ? 'Change' : 'Assign'}
-                          </button>
-                        </div>
-                      </article>
-                    )
-                  })}
-                </div>
+                          <h3>{activityName(cell.activityCode)}</h3>
+                          <p>
+                            Group {cell.group} · {cell.activityCode}
+                          </p>
+                          <div className="assignment-row">
+                            <div>
+                              <small>Instructor</small>
+                              <strong>
+                                {assignedStaff?.name ?? 'Not assigned'}
+                              </strong>
+                              {qualificationMissing && <small className="qualification-missing-text">Not signed off for {activityName(cell.activityCode)}</small>}
+                            </div>
+                            <button
+                              onClick={() =>
+                                setSelectedStaffingCell({
+                                  row,
+                                  group: cell.group,
+                                })
+                              }
+                            >
+                              {assignedStaff ? 'Change' : 'Assign'}
+                            </button>
+                          </div>
+                        </article>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <section className="staffing-calendar-wrap" aria-label="Staffing calendar view">
+                    <div
+                      className="staffing-calendar"
+                      style={{ gridTemplateColumns: `92px repeat(${programmeDays.length}, minmax(220px, 1fr))` }}
+                    >
+                      <div className="staffing-calendar-corner">Session</div>
+                      {programmeDays.map((day) => (
+                        <button
+                          key={`calendar-day-${day}`}
+                          className={`staffing-calendar-day ${day === activeStaffingDay ? 'active' : ''}`}
+                          onClick={() => setSelectedStaffingDay(day)}
+                        >
+                          {day}
+                        </button>
+                      ))}
+                      {staffingCalendarSessions.map((session) => (
+                        <Fragment key={`calendar-session-${session}`}>
+                          <div className="staffing-calendar-session">S{session}</div>
+                          {programmeDays.map((day) => {
+                            const items = staffingCalendarCells.filter(
+                              ({ row }) => row.day === day && row.session === session,
+                            )
+                            return (
+                              <div className="staffing-calendar-cell" key={`${day}-${session}`}>
+                                {items.length === 0 ? (
+                                  <span className="staffing-calendar-empty">No activities</span>
+                                ) : items.map(({ row, cell }) => {
+                                  const key = cellKey(row.id, cell.group)
+                                  const assignedStaff = staff.find((member) => member.id === assignments[key])
+                                  const qualificationMissing = Boolean(
+                                    assignedStaff && !qualificationIsValid(assignedStaff, cell.activityCode),
+                                  )
+                                  return (
+                                    <button
+                                      key={key}
+                                      className={`staffing-calendar-card ${qualificationMissing ? 'qualification-missing' : assignedStaff ? 'ready' : 'needs'}`}
+                                      onClick={() => setSelectedStaffingCell({ row, group: cell.group })}
+                                    >
+                                      <strong>{activityName(cell.activityCode)}</strong>
+                                      <span>G{cell.group}</span>
+                                      <small>{assignedStaff?.name ?? 'Needs instructor'}</small>
+                                      {qualificationMissing && <em>Not signed off</em>}
+                                    </button>
+                                  )
+                                })}
+                              </div>
+                            )
+                          })}
+                        </Fragment>
+                      ))}
+                    </div>
+                  </section>
+                )}
               </>
             )}
           </Panel>

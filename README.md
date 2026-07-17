@@ -1,4 +1,4 @@
-# Adventure Centre Manager v0.46
+# Adventure Centre Manager v0.47
 
 This version adds the first cloud login and staff rota system.
 
@@ -272,3 +272,10 @@ After deploying v0.20, run `supabase/setup.sql` once in the Supabase SQL Editor 
 - Counts school groups using the exact merged-cell width in the uploaded Excel programme.
 - Prevents a final school heading from absorbing blank group columns to the end of Session 3.
 - Supports group headers written as either `1`–`30` or `G1`–`G30`.
+
+
+## v0.47
+
+- Removed My Sessions from the Home page.
+- Added Activity View and Calendar View to Staffing.
+- Calendar View shows days across the top, sessions down the side, and uses the same live assignments as Activity View.

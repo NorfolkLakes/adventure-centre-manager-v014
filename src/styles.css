@@ -1427,3 +1427,158 @@ button { cursor: pointer; }
 .qualification-missing-text,
 .my-session-qualification-warning { color: #b91c1c; font-weight: 800; }
 .my-session-qualification-warning { white-space: nowrap; }
+
+
+/* v0.47 staffing views */
+.staffing-view-switch {
+  display: inline-flex;
+  gap: 4px;
+  margin: 0 0 14px;
+  padding: 4px;
+  border: 1px solid #cbdad5;
+  border-radius: 12px;
+  background: #f3f7f5;
+}
+
+.staffing-view-switch button {
+  min-height: 38px;
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 9px;
+  color: #4d625d;
+  background: transparent;
+  font-weight: 850;
+}
+
+.staffing-view-switch button.active {
+  color: #fff;
+  background: #1c7567;
+  box-shadow: 0 4px 12px rgba(28, 117, 103, .18);
+}
+
+.staffing-calendar-wrap {
+  overflow-x: auto;
+  margin-top: 16px;
+  padding-bottom: 8px;
+  border: 1px solid #d8e2df;
+  border-radius: 14px;
+  background: #fff;
+}
+
+.staffing-calendar {
+  display: grid;
+  min-width: max-content;
+}
+
+.staffing-calendar-corner,
+.staffing-calendar-day,
+.staffing-calendar-session,
+.staffing-calendar-cell {
+  border-right: 1px solid #dde6e3;
+  border-bottom: 1px solid #dde6e3;
+}
+
+.staffing-calendar-corner,
+.staffing-calendar-session {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  background: #f4f8f6;
+}
+
+.staffing-calendar-corner {
+  display: grid;
+  place-items: center;
+  min-height: 52px;
+  font-size: .74rem;
+  font-weight: 900;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+
+.staffing-calendar-day {
+  min-height: 52px;
+  padding: 10px;
+  border-top: 0;
+  border-left: 0;
+  color: #315b53;
+  background: #f4f8f6;
+  font-weight: 900;
+}
+
+.staffing-calendar-day.active {
+  color: #fff;
+  background: #1c7567;
+}
+
+.staffing-calendar-session {
+  display: grid;
+  place-items: start center;
+  min-height: 112px;
+  padding: 16px 8px;
+  color: #315b53;
+  font-weight: 950;
+}
+
+.staffing-calendar-cell {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 112px;
+  padding: 9px;
+  background: #fbfdfc;
+}
+
+.staffing-calendar-card {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 8px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid #d5e1dd;
+  border-radius: 10px;
+  text-align: left;
+  color: #263d38;
+  background: #fff;
+}
+
+.staffing-calendar-card strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.staffing-calendar-card span {
+  font-weight: 900;
+}
+
+.staffing-calendar-card small,
+.staffing-calendar-card em {
+  grid-column: 1 / -1;
+  color: #687b77;
+  font-style: normal;
+}
+
+.staffing-calendar-card.ready {
+  border-left: 4px solid #2f8a70;
+}
+
+.staffing-calendar-card.needs {
+  border-left: 4px solid #c88a2b;
+}
+
+.staffing-calendar-card.qualification-missing {
+  border-left: 4px solid #b94c40;
+  background: #fff5f3;
+}
+
+.staffing-calendar-card.qualification-missing em {
+  color: #a43f35;
+  font-weight: 850;
+}
+
+.staffing-calendar-empty {
+  padding: 10px;
+  color: #90a09c;
+  font-size: .78rem;
+}
