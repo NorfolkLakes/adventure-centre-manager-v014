@@ -25,6 +25,134 @@ import {
   X,
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
+
+type ZipEntry = {
+  name: string
+  method: number
+  flags: number
+  modTime: number
+  modDate: number
+  versionMade: number
+  versionNeeded: number
+  internalAttrs: number
+  externalAttrs: number
+  localExtra: Uint8Array
+  centralExtra: Uint8Array
+  comment: Uint8Array
+  compressed: Uint8Array
+  uncompressedSize: number
+  crc: number
+}
+
+const zipEncoder = new TextEncoder()
+const zipDecoder = new TextDecoder()
+
+function zipU16(view: DataView, offset: number, value: number) { view.setUint16(offset, value, true) }
+function zipU32(view: DataView, offset: number, value: number) { view.setUint32(offset, value >>> 0, true) }
+
+function zipCrc32(data: Uint8Array) {
+  let crc = 0xffffffff
+  for (const byte of data) {
+    crc ^= byte
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1))
+  }
+  return (crc ^ 0xffffffff) >>> 0
+}
+
+async function zipInflate(data: Uint8Array, method: number) {
+  if (method === 0) return data
+  if (method !== 8) throw new Error(`Unsupported XLSX compression method: ${method}`)
+  const stream = new Blob([data.slice().buffer]).stream().pipeThrough(new DecompressionStream('deflate-raw'))
+  return new Uint8Array(await new Response(stream).arrayBuffer())
+}
+
+async function zipDeflate(data: Uint8Array, method: number) {
+  if (method === 0) return data
+  const stream = new Blob([data.slice().buffer]).stream().pipeThrough(new CompressionStream('deflate-raw'))
+  return new Uint8Array(await new Response(stream).arrayBuffer())
+}
+
+function readZipEntries(input: Uint8Array) {
+  const view = new DataView(input.buffer, input.byteOffset, input.byteLength)
+  let eocd = input.length - 22
+  while (eocd >= Math.max(0, input.length - 65557) && view.getUint32(eocd, true) !== 0x06054b50) eocd -= 1
+  if (eocd < 0) throw new Error('The staffing template is not a valid XLSX file.')
+  const count = view.getUint16(eocd + 10, true)
+  let cursor = view.getUint32(eocd + 16, true)
+  const entries: ZipEntry[] = []
+  for (let index = 0; index < count; index += 1) {
+    if (view.getUint32(cursor, true) !== 0x02014b50) throw new Error('The staffing template ZIP directory is invalid.')
+    const versionMade = view.getUint16(cursor + 4, true)
+    const versionNeeded = view.getUint16(cursor + 6, true)
+    const flags = view.getUint16(cursor + 8, true)
+    const method = view.getUint16(cursor + 10, true)
+    const modTime = view.getUint16(cursor + 12, true)
+    const modDate = view.getUint16(cursor + 14, true)
+    const crc = view.getUint32(cursor + 16, true)
+    const compressedSize = view.getUint32(cursor + 20, true)
+    const uncompressedSize = view.getUint32(cursor + 24, true)
+    const nameLength = view.getUint16(cursor + 28, true)
+    const extraLength = view.getUint16(cursor + 30, true)
+    const commentLength = view.getUint16(cursor + 32, true)
+    const internalAttrs = view.getUint16(cursor + 36, true)
+    const externalAttrs = view.getUint32(cursor + 38, true)
+    const localOffset = view.getUint32(cursor + 42, true)
+    const nameBytes = input.slice(cursor + 46, cursor + 46 + nameLength)
+    const name = zipDecoder.decode(nameBytes)
+    const centralExtra = input.slice(cursor + 46 + nameLength, cursor + 46 + nameLength + extraLength)
+    const comment = input.slice(cursor + 46 + nameLength + extraLength, cursor + 46 + nameLength + extraLength + commentLength)
+    if (view.getUint32(localOffset, true) !== 0x04034b50) throw new Error('The staffing template ZIP entry is invalid.')
+    const localNameLength = view.getUint16(localOffset + 26, true)
+    const localExtraLength = view.getUint16(localOffset + 28, true)
+    const localExtra = input.slice(localOffset + 30 + localNameLength, localOffset + 30 + localNameLength + localExtraLength)
+    const dataStart = localOffset + 30 + localNameLength + localExtraLength
+    entries.push({ name, method, flags, modTime, modDate, versionMade, versionNeeded, internalAttrs, externalAttrs, localExtra, centralExtra, comment, compressed: input.slice(dataStart, dataStart + compressedSize), uncompressedSize, crc })
+    cursor += 46 + nameLength + extraLength + commentLength
+  }
+  return entries
+}
+
+async function rewriteXlsxPackage(input: Uint8Array, replacements: Record<string, Uint8Array>) {
+  const entries = readZipEntries(input)
+  const localParts: Uint8Array[] = []
+  const centralParts: Uint8Array[] = []
+  let localOffset = 0
+  for (const entry of entries) {
+    const replacement = replacements[entry.name]
+    const raw = replacement ?? await zipInflate(entry.compressed, entry.method)
+    const compressed = replacement ? await zipDeflate(raw, entry.method) : entry.compressed
+    const crc = replacement ? zipCrc32(raw) : entry.crc
+    const nameBytes = zipEncoder.encode(entry.name)
+    const flags = entry.flags & ~0x0008
+    const local = new Uint8Array(30 + nameBytes.length + entry.localExtra.length + compressed.length)
+    const localView = new DataView(local.buffer)
+    zipU32(localView, 0, 0x04034b50); zipU16(localView, 4, entry.versionNeeded); zipU16(localView, 6, flags); zipU16(localView, 8, entry.method)
+    zipU16(localView, 10, entry.modTime); zipU16(localView, 12, entry.modDate); zipU32(localView, 14, crc); zipU32(localView, 18, compressed.length); zipU32(localView, 22, raw.length)
+    zipU16(localView, 26, nameBytes.length); zipU16(localView, 28, entry.localExtra.length)
+    local.set(nameBytes, 30); local.set(entry.localExtra, 30 + nameBytes.length); local.set(compressed, 30 + nameBytes.length + entry.localExtra.length)
+    localParts.push(local)
+
+    const central = new Uint8Array(46 + nameBytes.length + entry.centralExtra.length + entry.comment.length)
+    const centralView = new DataView(central.buffer)
+    zipU32(centralView, 0, 0x02014b50); zipU16(centralView, 4, entry.versionMade); zipU16(centralView, 6, entry.versionNeeded); zipU16(centralView, 8, flags); zipU16(centralView, 10, entry.method)
+    zipU16(centralView, 12, entry.modTime); zipU16(centralView, 14, entry.modDate); zipU32(centralView, 16, crc); zipU32(centralView, 20, compressed.length); zipU32(centralView, 24, raw.length)
+    zipU16(centralView, 28, nameBytes.length); zipU16(centralView, 30, entry.centralExtra.length); zipU16(centralView, 32, entry.comment.length); zipU16(centralView, 34, 0)
+    zipU16(centralView, 36, entry.internalAttrs); zipU32(centralView, 38, entry.externalAttrs); zipU32(centralView, 42, localOffset)
+    central.set(nameBytes, 46); central.set(entry.centralExtra, 46 + nameBytes.length); central.set(entry.comment, 46 + nameBytes.length + entry.centralExtra.length)
+    centralParts.push(central)
+    localOffset += local.length
+  }
+  const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0)
+  const output = new Uint8Array(localOffset + centralSize + 22)
+  let offset = 0
+  localParts.forEach((part) => { output.set(part, offset); offset += part.length })
+  centralParts.forEach((part) => { output.set(part, offset); offset += part.length })
+  const end = new DataView(output.buffer)
+  zipU32(end, offset, 0x06054b50); zipU16(end, offset + 4, 0); zipU16(end, offset + 6, 0); zipU16(end, offset + 8, entries.length); zipU16(end, offset + 10, entries.length)
+  zipU32(end, offset + 12, centralSize); zipU32(end, offset + 16, localOffset); zipU16(end, offset + 20, 0)
+  return output
+}
+
 import { Nav } from './components/Nav'
 import { supabase } from './lib/supabase'
 import { startingActivities, activityNameFromList } from './data/activities'
@@ -2848,16 +2976,69 @@ function ManagerApp({
   async function createStaffingExcel(sourceProgramme: ProgrammeImport, sourceAssignments: StaffingAssignment, sourceStaff: StaffMember[], sourceDaysOff: StaffDayOff[], sourceWorking: Record<string,string[]>, sourceSickness: Record<string,string[]>, selectedDays: string[], fileName: string) {
     const response = await fetch(`${import.meta.env.BASE_URL}staffing-template.xlsx`)
     if (!response.ok) throw new Error('The staffing Excel template could not be loaded.')
-    const template = await response.arrayBuffer()
-    const workbook = XLSX.read(template, { type: 'array', cellStyles: true })
-    const sheetName = workbook.SheetNames.includes('Sheet1') ? 'Sheet1' : workbook.SheetNames[0]
-    const worksheet = workbook.Sheets[sheetName]
-    if (!worksheet) throw new Error('Sheet1 is missing from the staffing template.')
 
-    workbook.SheetNames = [sheetName]
-    Object.keys(workbook.Sheets).forEach((name) => { if (name !== sheetName) delete workbook.Sheets[name] })
+    // Work directly on the original XLSX package. This deliberately avoids
+    // SheetJS re-writing the workbook, because that removes the template's
+    // conditional formatting, thick borders, print settings and colour rules.
+    const templateBytes = new Uint8Array(await response.arrayBuffer())
+    const zipEntries = readZipEntries(templateBytes)
+    const sheetPath = 'xl/worksheets/sheet1.xml'
+    const sheetEntry = zipEntries.find((entry) => entry.name === sheetPath)
+    if (!sheetEntry) throw new Error('Sheet1 is missing from the staffing template.')
+    const sheetBytes = await zipInflate(sheetEntry.compressed, sheetEntry.method)
 
-    const dayBlocks = [
+    const parser = new DOMParser()
+    const serializer = new XMLSerializer()
+    const ns = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+    const worksheetDocument = parser.parseFromString(zipDecoder.decode(sheetBytes), 'application/xml')
+    if (worksheetDocument.querySelector('parsererror')) throw new Error('The staffing template worksheet could not be read.')
+
+    const cells = new Map<string, Element>()
+    Array.from(worksheetDocument.getElementsByTagNameNS(ns, 'c')).forEach((cell) => {
+      const ref = cell.getAttribute('r')
+      if (ref) cells.set(ref, cell)
+    })
+
+    const setRawCell = (ref: string, value: string | number, styleRef?: string) => {
+      const cell = cells.get(ref)
+      if (!cell) return
+      while (cell.firstChild) cell.removeChild(cell.firstChild)
+      if (styleRef) {
+        const source = cells.get(styleRef)
+        const styleId = source?.getAttribute('s')
+        if (styleId) cell.setAttribute('s', styleId)
+      }
+      if (typeof value === 'number') {
+        cell.removeAttribute('t')
+        const v = worksheetDocument.createElementNS(ns, 'v')
+        v.textContent = String(value)
+        cell.appendChild(v)
+      } else if (value !== '') {
+        cell.setAttribute('t', 'inlineStr')
+        const is = worksheetDocument.createElementNS(ns, 'is')
+        const t = worksheetDocument.createElementNS(ns, 't')
+        t.setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:space', 'preserve')
+        t.textContent = value
+        is.appendChild(t)
+        cell.appendChild(is)
+      } else {
+        cell.removeAttribute('t')
+      }
+    }
+
+    const columnName = (index: number) => {
+      let value = index + 1
+      let result = ''
+      while (value > 0) {
+        value -= 1
+        result = String.fromCharCode(65 + (value % 26)) + result
+        value = Math.floor(value / 26)
+      }
+      return result
+    }
+    const ref = (rowZeroBased: number, colZeroBased: number) => `${columnName(colZeroBased)}${rowZeroBased + 1}`
+
+    const originalBlocks = [
       { key: 'mon', label: 'Mon', start: 0 },
       { key: 'tue', label: 'Tues', start: 16 },
       { key: 'wed', label: 'Wed', start: 32 },
@@ -2867,7 +3048,7 @@ function ManagerApp({
       { key: 'sun', label: 'Sun', start: 96 },
     ]
     const normaliseDay = (value: string) => value.trim().toLowerCase().slice(0, 3)
-    const selectedKeys = new Set(selectedDays.map(normaliseDay))
+    const selectedKeys = selectedDays.map(normaliseDay)
     const sourceDayFor = (blockKey: string) => Array.from(new Set(sourceProgramme.rows.map((row) => row.day))).find((day) => normaliseDay(day) === blockKey)
     const sessions = ['1', '2', '3', '4', '5']
     const sessionTimes = ['9:10-10:30', '10:45-12:15', '14:00-15:30', '15:45-17:15', '19:00-20:30']
@@ -2877,84 +3058,83 @@ function ManagerApp({
         .filter((cell) => sourceAssignments[cellKey(row.id, cell.group)] === member.id && cell.activityCode && cell.activityCode !== 'Z')
         .map((cell) => ({ code: cell.activityCode.toUpperCase(), group: cell.group })))
 
-    const cloneStyle = (sourceRef: string) => JSON.parse(JSON.stringify((worksheet[sourceRef] as XLSX.CellObject | undefined)?.s ?? {}))
-    const styles = {
-      number: cloneStyle('A5'),
-      staff: cloneStyle('B5'),
-      note: cloneStyle('C5'),
-      activity: cloneStyle('D5'),
-      group: cloneStyle('E5'),
-    }
-    const fills: Record<'water'|'ropes'|'holiday'|'sick'|'timeoff'|'normal', string | null> = {
-      water: '9DC3E6',
-      ropes: 'F4B6C2',
-      holiday: 'A9D18E',
-      sick: 'FF6666',
-      timeoff: 'FFF200',
-      normal: null,
-    }
-    const setCell = (row: number, col: number, value: string | number, baseStyle: object, fill: keyof typeof fills = 'normal') => {
-      const ref = XLSX.utils.encode_cell({ r: row, c: col })
-      const style: any = JSON.parse(JSON.stringify(baseStyle))
-      if (fills[fill]) style.fill = { patternType: 'solid', fgColor: { rgb: fills[fill] }, bgColor: { rgb: fills[fill] } }
-      else if (style.fill) style.fill = { patternType: 'none' }
-      worksheet[ref] = { t: typeof value === 'number' ? 'n' : 's', v: value, s: style } as XLSX.CellObject
-    }
-    const clearCellValue = (row: number, col: number, baseStyle: object) => setCell(row, col, '', baseStyle)
+    // Daily downloads always use the first A:M block so they open and print
+    // exactly like the original paper template. Weekly downloads retain all
+    // original Monday-Sunday blocks.
+    const blocksToFill = selectedDays.length === 1
+      ? [{ key: selectedKeys[0], label: selectedDays[0], start: 0 }]
+      : originalBlocks.filter((block) => selectedKeys.includes(block.key))
 
-    dayBlocks.forEach((block) => {
-      const sourceDay = sourceDayFor(block.key)
-      const included = selectedKeys.has(block.key)
-      setCell(0, block.start, `DAILY STAFFING: ${block.label}`, cloneStyle(XLSX.utils.encode_cell({r:0,c:block.start})))
-      sessionTimes.forEach((time, index) => setCell(1, block.start + 3 + index * 2, time, cloneStyle(XLSX.utils.encode_cell({r:1,c:block.start + 3 + index * 2}))))
-
-      for (let row = 2; row <= 28; row += 1) {
-        clearCellValue(row, block.start, styles.number)
-        clearCellValue(row, block.start + 1, styles.staff)
-        clearCellValue(row, block.start + 2, styles.note)
-        sessions.forEach((_, index) => {
-          clearCellValue(row, block.start + 3 + index * 2, styles.activity)
-          clearCellValue(row, block.start + 4 + index * 2, styles.group)
-        })
+    // Clear values only. The original cell styles, borders, conditional
+    // formatting, row heights, column widths, merged cells and print setup stay.
+    originalBlocks.forEach((block) => {
+      for (let row = 2; row <= 37; row += 1) {
+        for (let col = block.start; col <= block.start + 12; col += 1) setRawCell(ref(row, col), '')
       }
+    })
 
-      if (!included || !sourceDay) return
-      sourceStaff.slice(0, 27).forEach((member, index) => {
-        const row = index + 2
+    blocksToFill.forEach((block) => {
+      const sourceDay = sourceDayFor(block.key)
+      if (!sourceDay) return
+      setRawCell(ref(0, block.start), `DAILY STAFFING: ${sourceDay}`, 'A1')
+      sessionTimes.forEach((time, index) => setRawCell(ref(1, block.start + 3 + index * 2), time, ref(1, 3 + index * 2)))
+
+      sourceStaff.slice(0, 29).forEach((member, index) => {
+        const row = index + 3 // template staff rows start on Excel row 4
         const status = staffingStatus(member, sourceDay, sourceProgramme, sourceDaysOff, sourceWorking, sourceSickness)
-        setCell(row, block.start, index + 1, styles.number)
-        setCell(row, block.start + 1, member.name, styles.staff)
+        setRawCell(ref(row, block.start), index + 1, 'A5')
+        setRawCell(ref(row, block.start + 1), member.name, 'B5')
+        setRawCell(ref(row, block.start + 2), '', 'C5')
+
         if (status) {
           const label = status === 'hol' ? 'HOL' : status === 'sick' ? 'SICK' : status === 'am_off' ? 'AM OFF' : status === 'pm_off' ? 'PM OFF' : 'OFF'
-          const fill = status === 'hol' ? 'holiday' : status === 'sick' ? 'sick' : 'timeoff'
-          setCell(row, block.start + 2, label, styles.note, fill)
+          setRawCell(ref(row, block.start + 2), label, 'C5')
           sessions.forEach((_, sessionIndex) => {
-            setCell(row, block.start + 3 + sessionIndex * 2, label, styles.activity, fill)
-            setCell(row, block.start + 4 + sessionIndex * 2, '', styles.group, fill)
+            const sessionNumber = sessionIndex + 1
+            const unavailable = status === 'hol' || status === 'sick' || status === 'off' ||
+              (status === 'am_off' && sessionNumber <= 2) || (status === 'pm_off' && sessionNumber === 5)
+            setRawCell(ref(row, block.start + 3 + sessionIndex * 2), unavailable ? label : '', 'D5')
+            setRawCell(ref(row, block.start + 4 + sessionIndex * 2), '', 'E5')
           })
           return
         }
+
         sessions.forEach((session, sessionIndex) => {
           const duties = dutyFor(member, sourceDay, session)
-          if (!duties.length) return
-          const colour = duties.some((duty) => staffingColour(duty.code) === 'water') ? 'water' : duties.some((duty) => staffingColour(duty.code) === 'ropes') ? 'ropes' : 'normal'
-          setCell(row, block.start + 3 + sessionIndex * 2, duties.map((duty) => duty.code).join(' / '), styles.activity, colour)
-          setCell(row, block.start + 4 + sessionIndex * 2, duties.map((duty) => `G${duty.group}`).join(', '), styles.group, colour)
+          setRawCell(ref(row, block.start + 3 + sessionIndex * 2), duties.map((duty) => duty.code).join(' / '), 'D5')
+          setRawCell(ref(row, block.start + 4 + sessionIndex * 2), duties.map((duty) => `G${duty.group}`).join(', '), 'E5')
         })
       })
     })
 
     if (selectedDays.length === 1) {
-      const chosen = normaliseDay(selectedDays[0])
-      const columns = (worksheet['!cols'] ?? Array.from({ length: 109 }, () => ({}))) as Array<Record<string, unknown>>
-      dayBlocks.forEach((block) => {
-        for (let col = block.start; col <= block.start + 12; col += 1) columns[col] = { ...(columns[col] ?? {}), hidden: block.key !== chosen }
-        if (block.start < 96) for (let col = block.start + 13; col <= block.start + 15; col += 1) columns[col] = { ...(columns[col] ?? {}), hidden: block.key !== chosen }
-      })
-      worksheet['!cols'] = columns
+      const dimension = worksheetDocument.getElementsByTagNameNS(ns, 'dimension')[0]
+      dimension?.setAttribute('ref', 'A1:M38')
+      // Keep the original print settings and limit the used range to one day.
     }
 
-    XLSX.writeFile(workbook, fileName, { bookType: 'xlsx', cellStyles: true, compression: true })
+    const replacements: Record<string, Uint8Array> = {
+      [sheetPath]: zipEncoder.encode(serializer.serializeToString(worksheetDocument)),
+    }
+    const workbookEntry = zipEntries.find((entry) => entry.name === 'xl/workbook.xml')
+    if (selectedDays.length === 1 && workbookEntry) {
+      const workbookXml = await zipInflate(workbookEntry.compressed, workbookEntry.method)
+      const workbookDocument = parser.parseFromString(zipDecoder.decode(workbookXml), 'application/xml')
+      Array.from(workbookDocument.getElementsByTagNameNS(ns, 'definedName')).forEach((definedName) => {
+        if (definedName.getAttribute('name') === '_xlnm.Print_Area') definedName.textContent = "'Sheet1'!$A$1:$M$38"
+      })
+      replacements['xl/workbook.xml'] = zipEncoder.encode(serializer.serializeToString(workbookDocument))
+    }
+    const output = await rewriteXlsxPackage(templateBytes, replacements)
+    const blob = new Blob([output], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = fileName
+    document.body.appendChild(anchor)
+    anchor.click()
+    anchor.remove()
+    URL.revokeObjectURL(url)
   }
 
   async function exportStaffingWeek() {
