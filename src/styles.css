@@ -1600,3 +1600,8 @@ button { cursor: pointer; }
 @media(max-width:720px){.payroll-download-panel{align-items:stretch;flex-direction:column}.payroll-download-panel button{width:100%;justify-content:center}}
 
 .staff-toolbar-actions,.payroll-actions,.history-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.loan-badge{display:inline-flex;padding:4px 8px;border-radius:999px;background:#dcecff;color:#235b8a;font-size:.7rem;font-weight:850}.staff-code{display:block;color:#71827e;margin-top:4px}.history-list{display:grid;gap:12px}.history-card{display:flex;justify-content:space-between;gap:18px;align-items:center;padding:16px;border:1px solid #d9e4e0;border-radius:14px;background:#fff}.history-card h3,.history-card p{margin:0 0 6px}.history-card small{display:block;margin-top:4px;color:#61736f}@media(max-width:700px){.history-card{align-items:stretch;flex-direction:column}.history-actions{flex-direction:column;align-items:stretch}}
+
+/* v0.56 staffing archive and download controls */
+.staffing-log-intro{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:18px;margin-bottom:18px;border:1px solid #cfe1db;border-radius:18px;background:linear-gradient(135deg,#f3faf7,#e8f4ef)}
+.staffing-log-intro h3,.staffing-log-intro p{margin:4px 0}.staffing-log-card{align-items:flex-start}.staffing-log-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.staffing-log-actions button{display:inline-flex;align-items:center;gap:6px}
+@media(max-width:760px){.staffing-log-intro{align-items:flex-start;flex-direction:column}.staffing-log-actions{justify-content:flex-start}}

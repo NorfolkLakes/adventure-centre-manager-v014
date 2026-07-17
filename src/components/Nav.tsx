@@ -14,7 +14,7 @@ export function Nav({ page, setPage }: { page: Page; setPage: (page: Page) => vo
   return (
     <nav className="top-nav">
       {items.map(({ page: itemPage, label, icon: Icon }) => {
-        const active = page === itemPage || (itemPage === 'admin' && (page === 'staff' || page === 'holidays' || page === 'signoffs' || page === 'logs'))
+        const active = page === itemPage || (itemPage === 'admin' && (page === 'staff' || page === 'holidays' || page === 'signoffs' || page === 'logs' || page === 'staffingLogs'))
         return (
           <button key={itemPage} className={active ? 'active' : ''} onClick={() => setPage(itemPage)}>
             <Icon size={19} />

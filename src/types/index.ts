@@ -1,4 +1,4 @@
-export type Page = 'dashboard' | 'programme' | 'arrivals' | 'staffing' | 'schoolNotes' | 'admin' | 'staff' | 'holidays' | 'signoffs' | 'logs' | 'formerStaff' | 'loanHistory'
+export type Page = 'dashboard' | 'programme' | 'arrivals' | 'staffing' | 'schoolNotes' | 'admin' | 'staff' | 'holidays' | 'signoffs' | 'logs' | 'formerStaff' | 'loanHistory' | 'staffingLogs'
 
 export type Activity = {
   code: string
