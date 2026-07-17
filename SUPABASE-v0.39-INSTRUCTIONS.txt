@@ -1,0 +1,9 @@
+Adventure Centre Manager v0.39 Supabase update
+
+Run the complete supabase/setup.sql file in the Supabase SQL Editor before testing.
+
+The updated holiday SELECT policy allows:
+- Head of Centre, Activities Manager and Team Leaders to view the holiday calendar.
+- Instructors to read only holiday rows where staff_email matches their authenticated login email.
+
+Instructors still cannot add, edit or delete holiday records.

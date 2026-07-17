@@ -1,0 +1,14 @@
+BEFORE USING HOLIDAYS
+
+1. Open Supabase.
+2. Go to SQL Editor.
+3. Open this project's supabase/setup.sql file.
+4. Run the entire file once.
+
+This creates the staff_holidays table and adds these login roles:
+- centreManager: full app and holiday editing
+- activityManager: full app and holiday editing
+- teamLeader: read-only holiday calendar
+- staff: normal staff rota only
+
+For role changes to affect a login account, make sure the exact login email is entered against that staff member on Admin > Staff.

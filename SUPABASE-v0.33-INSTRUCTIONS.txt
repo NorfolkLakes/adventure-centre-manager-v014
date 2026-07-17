@@ -1,0 +1,11 @@
+Adventure Centre Manager v0.33 — Team Leader access
+
+Run the updated supabase/setup.sql in Supabase SQL Editor before testing Team Leader access.
+
+Important permissions:
+- centreManager: full app and full holiday management
+- activityManager: full app and full holiday management
+- teamLeader: full app, holiday calendar read-only
+- staff: instructor dashboard only
+
+After running the SQL, sign out completely and sign back in so the role is reloaded.
