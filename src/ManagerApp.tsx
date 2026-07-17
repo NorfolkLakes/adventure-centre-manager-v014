@@ -2993,20 +2993,48 @@ function ManagerApp({
     const worksheetDocument = parser.parseFromString(zipDecoder.decode(sheetBytes), 'application/xml')
     if (worksheetDocument.querySelector('parsererror')) throw new Error('The staffing template worksheet could not be read.')
 
+    const stylesPath = 'xl/styles.xml'
+    const stylesEntry = zipEntries.find((entry) => entry.name === stylesPath)
+    if (!stylesEntry) throw new Error('The staffing template styles are missing.')
+    const stylesBytes = await zipInflate(stylesEntry.compressed, stylesEntry.method)
+    const stylesDocument = parser.parseFromString(zipDecoder.decode(stylesBytes), 'application/xml')
+    if (stylesDocument.querySelector('parsererror')) throw new Error('The staffing template styles could not be read.')
+    const cellXfs = stylesDocument.getElementsByTagNameNS(ns, 'cellXfs')[0]
+    if (!cellXfs) throw new Error('The staffing template cell styles are missing.')
+    const styleVariants = new Map<string, string>()
+    const styleWithFill = (styleId: string, fillId: number) => {
+      const key = `${styleId}:${fillId}`
+      const cached = styleVariants.get(key)
+      if (cached) return cached
+      const sourceStyle = cellXfs.children.item(Number(styleId)) as Element | null
+      if (!sourceStyle) return styleId
+      const variant = sourceStyle.cloneNode(true) as Element
+      variant.setAttribute('fillId', String(fillId))
+      variant.setAttribute('applyFill', '1')
+      cellXfs.appendChild(variant)
+      const nextId = String(cellXfs.children.length - 1)
+      cellXfs.setAttribute('count', String(cellXfs.children.length))
+      styleVariants.set(key, nextId)
+      return nextId
+    }
+
     const cells = new Map<string, Element>()
     Array.from(worksheetDocument.getElementsByTagNameNS(ns, 'c')).forEach((cell) => {
       const ref = cell.getAttribute('r')
       if (ref) cells.set(ref, cell)
     })
 
-    const setRawCell = (ref: string, value: string | number, styleRef?: string) => {
+    const setRawCell = (ref: string, value: string | number, styleRef?: string, fillId?: number) => {
       const cell = cells.get(ref)
       if (!cell) return
       while (cell.firstChild) cell.removeChild(cell.firstChild)
       if (styleRef) {
         const source = cells.get(styleRef)
         const styleId = source?.getAttribute('s')
-        if (styleId) cell.setAttribute('s', styleId)
+        if (styleId) cell.setAttribute('s', fillId === undefined ? styleId : styleWithFill(styleId, fillId))
+      } else if (fillId !== undefined) {
+        const styleId = cell.getAttribute('s') ?? '0'
+        cell.setAttribute('s', styleWithFill(styleId, fillId))
       }
       if (typeof value === 'number') {
         cell.removeAttribute('t')
@@ -3069,7 +3097,10 @@ function ManagerApp({
     // formatting, row heights, column widths, merged cells and print setup stay.
     originalBlocks.forEach((block) => {
       for (let row = 2; row <= 37; row += 1) {
-        for (let col = block.start; col <= block.start + 12; col += 1) setRawCell(ref(row, col), '')
+        for (let col = block.start; col <= block.start + 12; col += 1) {
+          const targetRef = ref(row, col)
+          setRawCell(targetRef, '', targetRef, 0)
+        }
       }
     })
 
@@ -3082,27 +3113,37 @@ function ManagerApp({
       sourceStaff.slice(0, 29).forEach((member, index) => {
         const row = index + 3 // template staff rows start on Excel row 4
         const status = staffingStatus(member, sourceDay, sourceProgramme, sourceDaysOff, sourceWorking, sourceSickness)
-        setRawCell(ref(row, block.start), index + 1, 'A5')
-        setRawCell(ref(row, block.start + 1), member.name, 'B5')
-        setRawCell(ref(row, block.start + 2), '', 'C5')
+        const numberRef = ref(row, block.start)
+        const nameRef = ref(row, block.start + 1)
+        const statusRef = ref(row, block.start + 2)
+        setRawCell(numberRef, index + 1, numberRef, 0)
+        setRawCell(nameRef, member.name, nameRef, 0)
+        setRawCell(statusRef, '', statusRef, 0)
 
         if (status) {
           const label = status === 'hol' ? 'HOL' : status === 'sick' ? 'SICK' : status === 'am_off' ? 'AM OFF' : status === 'pm_off' ? 'PM OFF' : 'OFF'
-          setRawCell(ref(row, block.start + 2), label, 'C5')
+          const absenceFill = status === 'hol' ? 3 : status === 'sick' ? 6 : 2
+          setRawCell(statusRef, label, statusRef, absenceFill)
           sessions.forEach((_, sessionIndex) => {
             const sessionNumber = sessionIndex + 1
             const unavailable = status === 'hol' || status === 'sick' || status === 'off' ||
               (status === 'am_off' && sessionNumber <= 2) || (status === 'pm_off' && sessionNumber === 5)
-            setRawCell(ref(row, block.start + 3 + sessionIndex * 2), unavailable ? label : '', 'D5')
-            setRawCell(ref(row, block.start + 4 + sessionIndex * 2), '', 'E5')
+            const activityRef = ref(row, block.start + 3 + sessionIndex * 2)
+            const groupRef = ref(row, block.start + 4 + sessionIndex * 2)
+            setRawCell(activityRef, unavailable ? label : '', activityRef, unavailable ? absenceFill : 0)
+            setRawCell(groupRef, '', groupRef, unavailable ? absenceFill : 0)
           })
           return
         }
 
         sessions.forEach((session, sessionIndex) => {
           const duties = dutyFor(member, sourceDay, session)
-          setRawCell(ref(row, block.start + 3 + sessionIndex * 2), duties.map((duty) => duty.code).join(' / '), 'D5')
-          setRawCell(ref(row, block.start + 4 + sessionIndex * 2), duties.map((duty) => `G${duty.group}`).join(', '), 'E5')
+          const activityRef = ref(row, block.start + 3 + sessionIndex * 2)
+          const groupRef = ref(row, block.start + 4 + sessionIndex * 2)
+          const dutyColours = duties.map((duty) => staffingColour(duty.code))
+          const activityFill = dutyColours.includes('water') ? 5 : dutyColours.includes('ropes') ? 10 : 0
+          setRawCell(activityRef, duties.map((duty) => duty.code).join(' / '), activityRef, activityFill)
+          setRawCell(groupRef, duties.map((duty) => `G${duty.group}`).join(', '), groupRef, 0)
         })
       })
     })
@@ -3115,6 +3156,7 @@ function ManagerApp({
 
     const replacements: Record<string, Uint8Array> = {
       [sheetPath]: zipEncoder.encode(serializer.serializeToString(worksheetDocument)),
+      [stylesPath]: zipEncoder.encode(serializer.serializeToString(stylesDocument)),
     }
     const workbookEntry = zipEntries.find((entry) => entry.name === 'xl/workbook.xml')
     if (selectedDays.length === 1 && workbookEntry) {
