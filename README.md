@@ -293,3 +293,9 @@ After deploying v0.20, run `supabase/setup.sql` once in the Supabase SQL Editor 
 - Added real Excel-compatible downloads for all three views.
 - Weekly Excel export matches the supplied WEEKLY STAFFING layout with staff rows, weekday/date headers, bordered cells, yellow OFF/AM OFF/PM OFF, green HOL and red SICK.
 - Excel files are editable and configured to fit the sheet onto a printable page.
+
+
+## v0.53
+- Payroll export now uses every current app staff member rather than matching old template names.
+- Payroll names are grouped by role.
+- Days worked, holidays and sickness are loaded from the selected monthly Days Off calendar.
