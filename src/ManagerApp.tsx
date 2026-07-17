@@ -826,6 +826,92 @@ function ManagerApp({
   }
 
 
+  function payrollNameKey(value: unknown) {
+    return normaliseIdentity(value).replace(/\b(mr|mrs|miss|ms)\b/g, ' ').replace(/\s+/g, ' ').trim()
+  }
+
+  function payrollMemberForTemplateName(templateName: unknown) {
+    const templateKey = payrollNameKey(templateName)
+    const templateTokens = templateKey.split(' ').filter(Boolean)
+    if (!templateTokens.length) return undefined
+    return staff.find((member) => {
+      const memberKey = payrollNameKey(member.name)
+      const memberTokens = memberKey.split(' ').filter(Boolean)
+      if (memberKey === templateKey) return true
+      if (memberTokens.length < 2 || templateTokens.length < 2) return false
+      return (memberTokens.every((token) => templateTokens.includes(token)) && templateTokens.every((token) => memberTokens.includes(token)))
+        || (memberTokens[0] === templateTokens[templateTokens.length - 1] && memberTokens[memberTokens.length - 1] === templateTokens[0])
+    })
+  }
+
+  function payrollTotalsForMember(member: StaffMember, month: Date) {
+    const year = month.getFullYear(), monthIndex = month.getMonth()
+    const monthStart = new Date(year, monthIndex, 1), monthEnd = new Date(year, monthIndex + 1, 0)
+    const today = new Date(); today.setHours(0, 0, 0, 0)
+    const calculationDate = today < monthStart ? new Date(monthStart.getTime() - 86400000) : today > monthEnd ? monthEnd : today
+    const entries = daysOff.filter((entry) => {
+      const d = parseDateKey(entry.day)
+      return entry.staff_id === member.id && d.getFullYear() === year && d.getMonth() === monthIndex
+    })
+    const entryByDay = new Map(entries.map((entry) => [entry.day, entry]))
+    let actualWorkedDays = 0
+    for (let day = new Date(monthStart); day <= calculationDate; day.setDate(day.getDate() + 1)) {
+      const entry = entryByDay.get(dateKey(day))
+      if (!entry || entry.status === 'am_off' || entry.status === 'pm_off') actualWorkedDays += 1
+    }
+    let projectedWorkedDays = 0
+    const projectionStart = new Date(Math.max(monthStart.getTime(), calculationDate.getTime() + 86400000))
+    for (let day = projectionStart; day <= monthEnd; day.setDate(day.getDate() + 1)) {
+      const entry = entryByDay.get(dateKey(day))
+      if (day.getDay() >= 1 && day.getDay() <= 5 && !(entry && ['off','hol','sick'].includes(entry.status))) projectedWorkedDays += 1
+    }
+    return {
+      workedDays: actualWorkedDays + projectedWorkedDays,
+      holidayDays: entries.filter((entry) => entry.status === 'hol').length,
+      sickDays: entries.filter((entry) => entry.status === 'sick').length,
+    }
+  }
+
+  async function downloadPayroll() {
+    if (!canManageHolidays) return
+    try {
+      setImportMessage('Preparing payroll workbook…')
+      const response = await fetch(`${import.meta.env.BASE_URL}instructor-payroll-template.xlsx`)
+      if (!response.ok) throw new Error('Payroll template could not be loaded.')
+      const workbook = XLSX.read(await response.arrayBuffer(), { type: 'array', cellStyles: true, cellDates: true })
+      const monthName = holidayMonth.toLocaleDateString('en-GB', { month: 'short' })
+      let sheetName = workbook.SheetNames.find((name) => name.toLowerCase() === monthName.toLowerCase())
+      if (!sheetName || workbook.Sheets[sheetName]?.['!ref'] === 'A1') {
+        const sourceName = [...workbook.SheetNames].reverse().find((name) => workbook.Sheets[name]?.['!ref'] && workbook.Sheets[name]['!ref'] !== 'A1')
+        if (!sourceName) throw new Error('The payroll template has no populated monthly sheet.')
+        sheetName = monthName
+        workbook.Sheets[sheetName] = structuredClone(workbook.Sheets[sourceName])
+        if (!workbook.SheetNames.includes(sheetName)) workbook.SheetNames.push(sheetName)
+      }
+      const worksheet = workbook.Sheets[sheetName]
+      const range = XLSX.utils.decode_range(worksheet['!ref'] ?? 'A1:R40')
+      let matched = 0
+      for (let row = range.s.r + 2; row <= range.e.r; row += 1) {
+        const member = payrollMemberForTemplateName(worksheet[XLSX.utils.encode_cell({ r: row, c: 1 })]?.v)
+        if (!member) continue
+        const totals = payrollTotalsForMember(member, holidayMonth)
+        ;[totals.workedDays, totals.holidayDays, totals.sickDays].forEach((value, index) => {
+          const address = XLSX.utils.encode_cell({ r: row, c: 8 + index })
+          worksheet[address] = { ...(worksheet[address] ?? {}), t: 'n', v: value, w: String(value) }
+        })
+        matched += 1
+      }
+      const output = XLSX.write(workbook, { bookType: 'xlsx', type: 'array', cellStyles: true })
+      const url = URL.createObjectURL(new Blob([output], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }))
+      const link = document.createElement('a'); link.href = url; link.download = `Instructor-payroll-${holidayMonth.getFullYear()}-${String(holidayMonth.getMonth()+1).padStart(2,'0')}.xlsx`; link.click()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      setImportMessage(`Payroll downloaded. ${matched} staff were matched. Remaining days were estimated as Monday to Friday until month end.`)
+    } catch (error) {
+      setImportMessage(error instanceof Error ? error.message : 'Payroll could not be downloaded.')
+    }
+  }
+
+
   async function loadHolidays() {
     const { data, error } = await supabase
       .from('staff_holidays')
@@ -3612,6 +3698,11 @@ function ManagerApp({
                 {sortedDaysOffStaff().map(member=>{const existing=daysOff.find(x=>x.staff_id===member.id&&x.day===daysOffDay);const availability=!existing?'Available all day':existing.status==='am_off'?'Unavailable Sessions 1 & 2':existing.status==='pm_off'?'Unavailable Session 5':'Unavailable all day';return <Fragment key={member.id}><div className="staff-name-cell"><span>{member.name}</span><small>{roleLabel(resolvedRole(member))}</small></div><div className={`day-off-cell ${existing?`status-${existing.status}`:''} ${existing?.note==='blank-red'?'blank-red-cell':''}`}><select className="no-print" value={existing?.status??'working'} disabled={!canManageHolidays&&accountRole!=='teamLeader'} onChange={e=>setSingleDayOff(member,daysOffDay,e.target.value as DayOffStatus|'working')}><option value="working">Working</option>{canManageHolidays&&<option value="off">OFF</option>}{canManageHolidays&&<option value="hol">HOL</option>}<option value="sick">SICK</option>{canManageHolidays&&<option value="am_off">AM OFF</option>}{canManageHolidays&&<option value="pm_off">PM OFF</option>}</select><strong className="print-only">{daysOffDisplayLabel(existing)}</strong></div><div className="daily-availability">{availability}</div></Fragment>})}
               </div>
               <div className="days-off-legend"><span className="status-off">OFF</span><span className="status-hol">HOL</span><span className="status-sick">SICK</span><span className="status-am_off">AM OFF</span><span className="status-pm_off">PM OFF</span></div>
+            </section>}
+
+            {canManageHolidays && <section className="payroll-download-panel no-print">
+              <div><h3>Monthly payroll</h3><p>Uses your payroll template and fills Number of days worked, Holidays Taken and Sick Leave. Future days are estimated as a five-day Monday-to-Friday week.</p></div>
+              <button className="primary" onClick={downloadPayroll}><FileSpreadsheet size={17}/>Download Payroll</button>
             </section>}
 
             {showDaysOffHelp && <div className="days-off-help-backdrop no-print" role="presentation" onMouseDown={(event)=>{if(event.target===event.currentTarget)setShowDaysOffHelp(false)}}>
