@@ -328,3 +328,13 @@ Adds permanent and loan staff lifecycle management, Former Staff and Loan Staff 
 - Session times shown on screen and in staffing Excel exports.
 - Activity names and group numbers included in downloaded staffing cells.
 - Staffing Logs organised Month → Week with locked historical downloads.
+
+
+## v0.58
+
+- Monday to Sunday day menu has its own responsive full-width grid.
+- Staffing controls and download buttons are separated into clear rows.
+- Daily and full-week staffing downloads use the uploaded Sheet1 workbook as the template.
+- Preserves template layout, merged cells, borders, column widths, row heights, session times and print settings.
+- Activities and group numbers remain in separate columns.
+- Blue water, pink ropes, green holiday, red sickness and yellow time-off colours.

@@ -1605,3 +1605,13 @@ button { cursor: pointer; }
 .staffing-log-intro{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:18px;margin-bottom:18px;border:1px solid #cfe1db;border-radius:18px;background:linear-gradient(135deg,#f3faf7,#e8f4ef)}
 .staffing-log-intro h3,.staffing-log-intro p{margin:4px 0}.staffing-log-card{align-items:flex-start}.staffing-log-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.staffing-log-actions button{display:inline-flex;align-items:center;gap:6px}
 @media(max-width:760px){.staffing-log-intro{align-items:flex-start;flex-direction:column}.staffing-log-actions{justify-content:flex-start}}
+
+/* v0.58 full-width day menu and separate staffing controls */
+.staffing-day-row{overflow:visible;padding-bottom:10px}
+.staffing-day-tabs{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));min-width:0;width:100%;gap:9px}
+.staffing-day-tabs button{min-width:0;width:100%;min-height:48px;padding:10px 6px;font-size:.86rem}
+.staffing-management-row,.staffing-download-row{display:flex;width:100%;gap:10px;flex-wrap:wrap}
+.staffing-management-row{padding-top:10px;border-top:1px solid #e3ece8}
+.staffing-download-row{padding-top:10px;margin-top:2px;border-top:1px dashed #d5e3de}
+@media(max-width:900px){.staffing-day-tabs{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:520px){.staffing-day-tabs{grid-template-columns:repeat(2,minmax(0,1fr))}.staffing-management-row>button,.staffing-download-row>button{flex:1 1 100%}}
