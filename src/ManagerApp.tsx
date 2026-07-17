@@ -2977,289 +2977,153 @@ function ManagerApp({
     const response = await fetch(`${import.meta.env.BASE_URL}staffing-template.xlsx`)
     if (!response.ok) throw new Error('The staffing Excel template could not be loaded.')
 
-    // Work directly on the original XLSX package. This deliberately avoids
-    // SheetJS re-writing the workbook, because that removes the template's
-    // conditional formatting, thick borders, print settings and colour rules.
-    const templateBytes = new Uint8Array(await response.arrayBuffer())
-    const zipEntries = readZipEntries(templateBytes)
-    const sheetPath = 'xl/worksheets/sheet1.xml'
-    const sheetEntry = zipEntries.find((entry) => entry.name === sheetPath)
-    if (!sheetEntry) throw new Error('Sheet1 is missing from the staffing template.')
-    const sheetBytes = await zipInflate(sheetEntry.compressed, sheetEntry.method)
-
-    const parser = new DOMParser()
-    const serializer = new XMLSerializer()
-    const ns = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
-    const worksheetDocument = parser.parseFromString(zipDecoder.decode(sheetBytes), 'application/xml')
-    if (worksheetDocument.querySelector('parsererror')) throw new Error('The staffing template worksheet could not be read.')
-
-    const stylesPath = 'xl/styles.xml'
-    const stylesEntry = zipEntries.find((entry) => entry.name === stylesPath)
-    if (!stylesEntry) throw new Error('The staffing template styles are missing.')
-    const stylesBytes = await zipInflate(stylesEntry.compressed, stylesEntry.method)
-    const stylesDocument = parser.parseFromString(zipDecoder.decode(stylesBytes), 'application/xml')
-    if (stylesDocument.querySelector('parsererror')) throw new Error('The staffing template styles could not be read.')
-    const cellXfs = stylesDocument.getElementsByTagNameNS(ns, 'cellXfs')[0]
-    if (!cellXfs) throw new Error('The staffing template cell styles are missing.')
-    const styleVariants = new Map<string, string>()
-    const styleWithFill = (styleId: string, fillId: number) => {
-      const key = `${styleId}:${fillId}`
-      const cached = styleVariants.get(key)
-      if (cached) return cached
-      const sourceStyle = cellXfs.children.item(Number(styleId)) as Element | null
-      if (!sourceStyle) return styleId
-      const variant = sourceStyle.cloneNode(true) as Element
-      variant.setAttribute('fillId', String(fillId))
-      variant.setAttribute('applyFill', '1')
-      cellXfs.appendChild(variant)
-      const nextId = String(cellXfs.children.length - 1)
-      cellXfs.setAttribute('count', String(cellXfs.children.length))
-      styleVariants.set(key, nextId)
-      return nextId
-    }
-
-    const cells = new Map<string, Element>()
-    Array.from(worksheetDocument.getElementsByTagNameNS(ns, 'c')).forEach((cell) => {
-      const ref = cell.getAttribute('r')
-      if (ref) cells.set(ref, cell)
+    // SheetJS writes a fresh, standards-compliant XLSX package. The previous
+    // low-level ZIP/XML rewriter could create files that Excel needed to repair.
+    const workbook = XLSX.read(await response.arrayBuffer(), {
+      type: 'array',
+      cellStyles: true,
+      cellDates: true,
+      dense: false,
     })
+    const template = workbook.Sheets[workbook.SheetNames[0]]
+    if (!template) throw new Error('The staffing template worksheet is missing.')
 
-    const setRawCell = (ref: string, value: string | number, styleRef?: string, fillId?: number) => {
-      const cell = cells.get(ref)
-      if (!cell) return
-      while (cell.firstChild) cell.removeChild(cell.firstChild)
-      if (styleRef) {
-        const source = cells.get(styleRef)
-        const styleId = source?.getAttribute('s')
-        if (styleId) cell.setAttribute('s', fillId === undefined ? styleId : styleWithFill(styleId, fillId))
-      } else if (fillId !== undefined) {
-        const styleId = cell.getAttribute('s') ?? '0'
-        cell.setAttribute('s', styleWithFill(styleId, fillId))
-      }
-      if (typeof value === 'number') {
-        cell.removeAttribute('t')
-        const v = worksheetDocument.createElementNS(ns, 'v')
-        v.textContent = String(value)
-        cell.appendChild(v)
-      } else if (value !== '') {
-        cell.setAttribute('t', 'inlineStr')
-        const is = worksheetDocument.createElementNS(ns, 'is')
-        const t = worksheetDocument.createElementNS(ns, 't')
-        t.setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:space', 'preserve')
-        t.textContent = value
-        is.appendChild(t)
-        cell.appendChild(is)
-      } else {
-        cell.removeAttribute('t')
-      }
-    }
-
-    const columnName = (index: number) => {
-      let value = index + 1
-      let result = ''
-      while (value > 0) {
-        value -= 1
-        result = String.fromCharCode(65 + (value % 26)) + result
-        value = Math.floor(value / 26)
-      }
-      return result
-    }
-    const ref = (rowZeroBased: number, colZeroBased: number) => `${columnName(colZeroBased)}${rowZeroBased + 1}`
-
-    const originalBlocks = [
-      { key: 'mon', label: 'Mon', start: 0 },
-      { key: 'tue', label: 'Tues', start: 16 },
-      { key: 'wed', label: 'Wed', start: 32 },
-      { key: 'thu', label: 'Thur', start: 48 },
-      { key: 'fri', label: 'Fri', start: 64 },
-      { key: 'sat', label: 'Sat', start: 80 },
-      { key: 'sun', label: 'Sun', start: 96 },
-    ]
     const normaliseDay = (value: string) => value.trim().toLowerCase().slice(0, 3)
-    const selectedKeys = selectedDays.map(normaliseDay)
-    const sourceDayFor = (blockKey: string) => Array.from(new Set(sourceProgramme.rows.map((row) => row.day))).find((day) => normaliseDay(day) === blockKey)
+    const programmeDays = Array.from(new Set(sourceProgramme.rows.map((row) => row.day)))
+    const days = selectedDays
+      .map((requested) => programmeDays.find((day) => normaliseDay(day) === normaliseDay(requested)))
+      .filter((day): day is string => Boolean(day))
+    if (!days.length) throw new Error('No matching programme days were found for this download.')
+
     const sessions = ['1', '2', '3', '4', '5']
     const sessionTimes = ['9:10-10:30', '10:45-12:15', '14:00-15:30', '15:45-17:15', '19:00-20:30']
+    const blockWidth = 13
+    const blockGap = 3
+    const rowCount = 38
+    const output = XLSX.utils.aoa_to_sheet([])
+
+    const cloneValue = <T,>(value: T): T => {
+      if (value === undefined || value === null) return value
+      return JSON.parse(JSON.stringify(value)) as T
+    }
+    const sourceCell = (row: number, column: number) => template[XLSX.utils.encode_cell({ r: row, c: column })]
+    const destinationCell = (row: number, column: number) => XLSX.utils.encode_cell({ r: row, c: column })
+
+    // Build only the requested tables. Daily = one A:M table. Weekly = one
+    // contiguous table block for each programme day, with no copied tables below.
+    days.forEach((_, dayIndex) => {
+      const destinationStart = dayIndex * (blockWidth + blockGap)
+      for (let row = 0; row < rowCount; row += 1) {
+        for (let column = 0; column < blockWidth; column += 1) {
+          const original = sourceCell(row, column)
+          if (!original) continue
+          output[destinationCell(row, destinationStart + column)] = cloneValue(original)
+        }
+      }
+    })
+
+    output['!rows'] = cloneValue((template as XLSX.WorkSheet)['!rows'] ?? []).slice(0, rowCount)
+    output['!cols'] = []
+    days.forEach((_, dayIndex) => {
+      const destinationStart = dayIndex * (blockWidth + blockGap)
+      for (let column = 0; column < blockWidth; column += 1) {
+        output['!cols']![destinationStart + column] = cloneValue((template as XLSX.WorkSheet)['!cols']?.[column] ?? { wch: 10 })
+      }
+      if (dayIndex < days.length - 1) {
+        for (let gap = 0; gap < blockGap; gap += 1) output['!cols']![destinationStart + blockWidth + gap] = { wch: 2 }
+      }
+    })
+
+    const templateMerges = ((template as XLSX.WorkSheet)['!merges'] ?? []) as XLSX.Range[]
+    output['!merges'] = []
+    days.forEach((_, dayIndex) => {
+      const offset = dayIndex * (blockWidth + blockGap)
+      templateMerges
+        .filter((merge) => merge.s.r < rowCount && merge.e.r < rowCount && merge.s.c < blockWidth && merge.e.c < blockWidth)
+        .forEach((merge) => output['!merges']!.push({
+          s: { r: merge.s.r, c: merge.s.c + offset },
+          e: { r: merge.e.r, c: merge.e.c + offset },
+        }))
+    })
+
+    const noFill = { patternType: 'none' }
+    const fills = {
+      water: { patternType: 'solid', fgColor: { rgb: '9DC3E6' }, bgColor: { rgb: '9DC3E6' } },
+      ropes: { patternType: 'solid', fgColor: { rgb: 'F4B6C2' }, bgColor: { rgb: 'F4B6C2' } },
+      hol: { patternType: 'solid', fgColor: { rgb: 'C6E0B4' }, bgColor: { rgb: 'C6E0B4' } },
+      off: { patternType: 'solid', fgColor: { rgb: 'FFE699' }, bgColor: { rgb: 'FFE699' } },
+      sick: { patternType: 'solid', fgColor: { rgb: 'F4CCCC' }, bgColor: { rgb: 'F4CCCC' } },
+    }
+    const setCell = (row: number, column: number, value: string | number, fill: keyof typeof fills | null = null) => {
+      const address = destinationCell(row, column)
+      const cell = output[address] ?? { t: typeof value === 'number' ? 'n' : 's', v: value }
+      cell.t = typeof value === 'number' ? 'n' : 's'
+      cell.v = value
+      delete cell.f
+      cell.s = cloneValue(cell.s ?? {})
+      cell.s.fill = cloneValue(fill ? fills[fill] : noFill)
+      output[address] = cell
+    }
+
     const dutyFor = (member: StaffMember, day: string, session: string) => sourceProgramme.rows
       .filter((row) => row.day === day && String(row.session) === session)
       .flatMap((row) => row.cells
         .filter((cell) => sourceAssignments[cellKey(row.id, cell.group)] === member.id && cell.activityCode && cell.activityCode !== 'Z')
         .map((cell) => ({ code: cell.activityCode.toUpperCase(), group: cell.group })))
 
-    // Daily downloads always use the first A:M block so they open and print
-    // exactly like the original paper template. Weekly downloads retain all
-    // original Monday-Sunday blocks.
-    const dayHasStaffingData = (day: string) => {
-      const rowIds = new Set(sourceProgramme.rows.filter((row) => row.day === day).map((row) => row.id))
-      const hasAssignments = Object.entries(sourceAssignments).some(([key, staffId]) => rowIds.has(key.split('::')[0]) && Boolean(staffId))
-      const isoDay = dateForProgrammeDay(sourceProgramme, day)
-      return hasAssignments || (sourceSickness[day] ?? []).length > 0 || sourceDaysOff.some((entry) => entry.day === isoDay) || Object.prototype.hasOwnProperty.call(sourceWorking, day)
-    }
+    days.forEach((day, dayIndex) => {
+      const start = dayIndex * (blockWidth + blockGap)
+      setCell(0, start, `DAILY STAFFING: ${day}`)
+      sessionTimes.forEach((time, index) => setCell(1, start + 3 + index * 2, time))
 
-    const blocksToFill = selectedDays.length === 1
-      ? [{ key: selectedKeys[0], label: selectedDays[0], start: 0 }]
-      : originalBlocks.filter((block) => selectedKeys.includes(block.key) && Boolean(sourceDayFor(block.key)) && dayHasStaffingData(sourceDayFor(block.key)!))
-
-    // Remove every copied table below the first row of day blocks. The source
-    // workbook contains additional historic/layout tables down to row 324;
-    // exports must contain only the single top staffing strip.
-    const maxColumn = selectedDays.length === 1 ? 12 : 108
-    const sheetData = worksheetDocument.getElementsByTagNameNS(ns, 'sheetData')[0]
-    Array.from(sheetData?.children ?? []).forEach((rowElement) => {
-      const rowNumber = Number((rowElement as Element).getAttribute('r') ?? '0')
-      if (rowNumber > 38) {
-        rowElement.parentNode?.removeChild(rowElement)
-        return
+      // Clear the data area while retaining template borders and alignment.
+      for (let row = 2; row < rowCount; row += 1) {
+        for (let column = 0; column < blockWidth; column += 1) setCell(row, start + column, '')
       }
-      Array.from((rowElement as Element).children).forEach((cellElement) => {
-        const address = (cellElement as Element).getAttribute('r') ?? ''
-        const match = address.match(/^([A-Z]+)(\d+)$/)
-        if (!match) return
-        let column = 0
-        for (const character of match[1]) column = column * 26 + character.charCodeAt(0) - 64
-        if (column - 1 > maxColumn) cellElement.parentNode?.removeChild(cellElement)
-      })
-    })
-
-    const columns = worksheetDocument.getElementsByTagNameNS(ns, 'cols')[0]
-    Array.from(columns?.children ?? []).forEach((columnElement) => {
-      const min = Number((columnElement as Element).getAttribute('min') ?? '1')
-      const max = Number((columnElement as Element).getAttribute('max') ?? String(min))
-      const allowedMax = maxColumn + 1
-      if (min > allowedMax) columnElement.parentNode?.removeChild(columnElement)
-      else if (max > allowedMax) (columnElement as Element).setAttribute('max', String(allowedMax))
-    })
-
-    const mergeCells = worksheetDocument.getElementsByTagNameNS(ns, 'mergeCells')[0]
-    Array.from(mergeCells?.children ?? []).forEach((mergeElement) => {
-      const range = (mergeElement as Element).getAttribute('ref') ?? ''
-      const addresses = range.split(':')
-      const outside = addresses.some((address) => {
-        const match = address.match(/^([A-Z]+)(\d+)$/)
-        if (!match) return true
-        let column = 0
-        for (const character of match[1]) column = column * 26 + character.charCodeAt(0) - 64
-        return column - 1 > maxColumn || Number(match[2]) > 38
-      })
-      if (outside) mergeElement.parentNode?.removeChild(mergeElement)
-    })
-    if (mergeCells) mergeCells.setAttribute('count', String(mergeCells.children.length))
-
-    // Template conditional-format ranges include old tables and can introduce
-    // stray colours. Export colours are written explicitly from current data.
-    Array.from(worksheetDocument.getElementsByTagNameNS(ns, 'conditionalFormatting')).forEach((element) => element.parentNode?.removeChild(element))
-    Array.from(worksheetDocument.getElementsByTagNameNS(ns, 'rowBreaks')).forEach((element) => element.parentNode?.removeChild(element))
-    Array.from(worksheetDocument.getElementsByTagNameNS(ns, 'colBreaks')).forEach((element) => element.parentNode?.removeChild(element))
-
-    // Clear values only. The original cell styles, borders,
-    // formatting, row heights, column widths, merged cells and print setup stay.
-    originalBlocks.forEach((block) => {
-      for (let row = 2; row <= 37; row += 1) {
-        for (let col = block.start; col <= block.start + 12; col += 1) {
-          const targetRef = ref(row, col)
-          setRawCell(targetRef, '', targetRef, 0)
-        }
-      }
-    })
-
-    blocksToFill.forEach((block) => {
-      const sourceDay = sourceDayFor(block.key)
-      if (!sourceDay) return
-      setRawCell(ref(0, block.start), `DAILY STAFFING: ${sourceDay}`, 'A1')
-      sessionTimes.forEach((time, index) => setRawCell(ref(1, block.start + 3 + index * 2), time, ref(1, 3 + index * 2)))
 
       sourceStaff.slice(0, 29).forEach((member, index) => {
-        const row = index + 3 // template staff rows start on Excel row 4
-        const status = staffingStatus(member, sourceDay, sourceProgramme, sourceDaysOff, sourceWorking, sourceSickness)
-        const numberRef = ref(row, block.start)
-        const nameRef = ref(row, block.start + 1)
-        const statusRef = ref(row, block.start + 2)
-        setRawCell(numberRef, index + 1, numberRef, 0)
-        setRawCell(nameRef, member.name, nameRef, 0)
-        setRawCell(statusRef, '', statusRef, 0)
+        const row = index + 3
+        const status = staffingStatus(member, day, sourceProgramme, sourceDaysOff, sourceWorking, sourceSickness)
+        setCell(row, start, index + 1)
+        setCell(row, start + 1, member.name)
+        setCell(row, start + 2, '')
 
         if (status) {
           const label = status === 'hol' ? 'HOL' : status === 'sick' ? 'SICK' : status === 'am_off' ? 'AM OFF' : status === 'pm_off' ? 'PM OFF' : 'OFF'
-          const absenceFill = status === 'hol' ? 3 : status === 'sick' ? 6 : 2
-          setRawCell(statusRef, label, statusRef, absenceFill)
+          const fill = status === 'hol' ? 'hol' : status === 'sick' ? 'sick' : 'off'
+          setCell(row, start + 2, label, fill)
           sessions.forEach((_, sessionIndex) => {
             const sessionNumber = sessionIndex + 1
             const unavailable = status === 'hol' || status === 'sick' || status === 'off' ||
               (status === 'am_off' && sessionNumber <= 2) || (status === 'pm_off' && sessionNumber === 5)
-            const activityRef = ref(row, block.start + 3 + sessionIndex * 2)
-            const groupRef = ref(row, block.start + 4 + sessionIndex * 2)
-            setRawCell(activityRef, unavailable ? label : '', activityRef, unavailable ? absenceFill : 0)
-            setRawCell(groupRef, '', groupRef, unavailable ? absenceFill : 0)
+            setCell(row, start + 3 + sessionIndex * 2, unavailable ? label : '', unavailable ? fill : null)
+            setCell(row, start + 4 + sessionIndex * 2, '', unavailable ? fill : null)
           })
           return
         }
 
         sessions.forEach((session, sessionIndex) => {
-          const duties = dutyFor(member, sourceDay, session)
-          const activityRef = ref(row, block.start + 3 + sessionIndex * 2)
-          const groupRef = ref(row, block.start + 4 + sessionIndex * 2)
-          const dutyColours = duties.map((duty) => staffingColour(duty.code))
-          const activityFill = dutyColours.includes('water') ? 5 : dutyColours.includes('ropes') ? 10 : 0
-          setRawCell(activityRef, duties.map((duty) => duty.code).join(' / '), activityRef, activityFill)
-          setRawCell(groupRef, duties.map((duty) => `G${duty.group}`).join(', '), groupRef, 0)
+          const duties = dutyFor(member, day, session)
+          const colours = duties.map((duty) => staffingColour(duty.code))
+          const fill = colours.includes('water') ? 'water' : colours.includes('ropes') ? 'ropes' : null
+          setCell(row, start + 3 + sessionIndex * 2, duties.map((duty) => duty.code).join(' / '), fill)
+          setCell(row, start + 4 + sessionIndex * 2, duties.map((duty) => `G${duty.group}`).join(', '))
         })
       })
     })
 
-    const lastColumn = selectedDays.length === 1 ? 'M' : 'DE'
-    const dimension = worksheetDocument.getElementsByTagNameNS(ns, 'dimension')[0]
-    dimension?.setAttribute('ref', `A1:${lastColumn}38`)
+    const finalColumn = (days.length - 1) * (blockWidth + blockGap) + blockWidth - 1
+    output['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: rowCount - 1, c: finalColumn } })
+    output['!autofilter'] = undefined
+    output['!protect'] = undefined
+    output['!margins'] = cloneValue((template as XLSX.WorkSheet)['!margins'])
+    output['!pageSetup'] = cloneValue((template as XLSX.WorkSheet)['!pageSetup'])
 
-    const replacements: Record<string, Uint8Array> = {
-      [sheetPath]: zipEncoder.encode(serializer.serializeToString(worksheetDocument)),
-      [stylesPath]: zipEncoder.encode(serializer.serializeToString(stylesDocument)),
-    }
-    const excludedPaths = new Set<string>(['xl/worksheets/sheet2.xml', 'xl/worksheets/_rels/sheet2.xml.rels'])
-
-    // Keep only the actual staffing worksheet. The uploaded workbook also has
-    // a Plan B sheet, which must never appear in downloaded staffing files.
-    const workbookEntry = zipEntries.find((entry) => entry.name === 'xl/workbook.xml')
-    if (workbookEntry) {
-      const workbookXml = await zipInflate(workbookEntry.compressed, workbookEntry.method)
-      const workbookDocument = parser.parseFromString(zipDecoder.decode(workbookXml), 'application/xml')
-      const sheetsElement = workbookDocument.getElementsByTagNameNS(ns, 'sheets')[0]
-      Array.from(sheetsElement?.children ?? []).forEach((sheetElement) => {
-        if ((sheetElement as Element).getAttribute('name') !== 'Sheet1') sheetElement.parentNode?.removeChild(sheetElement)
-      })
-      const workbookView = workbookDocument.getElementsByTagNameNS(ns, 'workbookView')[0]
-      workbookView?.setAttribute('activeTab', '0')
-      workbookView?.setAttribute('firstSheet', '0')
-      Array.from(workbookDocument.getElementsByTagNameNS(ns, 'definedName')).forEach((definedName) => {
-        if (definedName.getAttribute('name') === '_xlnm.Print_Area') definedName.textContent = `'Sheet1'!$A$1:$${lastColumn}$38`
-        definedName.setAttribute('localSheetId', '0')
-      })
-      replacements['xl/workbook.xml'] = zipEncoder.encode(serializer.serializeToString(workbookDocument))
-    }
-
-    const relsPath = 'xl/_rels/workbook.xml.rels'
-    const relsEntry = zipEntries.find((entry) => entry.name === relsPath)
-    if (relsEntry) {
-      const relsXml = await zipInflate(relsEntry.compressed, relsEntry.method)
-      const relsDocument = parser.parseFromString(zipDecoder.decode(relsXml), 'application/xml')
-      Array.from(relsDocument.documentElement.children).forEach((relationship) => {
-        if ((relationship as Element).getAttribute('Target')?.endsWith('worksheets/sheet2.xml')) relationship.parentNode?.removeChild(relationship)
-      })
-      replacements[relsPath] = zipEncoder.encode(serializer.serializeToString(relsDocument))
-    }
-
-    const contentTypesPath = '[Content_Types].xml'
-    const contentTypesEntry = zipEntries.find((entry) => entry.name === contentTypesPath)
-    if (contentTypesEntry) {
-      const contentTypesXml = await zipInflate(contentTypesEntry.compressed, contentTypesEntry.method)
-      const contentTypesDocument = parser.parseFromString(zipDecoder.decode(contentTypesXml), 'application/xml')
-      Array.from(contentTypesDocument.documentElement.children).forEach((override) => {
-        if ((override as Element).getAttribute('PartName') === '/xl/worksheets/sheet2.xml') override.parentNode?.removeChild(override)
-      })
-      replacements[contentTypesPath] = zipEncoder.encode(serializer.serializeToString(contentTypesDocument))
-    }
-
-    const output = await rewriteXlsxPackage(templateBytes, replacements, excludedPaths)
-    const blob = new Blob([output], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+    const cleanWorkbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(cleanWorkbook, output, 'Staffing')
+    cleanWorkbook.Props = { Title: fileName.replace(/\.xlsx$/i, ''), Company: 'Norfolk Lakes' }
+    const bytes = XLSX.write(cleanWorkbook, { bookType: 'xlsx', type: 'array', cellStyles: true, compression: true }) as ArrayBuffer
+    const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url
@@ -3267,7 +3131,7 @@ function ManagerApp({
     document.body.appendChild(anchor)
     anchor.click()
     anchor.remove()
-    URL.revokeObjectURL(url)
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
   async function exportStaffingWeek() {
