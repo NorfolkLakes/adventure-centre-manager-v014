@@ -295,7 +295,11 @@ After deploying v0.20, run `supabase/setup.sql` once in the Supabase SQL Editor 
 - Excel files are editable and configured to fit the sheet onto a printable page.
 
 
-## v0.53
+## v0.54
 - Payroll export now uses every current app staff member rather than matching old template names.
 - Payroll names are grouped by role.
 - Days worked, holidays and sickness are loaded from the selected monthly Days Off calendar.
+
+
+## v0.54
+Adds permanent and loan staff lifecycle management, Former Staff and Loan Staff History pages, preserved sign-offs on reactivation/conversion, Staff IDs, and Payroll Sync controls.

@@ -38,6 +38,7 @@ import type {
   StaffRole,
   StaffingAssignment,
   Activity,
+  ArchivedStaff,
 } from './types'
 
 const PROGRAMME_KEY = 'acm-programme-current'
@@ -49,6 +50,10 @@ const SICKNESS_KEY = 'acm-sickness-by-day'
 const WORKING_KEY = 'acm-working-by-day'
 const ACTIVITIES_KEY = 'acm-activities'
 const ARRIVAL_ASSIGNMENTS_KEY = 'acm-arrival-assignments'
+const FORMER_STAFF_KEY = 'acm-former-staff'
+const LOAN_HISTORY_KEY = 'acm-loan-history'
+const STAFF_TIMELINE_KEY = 'acm-staff-timeline'
+const PAYROLL_SYNC_KEY = 'acm-payroll-sync'
 
 
 type MySessionDuty = {
@@ -518,9 +523,16 @@ function ManagerApp({
     'all' | StaffRole
   >('all')
   const [showAddStaff, setShowAddStaff] = useState(false)
+  const [addingLoanStaff, setAddingLoanStaff] = useState(false)
   const [newStaffName, setNewStaffName] = useState('')
   const [newStaffRole, setNewStaffRole] = useState<StaffRole>('staff')
   const [newStaffQualifications, setNewStaffQualifications] = useState<string[]>([])
+  const [newStaffStartDate, setNewStaffStartDate] = useState(() => dateKey(new Date()))
+  const [newLoanEndDate, setNewLoanEndDate] = useState('')
+  const [formerStaff, setFormerStaff] = useState<ArchivedStaff[]>(() => readJson(FORMER_STAFF_KEY, []))
+  const [loanHistory, setLoanHistory] = useState<ArchivedStaff[]>(() => readJson(LOAN_HISTORY_KEY, []))
+  const [staffTimeline, setStaffTimeline] = useState<Record<string, {date:string;event:string}[]>>(() => readJson(STAFF_TIMELINE_KEY, {}))
+  const [payrollSyncAt, setPayrollSyncAt] = useState(() => localStorage.getItem(PAYROLL_SYNC_KEY) ?? '')
   const [holidayMonth, setHolidayMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1))
   const [holidays, setHolidays] = useState<{id:string;staff_email:string;staff_name:string;start_date:string;end_date:string;note:string|null}[]>([])
   const [holidayStaffId, setHolidayStaffId] = useState('')
@@ -835,7 +847,7 @@ function ManagerApp({
 
   function payrollStaff() {
     const rank: Record<string, number> = { centreManager: 0, activityManager: 1, teamLeader: 2, staff: 3 }
-    return [...staff].sort((a, b) => {
+    return staff.filter((member) => member.employmentType !== 'loan').sort((a, b) => {
       const roleDifference = (rank[payrollRoleForMember(a)] ?? 9) - (rank[payrollRoleForMember(b)] ?? 9)
       return roleDifference || a.name.localeCompare(b.name, 'en-GB', { sensitivity: 'base' })
     })
@@ -1473,6 +1485,81 @@ function ManagerApp({
     localStorage.setItem(STAFF_KEY, JSON.stringify(next))
   }
 
+  function nextStaffCode() {
+    const all = [...staff, ...formerStaff.map((x) => x.member), ...loanHistory.map((x) => x.member)]
+    const max = all.reduce((value, member) => Math.max(value, Number(member.staffCode?.replace(/\D/g, '') || 0)), 0)
+    return `NL${String(max + 1).padStart(4, '0')}`
+  }
+
+  function addTimeline(memberId: string, event: string, date = dateKey(new Date())) {
+    setStaffTimeline((current) => {
+      const next = { ...current, [memberId]: [...(current[memberId] ?? []), { date, event }] }
+      localStorage.setItem(STAFF_TIMELINE_KEY, JSON.stringify(next))
+      return next
+    })
+  }
+
+  function saveFormer(next: ArchivedStaff[]) { setFormerStaff(next); localStorage.setItem(FORMER_STAFF_KEY, JSON.stringify(next)) }
+  function saveLoanHistory(next: ArchivedStaff[]) { setLoanHistory(next); localStorage.setItem(LOAN_HISTORY_KEY, JSON.stringify(next)) }
+
+  function removeFromActiveStaff(staffId: string) {
+    const nextStaff = staff.filter((item) => item.id !== staffId)
+    const nextAssignments = Object.fromEntries(Object.entries(assignments).filter(([, assignedId]) => assignedId !== staffId))
+    const nextSickness = Object.fromEntries(Object.entries(sicknessByDay).map(([day, ids]) => [day, ids.filter((id) => id !== staffId)]))
+    setStaff(nextStaff); setAssignments(nextAssignments); setSicknessByDay(nextSickness)
+    localStorage.setItem(STAFF_KEY, JSON.stringify(nextStaff)); localStorage.setItem(ASSIGNMENT_KEY, JSON.stringify(nextAssignments)); localStorage.setItem(SICKNESS_KEY, JSON.stringify(nextSickness))
+  }
+
+  function markLeftCompany(staffId: string) {
+    const member = staff.find((item) => item.id === staffId); if (!member) return
+    const leavingDate = window.prompt('Leaving date (YYYY-MM-DD)', dateKey(new Date())); if (!leavingDate) return
+    const notes = window.prompt('Optional leaving note', '') ?? ''
+    if (!window.confirm(`Move ${member.name} to Former Staff?`)) return
+    saveFormer([...formerStaff, { member: { ...member, employmentType: 'permanent' }, archivedAt: new Date().toISOString(), endDate: leavingDate, notes, archiveType: 'former' }])
+    removeFromActiveStaff(staffId); addTimeline(member.id, `Left company${notes ? ` — ${notes}` : ''}`, leavingDate)
+    setImportMessage(`${member.name} was moved to Former Staff.`)
+  }
+
+  function endLoan(staffId: string) {
+    const member = staff.find((item) => item.id === staffId); if (!member) return
+    const endDate = window.prompt('Loan end date (YYYY-MM-DD)', dateKey(new Date())); if (!endDate) return
+    const notes = window.prompt('Optional loan note', '') ?? ''
+    const prior = loanHistory.find((x) => x.member.id === member.id)
+    const period = { startDate: member.startDate ?? endDate, endDate, notes }
+    const next = prior ? loanHistory.map((x) => x.member.id === member.id ? { ...x, member, endDate, archivedAt: new Date().toISOString(), loanPeriods: [...(x.loanPeriods ?? []), period] } : x) : [...loanHistory, { member, archivedAt: new Date().toISOString(), endDate, notes, archiveType: 'loan' as const, loanPeriods: [period] }]
+    saveLoanHistory(next); removeFromActiveStaff(staffId); addTimeline(member.id, `Loan ended${notes ? ` — ${notes}` : ''}`, endDate)
+    setImportMessage(`${member.name}'s loan was ended and saved in Loan Staff History.`)
+  }
+
+  function reinstateFormer(record: ArchivedStaff) {
+    const startDate = window.prompt('Reinstatement date (YYYY-MM-DD)', dateKey(new Date())); if (!startDate) return
+    const member = { ...record.member, startDate, employmentType: 'permanent' as const }
+    const next = [...staff, member]; setStaff(next); localStorage.setItem(STAFF_KEY, JSON.stringify(next))
+    saveFormer(formerStaff.filter((x) => x.member.id !== record.member.id)); addTimeline(member.id, 'Reinstated at centre', startDate)
+  }
+
+  function reactivateLoan(record: ArchivedStaff) {
+    const startDate = window.prompt('New loan start date (YYYY-MM-DD)', dateKey(new Date())); if (!startDate) return
+    const endDate = window.prompt('Expected loan end date (YYYY-MM-DD)', '') ?? ''
+    const member = { ...record.member, startDate, loanEndDate: endDate, employmentType: 'loan' as const }
+    const next = [...staff, member]; setStaff(next); localStorage.setItem(STAFF_KEY, JSON.stringify(next))
+    saveLoanHistory(loanHistory.filter((x) => x.member.id !== record.member.id)); addTimeline(member.id, 'Reactivated as loan staff', startDate)
+  }
+
+  function convertLoanToPermanent(record: ArchivedStaff) {
+    const startDate = window.prompt('Permanent employment start date (YYYY-MM-DD)', dateKey(new Date())); if (!startDate) return
+    const role = (window.prompt('Role: staff, teamLeader, activityManager or centreManager', resolvedRole(record.member)) || resolvedRole(record.member)) as StaffRole
+    const member = { ...record.member, startDate, role, teamLeader: role === 'teamLeader', employmentType: 'permanent' as const, loanEndDate: undefined }
+    const next = [...staff, member]; setStaff(next); localStorage.setItem(STAFF_KEY, JSON.stringify(next))
+    saveLoanHistory(loanHistory.filter((x) => x.member.id !== record.member.id)); addTimeline(member.id, `Added permanently as ${roleLabel(role)}`, startDate)
+  }
+
+  function payrollSync() {
+    const now = new Date().toISOString(); localStorage.setItem(PAYROLL_SYNC_KEY, now); setPayrollSyncAt(now)
+    const permanentCount = staff.filter((member) => member.employmentType !== 'loan').length
+    setImportMessage(`Payroll synced with ${permanentCount} permanent staff. Existing template order will be retained and new staff will be added to the bottom of their role group.`)
+  }
+
   async function setStaffRole(staffId: string, role: StaffRole) {
     const member = staff.find((item) => item.id === staffId)
     const next = staff.map((item) =>
@@ -1525,6 +1612,10 @@ function ManagerApp({
       signOffs: Object.fromEntries(
         newStaffQualifications.map((code) => [code, 'X']),
       ),
+      staffCode: nextStaffCode(),
+      employmentType: addingLoanStaff ? 'loan' : 'permanent',
+      startDate: newStaffStartDate,
+      loanEndDate: addingLoanStaff ? newLoanEndDate : undefined,
     }
 
     const next = [...staff, nextMember]
@@ -1534,7 +1625,10 @@ function ManagerApp({
     setNewStaffRole('staff')
     setNewStaffQualifications([])
     setShowAddStaff(false)
-    setImportMessage(`${trimmedName} was added to the staff platform.`)
+    addTimeline(nextMember.id, addingLoanStaff ? 'Joined as loan staff' : 'Joined centre', newStaffStartDate)
+    setAddingLoanStaff(false)
+    setNewLoanEndDate('')
+    setImportMessage(`${trimmedName} was added to the staff platform${nextMember.employmentType === 'loan' ? ' as loan staff' : ''}.`)
   }
 
   function deleteStaffMember(staffId: string) {
@@ -3545,6 +3639,8 @@ function ManagerApp({
                 <ClipboardList size={34} />
                 <div><h3>Logs</h3><p>Review water-lead permission confirmations.</p></div>
               </button>}
+              {canManageStaff && <button className="admin-choice-card" onClick={() => setPage('formerStaff')}><History size={34}/><div><h3>Former Staff</h3><p>Employment start and leaving records.</p></div></button>}
+              {canManageStaff && <button className="admin-choice-card" onClick={() => setPage('loanHistory')}><Users size={34}/><div><h3>Loan Staff History</h3><p>Reactivate loan staff or add them permanently.</p></div></button>}
             </section>
           </Panel>
         )}
@@ -3558,13 +3654,7 @@ function ManagerApp({
                   activities each person is signed off to run.
                 </p>
               </div>
-              <button
-                className="primary"
-                onClick={() => setShowAddStaff((current) => !current)}
-              >
-                <Plus size={18} />
-                Add new staff member
-              </button>
+              <div className="staff-toolbar-actions"><button className="primary" onClick={() => { setAddingLoanStaff(false); setShowAddStaff(true) }}><Plus size={18}/>Add staff</button><button className="secondary-action" onClick={() => { setAddingLoanStaff(true); setShowAddStaff(true) }}><Plus size={18}/>Add loan staff</button></div>
             </div>
 
             {showAddStaff && (
@@ -3572,7 +3662,7 @@ function ManagerApp({
                 <div className="add-staff-heading">
                   <div>
                     <p className="eyebrow">Manager controls</p>
-                    <h3>Add staff member</h3>
+                    <h3>{addingLoanStaff ? 'Add loan staff' : 'Add staff member'}</h3>
                   </div>
                   <button
                     className="icon-button small"
@@ -3588,6 +3678,8 @@ function ManagerApp({
                   onChange={(event) => setNewStaffName(event.target.value)}
                   placeholder="Full name"
                 />
+
+                <label>Start date</label><input type="date" value={newStaffStartDate} onChange={(event)=>setNewStaffStartDate(event.target.value)}/>{addingLoanStaff && <><label>Expected loan end date</label><input type="date" value={newLoanEndDate} onChange={(event)=>setNewLoanEndDate(event.target.value)}/></>}
 
                 <label>Operational role</label>
                 <div className="role-selector">
@@ -3630,7 +3722,7 @@ function ManagerApp({
                 </div>
 
                 <button className="primary save-staff" onClick={addStaffMember}>
-                  Add staff member
+                  {addingLoanStaff ? 'Add loan staff' : 'Add staff member'}
                 </button>
               </section>
             )}
@@ -3640,7 +3732,7 @@ function ManagerApp({
                 <article className="staff-management-card" key={member.id}>
                   <div>
                     <div className="staff-name-line">
-                      <h3>{member.name}</h3>
+                      <h3>{member.name}</h3>{member.employmentType === 'loan' && <span className="loan-badge">Loan staff</span>}<small className="staff-code">{member.staffCode ?? 'Legacy record'}</small>
                       <span className={`role-label role-${resolvedRole(member)}`}>
                         {roleLabel(resolvedRole(member))}
                       </span>
@@ -3680,19 +3772,18 @@ function ManagerApp({
                       </option>
                       <option value="centreManager">Centre manager</option>
                     </select>
-                    <button
-                      className="delete-staff"
-                      onClick={() => deleteStaffMember(member.id)}
-                    >
-                      <Trash2 size={16} />
-                      Remove
-                    </button>
+                    {member.employmentType === 'loan' ? <button className="delete-staff" onClick={() => endLoan(member.id)}><History size={16}/>End Loan</button> : <button className="delete-staff" onClick={() => markLeftCompany(member.id)}><History size={16}/>Left Company</button>}
                   </div>
                 </article>
               ))}
             </div>
           </Panel>
         )}
+
+
+        {page === 'formerStaff' && canManageStaff && (<Panel title="Former Staff" onBack={() => setPage('admin')}><div className="history-list">{formerStaff.length === 0 ? <p>No former staff records yet.</p> : formerStaff.map((record)=><article className="history-card" key={record.member.id}><div><h3>{record.member.name}</h3><p>{roleLabel(resolvedRole(record.member))} · {record.member.staffCode ?? 'Legacy record'}</p><p>Started: {record.member.startDate ?? 'Not recorded'} · Left: {record.endDate}</p>{record.notes && <p>{record.notes}</p>}</div><button className="primary" onClick={()=>reinstateFormer(record)}>Reinstate Staff</button></article>)}</div></Panel>)}
+
+        {page === 'loanHistory' && canManageStaff && (<Panel title="Loan Staff History" onBack={() => setPage('admin')}><div className="history-list">{loanHistory.length === 0 ? <p>No completed loan staff records yet.</p> : loanHistory.map((record)=><article className="history-card" key={record.member.id}><div><h3>{record.member.name}</h3><p>{roleLabel(resolvedRole(record.member))} · {record.member.staffCode ?? 'Legacy record'}</p><p>{record.loanPeriods?.length ?? 1} loan period{(record.loanPeriods?.length ?? 1)===1?'':'s'}</p>{record.loanPeriods?.map((period,index)=><small key={index}>Loan {index+1}: {period.startDate} to {period.endDate}{period.notes?` — ${period.notes}`:''}</small>)}</div><div className="history-actions"><button className="secondary-action" onClick={()=>reactivateLoan(record)}>Reactivate as Loan Staff</button><button className="primary" onClick={()=>convertLoanToPermanent(record)}>Add to My Centre</button></div></article>)}</div></Panel>)}
 
         {page === 'holidays' && (
           <Panel title="Days Off" onBack={() => setPage('admin')}>
@@ -3758,7 +3849,7 @@ function ManagerApp({
 
             {canManageHolidays && <section className="payroll-download-panel no-print">
               <div><h3>Monthly payroll</h3><p>Uses your payroll template and fills Number of days worked, Holidays Taken and Sick Leave. Future days are estimated as a five-day Monday-to-Friday week.</p></div>
-              <button className="primary" onClick={downloadPayroll}><FileSpreadsheet size={17}/>Download Payroll</button>
+              <div className="payroll-actions"><button className="secondary-action" onClick={payrollSync}><History size={17}/>Payroll Sync</button><button className="primary" onClick={downloadPayroll}><FileSpreadsheet size={17}/>Download Payroll</button>{payrollSyncAt && <small>Last synced {new Date(payrollSyncAt).toLocaleString('en-GB')}</small>}</div>
             </section>}
 
             {showDaysOffHelp && <div className="days-off-help-backdrop no-print" role="presentation" onMouseDown={(event)=>{if(event.target===event.currentTarget)setShowDaysOffHelp(false)}}>

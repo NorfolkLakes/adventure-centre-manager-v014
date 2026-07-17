@@ -1,4 +1,4 @@
-export type Page = 'dashboard' | 'programme' | 'arrivals' | 'staffing' | 'schoolNotes' | 'admin' | 'staff' | 'holidays' | 'signoffs' | 'logs'
+export type Page = 'dashboard' | 'programme' | 'arrivals' | 'staffing' | 'schoolNotes' | 'admin' | 'staff' | 'holidays' | 'signoffs' | 'logs' | 'formerStaff' | 'loanHistory'
 
 export type Activity = {
   code: string
@@ -41,6 +41,19 @@ export type StaffMember = {
   signOffs?: Record<string, string>
   role?: StaffRole
   teamLeader?: boolean
+  staffCode?: string
+  employmentType?: 'permanent' | 'loan'
+  startDate?: string
+  loanEndDate?: string
+}
+
+export type ArchivedStaff = {
+  member: StaffMember
+  archivedAt: string
+  endDate: string
+  notes?: string
+  archiveType: 'former' | 'loan'
+  loanPeriods?: { startDate: string; endDate: string; notes?: string }[]
 }
 
 export type StaffingAssignment = Record<string, string>
