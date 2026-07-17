@@ -520,6 +520,10 @@ function ManagerApp({
   )
   const [selectedStaffingDay, setSelectedStaffingDay] = useState('')
   const [staffingView, setStaffingView] = useState<'activity' | 'calendar'>('activity')
+  const [staffingZoom, setStaffingZoom] = useState<number>(() => {
+    const saved = Number(localStorage.getItem('acm-staffing-zoom') ?? 100)
+    return Number.isFinite(saved) ? Math.min(150, Math.max(70, saved)) : 100
+  })
   const activeStaffingDay =
     selectedStaffingDay && programmeDays.includes(selectedStaffingDay)
       ? selectedStaffingDay
@@ -551,6 +555,7 @@ function ManagerApp({
   const [staffTimeline, setStaffTimeline] = useState<Record<string, {date:string;event:string}[]>>(() => readJson(STAFF_TIMELINE_KEY, {}))
   const [payrollSyncAt, setPayrollSyncAt] = useState(() => localStorage.getItem(PAYROLL_SYNC_KEY) ?? '')
   const [staffingArchives, setStaffingArchives] = useState<StaffingArchive[]>(() => readJson(STAFFING_ARCHIVES_KEY, []))
+  const [selectedStaffingLogMonth, setSelectedStaffingLogMonth] = useState('')
   const [holidayMonth, setHolidayMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1))
   const [holidays, setHolidays] = useState<{id:string;staff_email:string;staff_name:string;start_date:string;end_date:string;note:string|null}[]>([])
   const [holidayStaffId, setHolidayStaffId] = useState('')
@@ -1453,7 +1458,7 @@ function ManagerApp({
 
   function saveProgramme(next: ProgrammeImport, previous?: ProgrammeImport) {
     const nextHistory = previous ? [previous, ...history].slice(0, 12) : history
-    if (previous && programmeWeekKey(previous) !== programmeWeekKey(next)) archiveSnapshot(previous)
+    if (previous) archiveSnapshot(previous, true)
     const migrated = migrateAssignments(previous ?? null, next, assignments)
     setAssignments(migrated)
     localStorage.setItem(ASSIGNMENT_KEY, JSON.stringify(migrated))
@@ -2766,14 +2771,45 @@ function ManagerApp({
       daysOff: structuredClone(daysOff),
       staff: structuredClone(staff),
     }
-    const next = [archive, ...staffingArchives.filter((item) => item.weekKey !== weekKey)].slice(0, 104)
+    const next = [archive, ...staffingArchives].slice(0, 260)
     setStaffingArchives(next)
     localStorage.setItem(STAFFING_ARCHIVES_KEY, JSON.stringify(next))
-    setImportMessage(`Staffing week ${weekKey} was saved permanently in Staffing Logs.`)
+    setImportMessage(`Staffing week ${weekKey} was archived permanently in Staffing Logs.`)
   }
 
   function xmlEscape(value: unknown) {
     return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;')
+  }
+
+  function sessionTime(session: string) {
+    const times: Record<string, string> = {
+      '1': '09:10–10:30',
+      '2': '10:45–12:15',
+      '3': '14:00–15:30',
+      '4': '15:45–17:15',
+      '5': '19:00–20:30',
+    }
+    return times[String(session)] ?? ''
+  }
+
+  function staffingArchiveMonth(archive: StaffingArchive) {
+    const source = `${archive.weekKey} ${archive.title} ${archive.sourceFileName}`
+    const months = ['january','february','march','april','may','june','july','august','september','october','november','december']
+    const match = source.match(/(?:^|\s)(\d{1,2})(?:st|nd|rd|th)?(?:\s*[-–]\s*\d{1,2}(?:st|nd|rd|th)?)?\s+([A-Za-z]+)(?:\s+(20\d{2}))?/i)
+    if (match) {
+      const monthIndex = months.indexOf(match[2].toLowerCase())
+      if (monthIndex >= 0) {
+        const year = Number(match[3] ?? new Date(archive.programme.importedAt || archive.archivedAt).getFullYear())
+        return `${year}-${String(monthIndex + 1).padStart(2, '0')}`
+      }
+    }
+    const fallback = new Date(archive.programme.importedAt || archive.archivedAt)
+    return `${fallback.getFullYear()}-${String(fallback.getMonth() + 1).padStart(2, '0')}`
+  }
+
+  function staffingMonthLabel(key: string) {
+    const [year, month] = key.split('-').map(Number)
+    return new Date(year, month - 1, 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })
   }
 
   function staffingColour(activityCode: string) {
@@ -3059,7 +3095,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.58</span></div>
+          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.60</span></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -3271,7 +3307,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to accommodation, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v0.58</span>
+                  <span className="release-pill">v0.60</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
@@ -3384,22 +3420,21 @@ function ManagerApp({
               <EmptyProgramme onUpload={() => fileInputRef.current?.click()} />
             ) : (
               <>
-                <div className="staffing-view-switch" role="group" aria-label="Staffing view">
-                  <button
-                    className={staffingView === 'activity' ? 'active' : ''}
-                    onClick={() => setStaffingView('activity')}
-                  >
-                    Activity View
-                  </button>
-                  <button
-                    className={staffingView === 'calendar' ? 'active' : ''}
-                    onClick={() => setStaffingView('calendar')}
-                  >
-                    Calendar View
-                  </button>
+                <div className="staffing-view-toolbar">
+                  <div className="staffing-view-switch" role="group" aria-label="Staffing view">
+                    <button className={staffingView === 'activity' ? 'active' : ''} onClick={() => setStaffingView('activity')}>Activity View</button>
+                    <button className={staffingView === 'calendar' ? 'active' : ''} onClick={() => setStaffingView('calendar')}>Calendar View</button>
+                  </div>
+                  <div className="staffing-zoom-controls" role="group" aria-label="Staffing zoom">
+                    <button aria-label="Zoom out" disabled={staffingZoom <= 70} onClick={() => setStaffingZoom((current) => { const next = Math.max(70, current - 10); localStorage.setItem('acm-staffing-zoom', String(next)); return next })}>−</button>
+                    <strong>{staffingZoom}%</strong>
+                    <button aria-label="Zoom in" disabled={staffingZoom >= 150} onClick={() => setStaffingZoom((current) => { const next = Math.min(150, current + 10); localStorage.setItem('acm-staffing-zoom', String(next)); return next })}>+</button>
+                    <button className="zoom-reset" onClick={() => { setStaffingZoom(100); localStorage.setItem('acm-staffing-zoom', '100') }}>Reset</button>
+                  </div>
                 </div>
                 <div className="staffing-controls">
-                  <div className="day-tabs" role="tablist" aria-label="Staffing day">
+                  <div className="staffing-day-row">
+                  <div className="day-tabs staffing-day-tabs" role="tablist" aria-label="Staffing day">
                     {programmeDays.map((day) => (
                       <button
                         key={day}
@@ -3413,8 +3448,9 @@ function ManagerApp({
                       </button>
                     ))}
                   </div>
+                  </div>
 
-                  <div className="staffing-actions">
+                  <div className="staffing-actions staffing-management-row">
                     <button
                       className="secondary-action"
                       onClick={() =>
@@ -3670,6 +3706,7 @@ function ManagerApp({
                   </section>
                 )}
 
+                <div className="staffing-zoom-stage" style={{ zoom: staffingZoom / 100 }}>
                 {staffingView === 'activity' ? (
                   <div className="staffing-grid">
                     {filteredStaffingCells.map(({ row, cell }) => {
@@ -3685,7 +3722,7 @@ function ManagerApp({
                         >
                           <div className="staffing-card-top">
                             <span>
-                              {row.day} · Session {row.session}
+                              {row.day} · Session {row.session} · {sessionTime(row.session)}
                             </span>
                             <span>
                               {qualificationMissing ? 'Qualification missing' : assignedStaff ? 'Ready' : 'Needs instructor'}
@@ -3736,7 +3773,7 @@ function ManagerApp({
                       ))}
                       {staffingCalendarSessions.map((session) => (
                         <Fragment key={`calendar-session-${session}`}>
-                          <div className="staffing-calendar-session">S{session}</div>
+                          <div className="staffing-calendar-session"><strong>Session {session}</strong><span>{sessionTime(session)}</span></div>
                           {programmeDays.map((day) => {
                             const items = staffingCalendarCells.filter(
                               ({ row }) => row.day === day && row.session === session,
@@ -3772,6 +3809,7 @@ function ManagerApp({
                     </div>
                   </section>
                 )}
+                </div>
               </>
             )}
           </Panel>
@@ -3986,14 +4024,24 @@ function ManagerApp({
 
 
         {page === 'staffingLogs' && canViewLogs && (
-          <Panel title="Staffing Logs" onBack={() => setPage('admin')}>
-            <section className="staffing-log-intro"><div><p className="eyebrow">Permanent weekly records</p><h3>Archived staffing weeks</h3><p>These snapshots do not change when a later programme is uploaded or edited.</p></div>{programme && <button className="primary" onClick={() => archiveSnapshot(programme, true)}><History size={17}/>Archive current week</button>}</section>
-            <div className="history-list">{staffingArchives.length === 0 ? <p>No staffing weeks have been archived yet.</p> : staffingArchives.map((archive) => {
-              const days = Array.from(new Set(archive.programme.rows.map((row) => row.day)))
-              return <article className="history-card staffing-log-card" key={archive.id}><div><h3>{archive.weekKey}</h3><p>{archive.title} · {archive.sourceFileName}</p><small>Archived {new Date(archive.archivedAt).toLocaleString('en-GB')} by {archive.archivedBy}</small></div><div className="staffing-log-actions"><button className="primary" onClick={() => exportArchivedStaffing(archive)}><FileSpreadsheet size={16}/>Download full week</button>{days.map((day) => <button className="secondary-action" key={day} onClick={() => exportArchivedStaffing(archive, day)}>{day}</button>)}</div></article>
-            })}</div>
+          <Panel title={selectedStaffingLogMonth ? staffingMonthLabel(selectedStaffingLogMonth) : 'Staffing Logs'} onBack={() => selectedStaffingLogMonth ? setSelectedStaffingLogMonth('') : setPage('admin')}>
+            <section className="staffing-log-intro"><div><p className="eyebrow">Permanent weekly records</p><h3>{selectedStaffingLogMonth ? `Weeks in ${staffingMonthLabel(selectedStaffingLogMonth)}` : 'Archived staffing months'}</h3><p>Archived weeks are locked snapshots and do not change when a later programme is edited or uploaded.</p></div>{programme && !selectedStaffingLogMonth && <button className="primary" onClick={() => archiveSnapshot(programme, true)}><History size={17}/>Archive current week</button>}</section>
+            {!selectedStaffingLogMonth ? (
+              <div className="staffing-month-grid">
+                {staffingArchives.length === 0 ? <p>No staffing weeks have been archived yet.</p> : Array.from(new Set(staffingArchives.map(staffingArchiveMonth))).sort().reverse().map((monthKey) => {
+                  const count = staffingArchives.filter((archive) => staffingArchiveMonth(archive) === monthKey).length
+                  return <button className="staffing-month-card" key={monthKey} onClick={() => setSelectedStaffingLogMonth(monthKey)}><History size={25}/><span><strong>{staffingMonthLabel(monthKey)}</strong><small>{count} archived week{count === 1 ? '' : 's'}</small></span><span className="staffing-month-open">Open</span></button>
+                })}
+              </div>
+            ) : (
+              <div className="history-list">{staffingArchives.filter((archive) => staffingArchiveMonth(archive) === selectedStaffingLogMonth).sort((a,b) => b.archivedAt.localeCompare(a.archivedAt)).map((archive) => {
+                const days = Array.from(new Set(archive.programme.rows.map((row) => row.day)))
+                return <article className="history-card staffing-log-card" key={archive.id}><div><h3>{archive.weekKey}</h3><p>{archive.title} · {archive.sourceFileName}</p><small>Archived {new Date(archive.archivedAt).toLocaleString('en-GB')} by {archive.archivedBy}</small></div><div className="staffing-log-actions"><button className="primary" onClick={() => exportArchivedStaffing(archive)}><FileSpreadsheet size={16}/>Download full week</button>{days.map((day) => <button className="secondary-action" key={day} onClick={() => exportArchivedStaffing(archive, day)}>{day}</button>)}</div></article>
+              })}</div>
+            )}
           </Panel>
         )}
+
 
         {page === 'formerStaff' && canManageStaff && (<Panel title="Former Staff" onBack={() => setPage('admin')}><div className="history-list">{formerStaff.length === 0 ? <p>No former staff records yet.</p> : formerStaff.map((record)=><article className="history-card" key={record.member.id}><div><h3>{record.member.name}</h3><p>{roleLabel(resolvedRole(record.member))} · {record.member.staffCode ?? 'Legacy record'}</p><p>Started: {record.member.startDate ?? 'Not recorded'} · Left: {record.endDate}</p>{record.notes && <p>{record.notes}</p>}</div><button className="primary" onClick={()=>reinstateFormer(record)}>Reinstate Staff</button></article>)}</div></Panel>)}
 

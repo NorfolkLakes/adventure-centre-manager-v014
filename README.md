@@ -330,7 +330,7 @@ Adds permanent and loan staff lifecycle management, Former Staff and Loan Staff 
 - Staffing Logs organised Month → Week with locked historical downloads.
 
 
-## v0.59
+## v0.60
 
 - Monday to Sunday day menu has its own responsive full-width grid.
 - Staffing controls and download buttons are separated into clear rows.
