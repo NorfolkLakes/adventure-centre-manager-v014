@@ -1,4 +1,4 @@
-# Adventure Centre Manager v0.47
+# Adventure Centre Manager v0.48
 
 This version adds the first cloud login and staff rota system.
 
@@ -279,3 +279,10 @@ After deploying v0.20, run `supabase/setup.sql` once in the Supabase SQL Editor 
 - Removed My Sessions from the Home page.
 - Added Activity View and Calendar View to Staffing.
 - Calendar View shows days across the top, sessions down the side, and uses the same live assignments as Activity View.
+
+
+## v0.48 Days Off
+- Month and weekly Days Off views.
+- OFF, HOL, SICK, AM OFF and PM OFF status rules.
+- Print-ready weekly staffing sheet.
+- Date range entry and instructor read-only days off.

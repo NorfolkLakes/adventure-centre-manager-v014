@@ -65,6 +65,18 @@ type MySessionDuty = {
   party_leader_name: string | null
 }
 
+
+type DayOffStatus = 'off' | 'hol' | 'sick' | 'am_off' | 'pm_off'
+type StaffDayOff = {
+  id: string
+  staff_id: string
+  staff_email: string
+  staff_name: string
+  day: string
+  status: DayOffStatus
+  note: string | null
+}
+
 function readJson<T>(key: string, fallback: T): T {
   try {
     const value = localStorage.getItem(key)
@@ -517,6 +529,15 @@ function ManagerApp({
   const [holidayNote, setHolidayNote] = useState('')
   const [holidaySummaryStaffId, setHolidaySummaryStaffId] = useState('')
   const [holidaySickDate, setHolidaySickDate] = useState('')
+  const [daysOff, setDaysOff] = useState<StaffDayOff[]>([])
+  const [daysOffView, setDaysOffView] = useState<'month' | 'week'>('month')
+  const [daysOffWeek, setDaysOffWeek] = useState(() => {
+    const now = new Date(); const monday = new Date(now); monday.setDate(now.getDate() - ((now.getDay() + 6) % 7)); return monday
+  })
+  const [daysOffStaffId, setDaysOffStaffId] = useState('')
+  const [daysOffStatus, setDaysOffStatus] = useState<DayOffStatus>('off')
+  const [daysOffStart, setDaysOffStart] = useState('')
+  const [daysOffEnd, setDaysOffEnd] = useState('')
   const [publishedStaffDuties, setPublishedStaffDuties] = useState<{staff_email:string;staff_name:string;day:string;session:string;activity_name:string;duty_type:string}[]>([])
   const [lastSharedUpdate, setLastSharedUpdate] = useState<{updated_by_name:string;updated_by_email:string;updated_at:string;section:string} | null>(null)
   const [waterLeadLogs, setWaterLeadLogs] = useState<{id:string;created_at:string;programme_day:string;session:string;discipline:string;lead_staff_name:string;lead_staff_id:string;lead_group:number|null;overseen_groups:number[];confirmed_by_name:string;confirmed_by_email:string;permission_from:string}[]>([])
@@ -661,6 +682,48 @@ function ManagerApp({
     else setPublishedStaffDuties((data ?? []) as typeof publishedStaffDuties)
   }
 
+  async function loadDaysOff() {
+    const { data, error } = await supabase
+      .from('staff_days_off')
+      .select('id,staff_id,staff_email,staff_name,day,status,note')
+      .order('day')
+    if (error) setImportMessage(`Days Off could not be loaded: ${error.message}`)
+    else setDaysOff((data ?? []) as StaffDayOff[])
+  }
+
+  async function saveDaysOffRange() {
+    if (!canManageHolidays) { setImportMessage('Only the Head of Centre and Activities Manager can add days off.'); return }
+    const member = staff.find((item) => item.id === daysOffStaffId)
+    if (!member || !daysOffStart || !daysOffEnd || daysOffEnd < daysOffStart) { setImportMessage('Choose a staff member and a valid date range.'); return }
+    const rows = uniqueDatesInRange(daysOffStart, daysOffEnd).map((day) => ({
+      staff_id: member.id, staff_email: member.email ?? '', staff_name: member.name, day, status: daysOffStatus, note: null,
+    }))
+    const { error } = await supabase.from('staff_days_off').upsert(rows, { onConflict: 'staff_id,day' })
+    if (error) setImportMessage(`Days Off could not be saved: ${error.message}`)
+    else { setImportMessage(`${member.name}'s days off were updated.`); loadDaysOff() }
+  }
+
+  async function setSingleDayOff(member: StaffMember, day: string, status: DayOffStatus | 'working') {
+    if (!canManageHolidays && !(accountRole === 'teamLeader' && status === 'sick')) return
+    if (status === 'working') await supabase.from('staff_days_off').delete().eq('staff_id', member.id).eq('day', day)
+    else await supabase.from('staff_days_off').upsert({ staff_id: member.id, staff_email: member.email ?? '', staff_name: member.name, day, status, note: null }, { onConflict: 'staff_id,day' })
+    loadDaysOff()
+  }
+
+  function daysOffWeekDates() {
+    return Array.from({ length: 7 }, (_, index) => { const d = new Date(daysOffWeek); d.setDate(daysOffWeek.getDate()+index); return d })
+  }
+
+  function dayOffLabel(status: DayOffStatus) {
+    return status === 'am_off' ? 'AM OFF' : status === 'pm_off' ? 'PM OFF' : status.toUpperCase()
+  }
+
+  function printDaysOff(view: 'month' | 'week') {
+    document.body.setAttribute('data-print-days-off', view)
+    window.print()
+    setTimeout(() => document.body.removeAttribute('data-print-days-off'), 250)
+  }
+
   async function loadHolidays() {
     const { data, error } = await supabase
       .from('staff_holidays')
@@ -682,10 +745,12 @@ function ManagerApp({
 
   useEffect(() => {
     loadHolidays()
+    loadDaysOff()
     loadPublishedStaffDuties()
     loadWaterLeadLogs()
     const channel = supabase.channel('holiday-calendar-updates')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'staff_holidays' }, loadHolidays)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'staff_days_off' }, loadDaysOff)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'rota_assignments' }, loadPublishedStaffDuties)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'water_lead_logs' }, loadWaterLeadLogs)
       .subscribe()
@@ -884,21 +949,26 @@ function ManagerApp({
     return `${year}-${month}-${day}`
   }
 
-  function unavailableStaffIdsForDay(day: string): Set<string> {
+  function unavailableStaffIdsForSession(day: string, session?: string): Set<string> {
     const ids = new Set<string>(sicknessByDay[day] ?? [])
     holidays
       .filter((holiday) => holiday.start_date <= day && holiday.end_date >= day)
       .forEach((holiday) => {
         const email = holiday.staff_email.trim().toLowerCase()
         const name = normaliseIdentity(holiday.staff_name)
-        const member = staff.find((item) =>
-          (email && item.email?.trim().toLowerCase() === email) ||
-          normaliseIdentity(item.name) === name,
-        )
+        const member = staff.find((item) => (email && item.email?.trim().toLowerCase() === email) || normaliseIdentity(item.name) === name)
         if (member) ids.add(member.id)
       })
+    daysOff.filter((entry) => entry.day === day).forEach((entry) => {
+      const wholeDay = ['off','hol','sick'].includes(entry.status)
+      const amBlocked = entry.status === 'am_off' && ['1','2'].includes(session ?? '')
+      const pmBlocked = entry.status === 'pm_off' && session === '5'
+      if (wholeDay || amBlocked || pmBlocked) ids.add(entry.staff_id)
+    })
     return ids
   }
+
+  function unavailableStaffIdsForDay(day: string): Set<string> { return unavailableStaffIdsForSession(day) }
 
   function sessionDemandForDay(day: string) {
     if (!programme) return []
@@ -1316,14 +1386,15 @@ function ManagerApp({
   function qualificationShortagesForDay(day: string): QualificationShortage[] {
     if (!programme || !day) return []
     const workingIds = new Set(workingByDay[day] ?? staff.map((member) => member.id))
-    const unavailable = unavailableStaffIdsForDay(day)
+    const unavailable = new Set<string>()
     const available = staff.filter((member) => workingIds.has(member.id) && !unavailable.has(member.id))
     const shortages: QualificationShortage[] = []
 
     const sessions = Array.from(new Set(programme.rows.filter((row) => row.day === day).map((row) => row.session)))
     sessions.forEach((session) => {
       const blockedByArrivals = arrivalStaffForDaySession(day, session)
-      const sessionStaff = available.filter((member) => !blockedByArrivals.has(member.id))
+      const sessionUnavailable = unavailableStaffIdsForSession(day, session)
+      const sessionStaff = available.filter((member) => !sessionUnavailable.has(member.id) && !blockedByArrivals.has(member.id))
       const slots = programme.rows
         .filter((row) => row.day === day && row.session === session)
         .flatMap((row) => activityCellsForRow(row).map((cell, index) => ({
@@ -1415,7 +1486,7 @@ function ManagerApp({
     const sortedRows = [...programme.rows].sort((a,b) => a.day.localeCompare(b.day) || Number(a.session)-Number(b.session))
     for (const row of sortedRows) {
       const workingIds = new Set(workingByDay[row.day] ?? staff.map((m) => m.id))
-      const sickIds = unavailableStaffIdsForDay(row.day)
+      const sickIds = unavailableStaffIdsForSession(row.day, row.session)
       for (const cell of activityCellsForRow(row)) {
         const key = cellKey(row.id, cell.group)
         if (next[key]) { workload.set(next[key], (workload.get(next[key]) ?? 0) + 1); continue }
@@ -1566,7 +1637,7 @@ function ManagerApp({
   function autoFillStaffing(day: string) {
     if (!programme || !day) return
 
-    const sickIds = unavailableStaffIdsForDay(day)
+    const sickIds = unavailableStaffIdsForSession(day, '3')
     const workingIds = new Set(
       workingByDay[day] ?? staff.map((member) => member.id),
     )
@@ -1924,7 +1995,7 @@ function ManagerApp({
 
     const populatedGroups = row.cells
     const workingIds = new Set(workingByDay[row.day] ?? staff.map((member) => member.id))
-    const sickIds = unavailableStaffIdsForDay(row.day)
+    const sickIds = unavailableStaffIdsForSession(row.day, '3')
     const unavailableIds = new Set<string>([current.leaderId, ...arrivalStaffUsedByOtherSchools(row), ...activityStaffForDaySession(row.day, '3')])
 
     const candidates = shuffled(
@@ -2027,7 +2098,7 @@ function ManagerApp({
             staff.map((item) => item.id)
           ).includes(member.id) &&
           qualificationIsValid(member, selectedStaffingCode) &&
-          !unavailableStaffIdsForDay(selectedStaffingCell.row.day).has(member.id) &&
+          !unavailableStaffIdsForSession(selectedStaffingCell.row.day, selectedStaffingCell.row.session).has(member.id) &&
           !isDoubleBooked(
             member.id,
             selectedStaffingCell.row,
@@ -2440,7 +2511,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.47</span></div>
+          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.48</span></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -2652,7 +2723,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to accommodation, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v0.47</span>
+                  <span className="release-pill">v0.48</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
@@ -3214,7 +3285,7 @@ function ManagerApp({
               </button>}
               <button className="admin-choice-card" onClick={() => setPage('holidays')}>
                 <CalendarRange size={25} />
-                <div><h3>Holidays</h3><p>View and manage the staff holiday calendar.</p></div>
+                <div><h3>Days Off</h3><p>Month calendar, weekly staffing grid and printable days-off sheets.</p></div>
                 <ChevronRight size={20} />
               </button>
               <button className="admin-choice-card" onClick={() => setPage('signoffs')}>
@@ -3375,106 +3446,45 @@ function ManagerApp({
         )}
 
         {page === 'holidays' && (
-          <Panel title="Staff holidays" onBack={() => setPage('admin')}>
-            <div className="holiday-summary">
-              <div><p className="eyebrow">Holiday calendar</p><h3>{holidayMonth.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}</h3></div>
-              <div className="holiday-month-actions">
-                <button className="secondary-action" onClick={() => setHolidayMonth(new Date(holidayMonth.getFullYear(), holidayMonth.getMonth()-1, 1))}>Previous</button>
-                <button className="secondary-action" onClick={() => setHolidayMonth(new Date())}>Today</button>
-                <button className="secondary-action" onClick={() => setHolidayMonth(new Date(holidayMonth.getFullYear(), holidayMonth.getMonth()+1, 1))}>Next</button>
+          <Panel title="Days Off" onBack={() => setPage('admin')}>
+            <div className="days-off-toolbar no-print">
+              <div className="staffing-view-toggle">
+                <button className={daysOffView === 'month' ? 'active' : ''} onClick={() => setDaysOffView('month')}>Month View</button>
+                <button className={daysOffView === 'week' ? 'active' : ''} onClick={() => setDaysOffView('week')}>Days Off View</button>
               </div>
-            </div>
-            {canManageHolidays ? (
-              <section className="holiday-editor">
-                <select value={holidayStaffId} onChange={(event) => setHolidayStaffId(event.target.value)}>
-                  <option value="">Select staff member</option>
-                  {staff.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}
-                </select>
-                <input type="date" value={holidayStart} onChange={(event) => setHolidayStart(event.target.value)} />
-                <input type="date" value={holidayEnd} onChange={(event) => setHolidayEnd(event.target.value)} />
-                <input value={holidayNote} onChange={(event) => setHolidayNote(event.target.value)} placeholder="Note (optional)" />
-                <button className="primary" onClick={addHoliday}>Add holiday</button>
-              </section>
-            ) : (
-              <div className="warning-banner"><strong>View only:</strong> Team Leaders can see staff holidays, but only the Head of Centre and Activities Manager can make changes.</div>
-            )}
-            <div className="holiday-weekdays">{['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map((day) => <strong key={day}>{day}</strong>)}</div>
-            <div className="holiday-calendar">
-              {holidayCalendarDays().map((date) => {
-                const key = dateKey(date)
-                const entries = holidays.filter((holiday) => holiday.start_date <= key && holiday.end_date >= key)
-                const sickMembers = staff.filter((member) => (sicknessByDay[key] ?? []).includes(member.id))
-                const today = key === dateKey(new Date())
-                return <article key={key} className={`holiday-day ${date.getMonth() !== holidayMonth.getMonth() ? 'outside' : ''} ${today ? 'today' : ''}`}>
-                  <span className="holiday-date">{date.getDate()}</span>
-                  {entries.map((holiday) => <div className={`holiday-entry ${canManageHolidays ? '' : 'readonly'}`} key={holiday.id} title={holiday.note ?? ''}>
-                    <span>{holiday.staff_name}</span>
-                    {canManageHolidays && <button onClick={() => deleteHoliday(holiday.id)} aria-label={`Delete ${holiday.staff_name} holiday`}>×</button>}
-                  </div>)}
-                  {sickMembers.map((member) => <div className="holiday-entry sick-entry readonly" key={`sick-${key}-${member.id}`} title="Sick"><span>{member.name} · Sick</span></div>)}
-                </article>
-              })}
+              <button className="secondary-action" onClick={() => printDaysOff(daysOffView)}><Printer size={17}/>Print {daysOffView === 'month' ? 'Month' : 'Week'}</button>
             </div>
 
-            <section className="holiday-sickness-editor">
-              <div>
-                <p className="eyebrow">Sickness</p>
-                <h3>Record a sick day</h3>
-                <p>Head of Centre, Activities Manager and Team Leaders can record sickness.</p>
-              </div>
-              <select value={holidaySummaryStaffId} onChange={(event) => setHolidaySummaryStaffId(event.target.value)}>
-                <option value="">Select staff member</option>
-                {staff.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}
+            {canManageHolidays && <section className="days-off-range-editor no-print">
+              <select value={daysOffStaffId} onChange={(e) => setDaysOffStaffId(e.target.value)}><option value="">Select staff member</option>{staff.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select>
+              <select value={daysOffStatus} onChange={(e)=>setDaysOffStatus(e.target.value as DayOffStatus)}>
+                <option value="off">OFF</option><option value="hol">HOL</option><option value="sick">SICK</option><option value="am_off">AM OFF</option><option value="pm_off">PM OFF</option>
               </select>
-              <input type="date" value={holidaySickDate} onChange={(event) => setHolidaySickDate(event.target.value)} />
-              <button className="primary" onClick={setHolidayPageSickness}>
-                {holidaySummaryMember && holidaySickDate && (sicknessByDay[holidaySickDate] ?? []).includes(holidaySummaryMember.id) ? 'Remove sick day' : 'Mark sick'}
-              </button>
-            </section>
+              <input type="date" value={daysOffStart} onChange={(e)=>setDaysOffStart(e.target.value)}/>
+              <input type="date" value={daysOffEnd} onChange={(e)=>setDaysOffEnd(e.target.value)}/>
+              <button className="primary" onClick={saveDaysOffRange}>Set dates</button>
+            </section>}
 
-            <section className="staff-work-summary">
-              <div className="staff-work-summary-heading">
-                <div><p className="eyebrow">Staff overview</p><h3>Work and absence summary</h3></div>
-                <select value={holidaySummaryStaffId} onChange={(event) => setHolidaySummaryStaffId(event.target.value)}>
-                  <option value="">Select staff member</option>
-                  {staff.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}
-                </select>
+            {daysOffView === 'month' ? <section className="print-month-sheet">
+              <div className="holiday-summary">
+                <div><p className="eyebrow">Monthly Days Off</p><h3>{holidayMonth.toLocaleDateString('en-GB',{month:'long',year:'numeric'})}</h3></div>
+                <div className="holiday-month-actions no-print"><button onClick={()=>setHolidayMonth(new Date(holidayMonth.getFullYear(),holidayMonth.getMonth()-1,1))}>Previous</button><button onClick={()=>setHolidayMonth(new Date())}>Today</button><button onClick={()=>setHolidayMonth(new Date(holidayMonth.getFullYear(),holidayMonth.getMonth()+1,1))}>Next</button></div>
               </div>
-              {!holidayStaffSummary ? (
-                <p className="empty-summary">Select a staff member to view their totals.</p>
-              ) : (
-                <div className="staff-stat-grid">
-                  <article><strong>{holidayStaffSummary.daysWorked}</strong><span>Days worked</span></article>
-                  <article><strong>{holidayStaffSummary.sessionsWorked}</strong><span>Total sessions</span></article>
-                  <article><strong>{holidayStaffSummary.holidayDays}</strong><span>Holiday days</span></article>
-                  <article><strong>{holidayStaffSummary.sickDays}</strong><span>Sick days</span></article>
-                  <article className="wide"><strong>{holidayStaffSummary.mostRun ? `${holidayStaffSummary.mostRun[0]} — ${holidayStaffSummary.mostRun[1]}` : 'No activity data yet'}</strong><span>Most-run activity</span></article>
-                  <article className="wide"><strong>{holidayStaffSummary.leastRun ? `${holidayStaffSummary.leastRun[0]} — ${holidayStaffSummary.leastRun[1]}` : 'No activity data yet'}</strong><span>Least-run activity</span></article>
-                </div>
-              )}
-            </section>
-          </Panel>
-        )}
+              <div className="holiday-weekdays">{['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d=><strong key={d}>{d}</strong>)}</div>
+              <div className="holiday-calendar">{holidayCalendarDays().map(date=>{const key=dateKey(date); const entries=daysOff.filter(x=>x.day===key); const legacyHol=holidays.filter(h=>h.start_date<=key&&h.end_date>=key).map(h=>({id:h.id,staff_name:h.staff_name,status:'hol' as DayOffStatus})); return <article key={key} className={`holiday-day ${date.getMonth()!==holidayMonth.getMonth()?'outside':''}`}><span className="holiday-date">{date.getDate()}</span>{[...legacyHol,...entries].map((x:any)=><div key={`${x.id}-${key}`} className={`day-off-entry status-${x.status}`}><span>{x.staff_name}</span><b>{dayOffLabel(x.status)}</b></div>)}</article>})}</div>
+            </section> : <section className="weekly-days-off print-week-sheet">
+              <div className="weekly-sheet-heading"><div><h2>WEEKLY STAFFING</h2><p>Days Off</p></div><div className="week-nav no-print"><button onClick={()=>{const d=new Date(daysOffWeek);d.setDate(d.getDate()-7);setDaysOffWeek(d)}}>Previous</button><button onClick={()=>{const n=new Date();n.setDate(n.getDate()-((n.getDay()+6)%7));setDaysOffWeek(n)}}>This week</button><button onClick={()=>{const d=new Date(daysOffWeek);d.setDate(d.getDate()+7);setDaysOffWeek(d)}}>Next</button></div></div>
+              <div className="weekly-grid" style={{gridTemplateColumns:`180px repeat(7,minmax(105px,1fr))`}}>
+                <div className="weekly-head staff-head">Staff</div>{daysOffWeekDates().map(d=><div className="weekly-head" key={dateKey(d)}><strong>{d.toLocaleDateString('en-GB',{weekday:'long'})}</strong><span>{d.toLocaleDateString('en-GB',{day:'numeric',month:'short'})}</span></div>)}
+                {staff.map(member=><Fragment key={member.id}><div className="staff-name-cell">{member.name}</div>{daysOffWeekDates().map(d=>{const key=dateKey(d); const existing=daysOff.find(x=>x.staff_id===member.id&&x.day===key); return <div className={`day-off-cell ${existing?`status-${existing.status}`:''}`} key={`${member.id}-${key}`}><select className="no-print" value={existing?.status??'working'} disabled={!canManageHolidays && accountRole!=='teamLeader'} onChange={e=>setSingleDayOff(member,key,e.target.value as DayOffStatus|'working')}><option value="working">Working</option>{canManageHolidays&&<option value="off">OFF</option>}{canManageHolidays&&<option value="hol">HOL</option>}<option value="sick">SICK</option>{canManageHolidays&&<option value="am_off">AM OFF</option>}{canManageHolidays&&<option value="pm_off">PM OFF</option>}</select><strong className="print-only">{existing?dayOffLabel(existing.status):''}</strong></div>})}</Fragment>)}
+              </div>
+              <div className="days-off-legend"><span className="status-off">OFF</span><span className="status-hol">HOL</span><span className="status-sick">SICK</span><span className="status-am_off">AM OFF</span><span className="status-pm_off">PM OFF</span></div>
+            </section>}
 
-        {page === 'logs' && canViewLogs && (
-          <Panel title="Operational logs" onBack={() => setPage('admin')}>
-            <div className="logs-toolbar">
-              <div className="search-box"><Search size={18}/><input value={logSearch} onChange={(event) => setLogSearch(event.target.value)} placeholder="Search lead or confirmer" /></div>
-              <select value={logDiscipline} onChange={(event) => setLogDiscipline(event.target.value)}><option value="all">All water activities</option><option value="canoe">Canoe</option><option value="kayak">Kayak</option></select>
-            </div>
-            <div className="logs-list">
-              {waterLeadLogs.filter((log) => (logDiscipline === 'all' || log.discipline === logDiscipline) && `${log.lead_staff_name} ${log.confirmed_by_name} ${log.programme_day}`.toLowerCase().includes(logSearch.trim().toLowerCase())).map((log) => (
-                <article className="log-card" key={log.id}>
-                  <div className="log-card-top"><strong>{log.discipline === 'canoe' ? 'Canoe Lead' : 'Kayak Lead'} exception</strong><time>{new Date(log.created_at).toLocaleString('en-GB')}</time></div>
-                  <h3>{log.lead_staff_name}</h3>
-                  <p>{log.programme_day} · Session {log.session}</p>
-                  <p>Running G{log.lead_group ?? '—'} · overseeing {log.overseen_groups?.length ? log.overseen_groups.map((group) => `G${group}`).join(', ') : 'second group'}</p>
-                  <p>Permission from <strong>{log.permission_from}</strong></p>
-                  <small>Confirmed by {log.confirmed_by_name} ({log.confirmed_by_email})</small>
-                </article>
-              ))}
-              {!waterLeadLogs.length && <p className="empty-summary">No water-lead exception logs yet.</p>}
-            </div>
+            <section className="staff-work-summary no-print">
+              <div className="staff-work-summary-heading"><div><p className="eyebrow">Staff overview</p><h3>Work and absence summary</h3></div><select value={holidaySummaryStaffId} onChange={(e)=>setHolidaySummaryStaffId(e.target.value)}><option value="">Select staff member</option>{staff.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select></div>
+              {!holidayStaffSummary?<p className="empty-summary">Select a staff member to view their totals.</p>:<div className="staff-stat-grid"><article><strong>{holidayStaffSummary.daysWorked}</strong><span>Days worked</span></article><article><strong>{holidayStaffSummary.sessionsWorked}</strong><span>Total sessions</span></article><article><strong>{holidayStaffSummary.holidayDays}</strong><span>Holiday days</span></article><article><strong>{holidayStaffSummary.sickDays}</strong><span>Sick days</span></article><article className="wide"><strong>{holidayStaffSummary.mostRun?`${holidayStaffSummary.mostRun[0]} — ${holidayStaffSummary.mostRun[1]}`:'No activity data yet'}</strong><span>Most-run activity</span></article><article className="wide"><strong>{holidayStaffSummary.leastRun?`${holidayStaffSummary.leastRun[0]} — ${holidayStaffSummary.leastRun[1]}`:'No activity data yet'}</strong><span>Least-run activity</span></article></div>}
+            </section>
           </Panel>
         )}
 

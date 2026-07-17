@@ -248,3 +248,28 @@ with check (public.is_manager());
 
 grant select, insert on public.water_lead_logs to authenticated;
 do $$ begin alter publication supabase_realtime add table public.water_lead_logs; exception when duplicate_object then null; end $$;
+
+-- v0.48 Days Off calendar
+create table if not exists public.staff_days_off (
+  id uuid primary key default gen_random_uuid(),
+  staff_id text not null,
+  staff_email text not null default '',
+  staff_name text not null,
+  day date not null,
+  status text not null check (status in ('off','hol','sick','am_off','pm_off')),
+  note text,
+  created_at timestamptz not null default now(),
+  created_by uuid references auth.users(id),
+  unique(staff_id, day)
+);
+alter table public.staff_days_off enable row level security;
+drop policy if exists "Days off viewers read" on public.staff_days_off;
+create policy "Days off viewers read" on public.staff_days_off for select to authenticated using (public.can_view_holidays() or lower(staff_email)=lower(coalesce(auth.jwt()->>'email','')));
+drop policy if exists "Days off managers write" on public.staff_days_off;
+create policy "Days off managers write" on public.staff_days_off for all to authenticated using (public.can_manage_holidays()) with check (public.can_manage_holidays());
+drop policy if exists "Team leaders record sickness" on public.staff_days_off;
+create policy "Team leaders record sickness" on public.staff_days_off for insert to authenticated with check (exists(select 1 from public.profiles where id=auth.uid() and role='teamLeader') and status='sick');
+drop policy if exists "Team leaders remove sickness" on public.staff_days_off;
+create policy "Team leaders remove sickness" on public.staff_days_off for delete to authenticated using (exists(select 1 from public.profiles where id=auth.uid() and role='teamLeader') and status='sick');
+grant select,insert,update,delete on public.staff_days_off to authenticated;
+do $$ begin alter publication supabase_realtime add table public.staff_days_off; exception when duplicate_object then null; end $$;
