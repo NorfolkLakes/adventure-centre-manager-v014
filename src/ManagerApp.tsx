@@ -1,4 +1,4 @@
-import { ChangeEvent, Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { ChangeEvent, Fragment, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Building2,
   CalendarDays,
@@ -539,6 +539,9 @@ function ManagerApp({
   const [daysOffStatus, setDaysOffStatus] = useState<DayOffStatus>('off')
   const [daysOffStart, setDaysOffStart] = useState('')
   const [daysOffEnd, setDaysOffEnd] = useState('')
+  const [selectedDaysOffCell, setSelectedDaysOffCell] = useState<string>('')
+  const [showDaysOffHelp, setShowDaysOffHelp] = useState(false)
+  const weeklyCellRefs = useRef(new Map<string, HTMLDivElement>())
   const [publishedStaffDuties, setPublishedStaffDuties] = useState<{staff_email:string;staff_name:string;day:string;session:string;activity_name:string;duty_type:string}[]>([])
   const [lastSharedUpdate, setLastSharedUpdate] = useState<{updated_by_name:string;updated_by_email:string;updated_at:string;section:string} | null>(null)
   const [waterLeadLogs, setWaterLeadLogs] = useState<{id:string;created_at:string;programme_day:string;session:string;discipline:string;lead_staff_name:string;lead_staff_id:string;lead_group:number|null;overseen_groups:number[];confirmed_by_name:string;confirmed_by_email:string;permission_from:string}[]>([])
@@ -704,11 +707,45 @@ function ManagerApp({
     else { setImportMessage(`${member.name}'s days off were updated.`); loadDaysOff() }
   }
 
-  async function setSingleDayOff(member: StaffMember, day: string, status: DayOffStatus | 'working') {
+  async function setSingleDayOff(member: StaffMember, day: string, status: DayOffStatus | 'working', blankRed = false) {
     if (!canManageHolidays && !(accountRole === 'teamLeader' && status === 'sick')) return
     if (status === 'working') await supabase.from('staff_days_off').delete().eq('staff_id', member.id).eq('day', day)
-    else await supabase.from('staff_days_off').upsert({ staff_id: member.id, staff_email: member.email ?? '', staff_name: member.name, day, status, note: null }, { onConflict: 'staff_id,day' })
+    else await supabase.from('staff_days_off').upsert({ staff_id: member.id, staff_email: member.email ?? '', staff_name: member.name, day, status, note: blankRed ? 'blank-red' : null }, { onConflict: 'staff_id,day' })
     loadDaysOff()
+  }
+
+  function sortedDaysOffStaff() {
+    const rank: Record<StaffRole, number> = { centreManager: 0, activityManager: 1, teamLeader: 2, staff: 3 }
+    return [...staff].sort((a, b) => rank[resolvedRole(a)] - rank[resolvedRole(b)] || a.name.localeCompare(b.name))
+  }
+
+  function daysOffDisplayLabel(entry?: StaffDayOff) {
+    if (!entry || entry.note === 'blank-red') return ''
+    return dayOffLabel(entry.status)
+  }
+
+  function focusWeeklyCell(row: number, column: number) {
+    const members = sortedDaysOffStaff()
+    const dates = daysOffWeekDates()
+    const nextRow = Math.max(0, Math.min(members.length - 1, row))
+    const nextColumn = Math.max(0, Math.min(dates.length - 1, column))
+    const key = `${members[nextRow]?.id}-${dateKey(dates[nextColumn])}`
+    setSelectedDaysOffCell(key)
+    requestAnimationFrame(() => weeklyCellRefs.current.get(key)?.focus())
+  }
+
+  function handleWeeklyCellKeyDown(event: KeyboardEvent<HTMLDivElement>, member: StaffMember, day: string, row: number, column: number) {
+    const target = event.target as HTMLElement
+    if (['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName)) return
+    const key = event.key.toLowerCase()
+    if (event.key === 'ArrowLeft') { event.preventDefault(); focusWeeklyCell(row, column - 1); return }
+    if (event.key === 'ArrowRight') { event.preventDefault(); focusWeeklyCell(row, column + 1); return }
+    if (event.key === 'ArrowUp') { event.preventDefault(); focusWeeklyCell(row - 1, column); return }
+    if (event.key === 'ArrowDown' || event.key === 'Enter') { event.preventDefault(); focusWeeklyCell(row + 1, column); return }
+    if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); void setSingleDayOff(member, day, 'working'); return }
+    const shortcuts: Record<string, DayOffStatus> = { o: 'off', h: 'hol', s: 'sick', a: 'am_off', p: 'pm_off' }
+    if (key === 'r') { event.preventDefault(); void setSingleDayOff(member, day, 'sick', true); return }
+    if (shortcuts[key]) { event.preventDefault(); void setSingleDayOff(member, day, shortcuts[key]); }
   }
 
   function daysOffWeekDates() {
@@ -719,11 +756,6 @@ function ManagerApp({
     return status === 'am_off' ? 'AM OFF' : status === 'pm_off' ? 'PM OFF' : status.toUpperCase()
   }
 
-  function printDaysOff(view: 'month' | 'week' | 'day') {
-    document.body.setAttribute('data-print-days-off', view)
-    window.print()
-    setTimeout(() => document.body.removeAttribute('data-print-days-off'), 250)
-  }
 
   function downloadDaysOffExcel(view: 'month' | 'week' | 'day') {
     const escapeXml = (value: unknown) => String(value ?? '')
@@ -762,8 +794,8 @@ function ManagerApp({
       rows += row([cell('', 'grid', 8)], 8)
       rows += row([cell('No.', 'header'), cell('Staff', 'header'), ...dates.map(d => cell(d.toLocaleDateString('en-GB',{weekday:'short'}).toUpperCase(),'header'))], 23)
       rows += row([cell('', 'header'), cell('', 'header'), ...dates.map(d => cell(d.toLocaleDateString('en-GB',{day:'numeric',month:'short'}),'header'))], 23)
-      staff.forEach((member, index) => {
-        rows += row([cell(index+1,'grid'),cell(member.name,'staff'),...dates.map(d=>{const entry=daysOff.find(x=>x.staff_id===member.id&&x.day===dateKey(d));return cell(entry?dayOffLabel(entry.status):'',statusStyle(entry?.status))})])
+      sortedDaysOffStaff().forEach((member, index) => {
+        rows += row([cell(index+1,'grid'),cell(member.name,'staff'),...dates.map(d=>{const entry=daysOff.find(x=>x.staff_id===member.id&&x.day===dateKey(d));return cell(daysOffDisplayLabel(entry),statusStyle(entry?.status))})])
       })
     } else if (view === 'day') {
       const chosen = parseDateKey(daysOffDay)
@@ -774,7 +806,7 @@ function ManagerApp({
       rows += row([cell('DAILY STAFFING:', 'title', 3)], 30)
       rows += row([cell(chosen.toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'}),'header',3)],26)
       rows += row([cell('No.','header'),cell('Staff','header'),cell('Status','header'),cell('Availability','header')],24)
-      staff.forEach((member,index)=>{const entry=daysOff.find(x=>x.staff_id===member.id&&x.day===daysOffDay);const availability=!entry?'Available all day':entry.status==='am_off'?'Unavailable Sessions 1 & 2':entry.status==='pm_off'?'Unavailable Session 5':'Unavailable all day';rows+=row([cell(index+1),cell(member.name,'staff'),cell(entry?dayOffLabel(entry.status):'',statusStyle(entry?.status)),cell(availability)])})
+      sortedDaysOffStaff().forEach((member,index)=>{const entry=daysOff.find(x=>x.staff_id===member.id&&x.day===daysOffDay);const availability=!entry?'Available all day':entry.status==='am_off'?'Unavailable Sessions 1 & 2':entry.status==='pm_off'?'Unavailable Session 5':'Unavailable all day';rows+=row([cell(index+1),cell(member.name,'staff'),cell(daysOffDisplayLabel(entry),statusStyle(entry?.status)),cell(availability)])})
     } else {
       const year=holidayMonth.getFullYear(), month=holidayMonth.getMonth(), count=new Date(year,month+1,0).getDate()
       const dates=Array.from({length:count},(_,i)=>new Date(year,month,i+1))
@@ -783,7 +815,7 @@ function ManagerApp({
       columns = '<Column ss:Width="38"/><Column ss:Width="110"/>' + dates.map(()=>'<Column ss:Width="34"/>').join('')
       rows += row([cell(`MONTHLY DAYS OFF — ${holidayMonth.toLocaleDateString('en-GB',{month:'long',year:'numeric'}).toUpperCase()}`,'title',count+1)],30)
       rows += row([cell('No.','header'),cell('Staff','header'),...dates.map(d=>cell(`${d.toLocaleDateString('en-GB',{weekday:'short'})} ${d.getDate()}`,'header'))],30)
-      staff.forEach((member,index)=>{rows+=row([cell(index+1),cell(member.name,'staff'),...dates.map(d=>{const entry=daysOff.find(x=>x.staff_id===member.id&&x.day===dateKey(d));return cell(entry?dayOffLabel(entry.status):'',statusStyle(entry?.status))})])})
+      sortedDaysOffStaff().forEach((member,index)=>{rows+=row([cell(index+1),cell(member.name,'staff'),...dates.map(d=>{const entry=daysOff.find(x=>x.staff_id===member.id&&x.day===dateKey(d));return cell(daysOffDisplayLabel(entry),statusStyle(entry?.status))})])})
     }
 
     const xml = `${workbookStart}<Worksheet ss:Name="${escapeXml(sheetName)}"><Table>${columns}${rows}</Table><WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel"><PageSetup><Layout x:Orientation="${printLandscape?'Landscape':'Portrait'}"/><PageMargins x:Bottom="0.35" x:Left="0.25" x:Right="0.25" x:Top="0.35"/></PageSetup><FitToPage/><Print><FitWidth>1</FitWidth><FitHeight>1</FitHeight><ValidPrinterInfo/></Print><Selected/></WorksheetOptions></Worksheet></Workbook>`
@@ -3529,8 +3561,8 @@ function ManagerApp({
                 <button className={daysOffView === 'day' ? 'active' : ''} onClick={() => setDaysOffView('day')}>Daily View</button>
               </div>
               <div className="days-off-export-actions">
+                <button className="secondary-action" onClick={() => setShowDaysOffHelp(true)}>? Help & Key</button>
                 <button className="secondary-action" onClick={() => downloadDaysOffExcel(daysOffView)}><FileSpreadsheet size={17}/>Download Excel</button>
-                <button className="secondary-action" onClick={() => printDaysOff(daysOffView)}><Printer size={17}/>Print</button>
               </div>
             </div>
 
@@ -3550,22 +3582,49 @@ function ManagerApp({
                 <div className="holiday-month-actions no-print"><button onClick={()=>setHolidayMonth(new Date(holidayMonth.getFullYear(),holidayMonth.getMonth()-1,1))}>Previous</button><button onClick={()=>setHolidayMonth(new Date())}>Today</button><button onClick={()=>setHolidayMonth(new Date(holidayMonth.getFullYear(),holidayMonth.getMonth()+1,1))}>Next</button></div>
               </div>
               <div className="holiday-weekdays">{['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d=><strong key={d}>{d}</strong>)}</div>
-              <div className="holiday-calendar">{holidayCalendarDays().map(date=>{const key=dateKey(date); const entries=daysOff.filter(x=>x.day===key); const legacyHol=holidays.filter(h=>h.start_date<=key&&h.end_date>=key).map(h=>({id:h.id,staff_name:h.staff_name,status:'hol' as DayOffStatus})); return <article key={key} className={`holiday-day ${date.getMonth()!==holidayMonth.getMonth()?'outside':''}`}><span className="holiday-date">{date.getDate()}</span>{[...legacyHol,...entries].map((x:any)=><div key={`${x.id}-${key}`} className={`day-off-entry status-${x.status}`}><span>{x.staff_name}</span><b>{dayOffLabel(x.status)}</b></div>)}</article>})}</div>
+              <div className="holiday-calendar">{holidayCalendarDays().map(date=>{const key=dateKey(date); const entries=daysOff.filter(x=>x.day===key); const legacyHol=holidays.filter(h=>h.start_date<=key&&h.end_date>=key).map(h=>({id:h.id,staff_name:h.staff_name,status:'hol' as DayOffStatus})); return <article key={key} className={`holiday-day ${date.getMonth()!==holidayMonth.getMonth()?'outside':''}`}><span className="holiday-date">{date.getDate()}</span>{[...legacyHol,...entries].sort((a:any,b:any)=>{const ar=staff.find(m=>m.id===a.staff_id||normaliseIdentity(m.name)===normaliseIdentity(a.staff_name));const br=staff.find(m=>m.id===b.staff_id||normaliseIdentity(m.name)===normaliseIdentity(b.staff_name));const rank:Record<StaffRole,number>={centreManager:0,activityManager:1,teamLeader:2,staff:3};return (ar?rank[resolvedRole(ar)]:4)-(br?rank[resolvedRole(br)]:4)||String(a.staff_name).localeCompare(String(b.staff_name))}).map((x:any)=><div key={`${x.id}-${key}`} className={`day-off-entry status-${x.status}`}><span>{x.staff_name}</span><b>{x.note==='blank-red'?'':dayOffLabel(x.status)}</b></div>)}</article>})}</div>
             </section> : daysOffView === 'week' ? <section className="weekly-days-off print-week-sheet">
               <div className="weekly-sheet-heading"><div><h2>WEEKLY STAFFING</h2><p>Days Off</p></div><div className="week-nav no-print"><button onClick={()=>{const d=new Date(daysOffWeek);d.setDate(d.getDate()-7);setDaysOffWeek(d)}}>Previous</button><button onClick={()=>{const n=new Date();n.setDate(n.getDate()-((n.getDay()+6)%7));setDaysOffWeek(n)}}>This week</button><button onClick={()=>{const d=new Date(daysOffWeek);d.setDate(d.getDate()+7);setDaysOffWeek(d)}}>Next</button></div></div>
               <div className="weekly-grid" style={{gridTemplateColumns:`180px repeat(7,minmax(105px,1fr))`}}>
                 <div className="weekly-head staff-head">Staff</div>{daysOffWeekDates().map(d=><div className="weekly-head" key={dateKey(d)}><strong>{d.toLocaleDateString('en-GB',{weekday:'long'})}</strong><span>{d.toLocaleDateString('en-GB',{day:'numeric',month:'short'})}</span></div>)}
-                {staff.map(member=><Fragment key={member.id}><div className="staff-name-cell">{member.name}</div>{daysOffWeekDates().map(d=>{const key=dateKey(d); const existing=daysOff.find(x=>x.staff_id===member.id&&x.day===key); return <div className={`day-off-cell ${existing?`status-${existing.status}`:''}`} key={`${member.id}-${key}`}><select className="no-print" value={existing?.status??'working'} disabled={!canManageHolidays && accountRole!=='teamLeader'} onChange={e=>setSingleDayOff(member,key,e.target.value as DayOffStatus|'working')}><option value="working">Working</option>{canManageHolidays&&<option value="off">OFF</option>}{canManageHolidays&&<option value="hol">HOL</option>}<option value="sick">SICK</option>{canManageHolidays&&<option value="am_off">AM OFF</option>}{canManageHolidays&&<option value="pm_off">PM OFF</option>}</select><strong className="print-only">{existing?dayOffLabel(existing.status):''}</strong></div>})}</Fragment>)}
+                {sortedDaysOffStaff().map((member,rowIndex)=><Fragment key={member.id}><div className="staff-name-cell"><span>{member.name}</span><small>{roleLabel(resolvedRole(member))}</small></div>{daysOffWeekDates().map((d,columnIndex)=>{const key=dateKey(d); const cellKey=`${member.id}-${key}`; const existing=daysOff.find(x=>x.staff_id===member.id&&x.day===key); return <div ref={node=>{if(node) weeklyCellRefs.current.set(cellKey,node); else weeklyCellRefs.current.delete(cellKey)}} tabIndex={0} role="gridcell" aria-label={`${member.name}, ${d.toLocaleDateString('en-GB')}`} className={`day-off-cell keyboard-cell ${selectedDaysOffCell===cellKey?'selected-cell':''} ${existing?`status-${existing.status}`:''} ${existing?.note==='blank-red'?'blank-red-cell':''}`} key={cellKey} onFocus={()=>setSelectedDaysOffCell(cellKey)} onKeyDown={event=>handleWeeklyCellKeyDown(event,member,key,rowIndex,columnIndex)}><select tabIndex={-1} className="no-print" value={existing?.status??'working'} disabled={!canManageHolidays && accountRole!=='teamLeader'} onChange={e=>setSingleDayOff(member,key,e.target.value as DayOffStatus|'working')}><option value="working">Working</option>{canManageHolidays&&<option value="off">OFF</option>}{canManageHolidays&&<option value="hol">HOL</option>}<option value="sick">SICK</option>{canManageHolidays&&<option value="am_off">AM OFF</option>}{canManageHolidays&&<option value="pm_off">PM OFF</option>}</select><strong className="print-only">{daysOffDisplayLabel(existing)}</strong></div>})}</Fragment>)}
               </div>
+              <aside className="keyboard-key no-print" aria-label="Weekly staffing keyboard key">
+                <div className="keyboard-key-heading"><strong>Keyboard key</strong><span>Click a cell first</span></div>
+                <div className="keyboard-key-grid">
+                  <span><kbd>← ↑ → ↓</kbd> Move</span>
+                  <span className="key-off"><kbd>O</kbd> OFF</span>
+                  <span className="key-hol"><kbd>H</kbd> Holiday</span>
+                  <span className="key-sick"><kbd>S</kbd> Sick with text</span>
+                  <span className="key-sick"><kbd>R</kbd> Blank red sick box</span>
+                  <span className="key-am"><kbd>A</kbd> AM OFF</span>
+                  <span className="key-pm"><kbd>P</kbd> PM OFF</span>
+                  <span><kbd>Delete</kbd> Clear / Working</span>
+                  <span><kbd>Enter</kbd> Move down</span>
+                  <span><kbd>Tab</kbd> Move right</span>
+                </div>
+              </aside>
               <div className="days-off-legend"><span className="status-off">OFF</span><span className="status-hol">HOL</span><span className="status-sick">SICK</span><span className="status-am_off">AM OFF</span><span className="status-pm_off">PM OFF</span></div>
             </section> : <section className="daily-days-off print-day-sheet">
               <div className="weekly-sheet-heading"><div><p className="eyebrow">Daily Days Off</p><h2>{parseDateKey(daysOffDay).toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</h2></div><div className="week-nav no-print"><button onClick={()=>{const d=parseDateKey(daysOffDay);d.setDate(d.getDate()-1);setDaysOffDay(dateKey(d))}}>Previous</button><button onClick={()=>setDaysOffDay(dateKey(new Date()))}>Today</button><button onClick={()=>{const d=parseDateKey(daysOffDay);d.setDate(d.getDate()+1);setDaysOffDay(dateKey(d))}}>Next</button><input type="date" value={daysOffDay} onChange={e=>setDaysOffDay(e.target.value)}/></div></div>
               <div className="daily-days-off-grid">
                 <div className="daily-head">Staff</div><div className="daily-head">Status</div><div className="daily-head">Availability</div>
-                {staff.map(member=>{const existing=daysOff.find(x=>x.staff_id===member.id&&x.day===daysOffDay);const availability=!existing?'Available all day':existing.status==='am_off'?'Unavailable Sessions 1 & 2':existing.status==='pm_off'?'Unavailable Session 5':'Unavailable all day';return <Fragment key={member.id}><div className="staff-name-cell">{member.name}</div><div className={`day-off-cell ${existing?`status-${existing.status}`:''}`}><select className="no-print" value={existing?.status??'working'} disabled={!canManageHolidays&&accountRole!=='teamLeader'} onChange={e=>setSingleDayOff(member,daysOffDay,e.target.value as DayOffStatus|'working')}><option value="working">Working</option>{canManageHolidays&&<option value="off">OFF</option>}{canManageHolidays&&<option value="hol">HOL</option>}<option value="sick">SICK</option>{canManageHolidays&&<option value="am_off">AM OFF</option>}{canManageHolidays&&<option value="pm_off">PM OFF</option>}</select><strong className="print-only">{existing?dayOffLabel(existing.status):''}</strong></div><div className="daily-availability">{availability}</div></Fragment>})}
+                {sortedDaysOffStaff().map(member=>{const existing=daysOff.find(x=>x.staff_id===member.id&&x.day===daysOffDay);const availability=!existing?'Available all day':existing.status==='am_off'?'Unavailable Sessions 1 & 2':existing.status==='pm_off'?'Unavailable Session 5':'Unavailable all day';return <Fragment key={member.id}><div className="staff-name-cell"><span>{member.name}</span><small>{roleLabel(resolvedRole(member))}</small></div><div className={`day-off-cell ${existing?`status-${existing.status}`:''} ${existing?.note==='blank-red'?'blank-red-cell':''}`}><select className="no-print" value={existing?.status??'working'} disabled={!canManageHolidays&&accountRole!=='teamLeader'} onChange={e=>setSingleDayOff(member,daysOffDay,e.target.value as DayOffStatus|'working')}><option value="working">Working</option>{canManageHolidays&&<option value="off">OFF</option>}{canManageHolidays&&<option value="hol">HOL</option>}<option value="sick">SICK</option>{canManageHolidays&&<option value="am_off">AM OFF</option>}{canManageHolidays&&<option value="pm_off">PM OFF</option>}</select><strong className="print-only">{daysOffDisplayLabel(existing)}</strong></div><div className="daily-availability">{availability}</div></Fragment>})}
               </div>
               <div className="days-off-legend"><span className="status-off">OFF</span><span className="status-hol">HOL</span><span className="status-sick">SICK</span><span className="status-am_off">AM OFF</span><span className="status-pm_off">PM OFF</span></div>
             </section>}
+
+            {showDaysOffHelp && <div className="days-off-help-backdrop no-print" role="presentation" onMouseDown={(event)=>{if(event.target===event.currentTarget)setShowDaysOffHelp(false)}}>
+              <section className="days-off-help-dialog" role="dialog" aria-modal="true" aria-labelledby="days-off-help-title">
+                <div className="days-off-help-header"><div><p className="eyebrow">Days Off</p><h2 id="days-off-help-title">Help and keyboard key</h2></div><button type="button" className="secondary-action" onClick={()=>setShowDaysOffHelp(false)}>Close</button></div>
+                <h3>Weekly keyboard shortcuts</h3>
+                <div className="keyboard-key-grid help-key-grid">
+                  <span><kbd>← ↑ → ↓</kbd> Move between cells</span><span className="key-off"><kbd>O</kbd> OFF — unavailable all day</span><span className="key-hol"><kbd>H</kbd> HOL — unavailable all day</span><span className="key-sick"><kbd>S</kbd> SICK — shows SICK</span><span className="key-sick"><kbd>R</kbd> SICK — blank red box</span><span className="key-am"><kbd>A</kbd> AM OFF — blocks Sessions 1 and 2</span><span className="key-pm"><kbd>P</kbd> PM OFF — blocks Session 5</span><span><kbd>Delete</kbd> or <kbd>Backspace</kbd> Clear to Working</span><span><kbd>Enter</kbd> Move down</span><span><kbd>Tab</kbd> Move right</span>
+                </div>
+                <h3>Using the grid</h3><p>Click a weekly cell, then press a shortcut key. The outlined cell is the selected cell. The arrow keys move around the week without using the mouse.</p>
+                <h3>Excel</h3><p>Download Excel creates an editable workbook using the selected Month, Weekly or Daily view. Open it in Excel to edit or print it.</p>
+              </section>
+            </div>}
 
             <section className="staff-work-summary no-print">
               <div className="staff-work-summary-heading"><div><p className="eyebrow">Staff overview</p><h3>Work and absence summary</h3></div><select value={holidaySummaryStaffId} onChange={(e)=>setHolidaySummaryStaffId(e.target.value)}><option value="">Select staff member</option>{staff.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select></div>

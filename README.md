@@ -1,4 +1,4 @@
-# Adventure Centre Manager v0.49
+# Adventure Centre Manager v0.51
 
 This version adds the first cloud login and staff rota system.
 
@@ -288,7 +288,7 @@ After deploying v0.20, run `supabase/setup.sql` once in the Supabase SQL Editor 
 - Date range entry and instructor read-only days off.
 
 
-## v0.49 Days Off update
+## v0.51 Days Off update
 - Added Daily View alongside Month and Weekly views.
 - Added real Excel-compatible downloads for all three views.
 - Weekly Excel export matches the supplied WEEKLY STAFFING layout with staff rows, weekday/date headers, bordered cells, yellow OFF/AM OFF/PM OFF, green HOL and red SICK.
