@@ -57,6 +57,7 @@ type MySessionDuty = {
   day: string
   session: string
   activity_name: string
+  activity_code?: string
   group_numbers: number[]
   duty_type: string
   school_name: string | null
@@ -558,7 +559,7 @@ function ManagerApp({
     setMySessionsLoading(true)
     const { data, error } = await supabase
       .from('rota_assignments')
-      .select('id,programme_name,day,session,activity_name,group_numbers,duty_type,school_name,building_name,party_leader_name,staff_email,staff_name')
+      .select('id,programme_name,day,session,activity_code,activity_name,group_numbers,duty_type,school_name,building_name,party_leader_name,staff_email,staff_name')
       .order('day')
       .order('session')
 
@@ -1247,6 +1248,86 @@ function ManagerApp({
 
   function qualificationIsValid(member: StaffMember, code: string) {
     return member.qualifications.includes(code)
+  }
+
+
+  type QualificationShortage = {
+    session: string
+    activityCode: string
+    activityName: string
+    required: number
+    covered: number
+    shortfall: number
+  }
+
+  function qualificationShortagesForDay(day: string): QualificationShortage[] {
+    if (!programme || !day) return []
+    const workingIds = new Set(workingByDay[day] ?? staff.map((member) => member.id))
+    const unavailable = unavailableStaffIdsForDay(day)
+    const available = staff.filter((member) => workingIds.has(member.id) && !unavailable.has(member.id))
+    const shortages: QualificationShortage[] = []
+
+    const sessions = Array.from(new Set(programme.rows.filter((row) => row.day === day).map((row) => row.session)))
+    sessions.forEach((session) => {
+      const blockedByArrivals = arrivalStaffForDaySession(day, session)
+      const sessionStaff = available.filter((member) => !blockedByArrivals.has(member.id))
+      const slots = programme.rows
+        .filter((row) => row.day === day && row.session === session)
+        .flatMap((row) => activityCellsForRow(row).map((cell, index) => ({
+          id: `${row.id}::${cell.group}::${index}`,
+          activityCode: cell.activityCode,
+        })))
+        .sort((a, b) => {
+          const aCount = sessionStaff.filter((member) => qualificationIsValid(member, a.activityCode)).length
+          const bCount = sessionStaff.filter((member) => qualificationIsValid(member, b.activityCode)).length
+          return aCount - bCount || a.activityCode.localeCompare(b.activityCode)
+        })
+
+      const matchedSlotByStaff = new Map<string, string>()
+      const matchedStaffBySlot = new Map<string, string>()
+      const slotById = new Map(slots.map((slot) => [slot.id, slot]))
+
+      const tryMatch = (slotId: string, visited: Set<string>): boolean => {
+        const slot = slotById.get(slotId)
+        if (!slot) return false
+        const candidates = sessionStaff
+          .filter((member) => qualificationIsValid(member, slot.activityCode))
+          .sort((a, b) => rolePriority(resolvedRole(a)) - rolePriority(resolvedRole(b)) || a.name.localeCompare(b.name))
+        for (const member of candidates) {
+          if (visited.has(member.id)) continue
+          visited.add(member.id)
+          const existingSlot = matchedSlotByStaff.get(member.id)
+          if (!existingSlot || tryMatch(existingSlot, visited)) {
+            matchedSlotByStaff.set(member.id, slotId)
+            matchedStaffBySlot.set(slotId, member.id)
+            return true
+          }
+        }
+        return false
+      }
+
+      slots.forEach((slot) => tryMatch(slot.id, new Set()))
+      const requiredByCode = new Map<string, number>()
+      const coveredByCode = new Map<string, number>()
+      slots.forEach((slot) => requiredByCode.set(slot.activityCode, (requiredByCode.get(slot.activityCode) ?? 0) + 1))
+      matchedStaffBySlot.forEach((_, slotId) => {
+        const code = slotById.get(slotId)?.activityCode
+        if (code) coveredByCode.set(code, (coveredByCode.get(code) ?? 0) + 1)
+      })
+      requiredByCode.forEach((required, code) => {
+        const covered = coveredByCode.get(code) ?? 0
+        if (covered < required) shortages.push({
+          session,
+          activityCode: code,
+          activityName: activityName(code),
+          required,
+          covered,
+          shortfall: required - covered,
+        })
+      })
+    })
+
+    return shortages.sort((a, b) => Number(a.session) - Number(b.session) || a.activityName.localeCompare(b.activityName))
   }
 
   function arrivalStaffForDaySession(day: string, session: string) {
@@ -2234,8 +2315,13 @@ function ManagerApp({
       .filter((id) => !unavailableStaffIdsForDay(day).has(id)).length
     return { day, required, available, shortfall: Math.max(0, required - available) }
   })
-  const staffingShortages = dailyShortages.filter((item) => item.shortfall > 0).length
+  const staffingShortages = new Set([
+    ...dailyShortages.filter((item) => item.shortfall > 0).map((item) => item.day),
+    ...programmeDays.filter((day) => qualificationShortagesForDay(day).length > 0),
+  ]).size
   const selectedDayCapacityShortfall = dailyShortages.find((item) => item.day === activeStaffingDay)?.shortfall ?? 0
+  const selectedDayQualificationShortages = qualificationShortagesForDay(activeStaffingDay)
+  const programmeQualificationShortageDays = programmeDays.filter((day) => qualificationShortagesForDay(day).length > 0).length
 
   const plannedMySessions = useMemo<MySessionDuty[]>(() => {
     if (!programme || !myStaffMember) return []
@@ -2290,7 +2376,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.41</span></div>
+          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.45</span></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -2402,7 +2488,7 @@ function ManagerApp({
               ) : (
                 <div className="compact-my-session-list">
                   {effectiveMySessions.filter((duty) => duty.day === selectedMySessionsDay).map((duty) => (
-                    <article className={`compact-my-session-row duty-${duty.duty_type}`} key={duty.id}>
+                    <article className={`compact-my-session-row duty-${duty.duty_type} ${duty.duty_type === 'activity' && duty.activity_code && myStaffMember && !qualificationIsValid(myStaffMember, duty.activity_code) ? 'qualification-missing' : ''}`} key={duty.id}>
                       <strong>S{duty.session}</strong>
                       <div><b>{duty.activity_name}</b><span>{[
                         duty.school_name,
@@ -2410,6 +2496,7 @@ function ManagerApp({
                         duty.building_name,
                       ].filter(Boolean).join(' · ') || 'Published duty'}</span></div>
                       <em>{duty.duty_type === 'activity' ? 'Instructor' : duty.duty_type === 'arrival_leader' ? 'Party Leader' : 'Arrival'}</em>
+                      {duty.duty_type === 'activity' && duty.activity_code && myStaffMember && !qualificationIsValid(myStaffMember, duty.activity_code) && <small className="my-session-qualification-warning">⚠ Not signed off</small>}
                     </article>
                   ))}
                 </div>
@@ -2536,7 +2623,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to accommodation, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v0.41</span>
+                  <span className="release-pill">v0.45</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
@@ -2732,6 +2819,23 @@ function ManagerApp({
                   </section>
                 )}
 
+                {selectedDayQualificationShortages.length > 0 && (
+                  <section className="qualification-shortage-alert" role="alert">
+                    <CircleAlert size={24} />
+                    <div>
+                      <strong>Not enough correctly signed-off staff</strong>
+                      <p>{activeStaffingDay} has activities that cannot be safely covered by the available sign-offs.</p>
+                      <ul>
+                        {selectedDayQualificationShortages.map((item) => (
+                          <li key={`${item.session}-${item.activityCode}`}>
+                            <b>Session {item.session} · {item.activityName}:</b> {item.required} needed, {item.covered} qualified available — {item.shortfall} more required.
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </section>
+                )}
+
                 {showWorkingPanel && (
                   <section className="sickness-panel compact working-panel">
                     <div className="sickness-heading">
@@ -2912,9 +3016,10 @@ function ManagerApp({
                     const assignedStaff = staff.find(
                       (member) => member.id === assignments[key],
                     )
+                    const qualificationMissing = Boolean(assignedStaff && !qualificationIsValid(assignedStaff, cell.activityCode))
                     return (
                       <article
-                        className={`staffing-card ${assignedStaff ? 'ready' : 'needs'}`}
+                        className={`staffing-card ${qualificationMissing ? 'qualification-missing' : assignedStaff ? 'ready' : 'needs'}`}
                         key={key}
                       >
                         <div className="staffing-card-top">
@@ -2922,7 +3027,7 @@ function ManagerApp({
                             {row.day} · Session {row.session}
                           </span>
                           <span>
-                            {assignedStaff ? 'Ready' : 'Needs instructor'}
+                            {qualificationMissing ? 'Qualification missing' : assignedStaff ? 'Ready' : 'Needs instructor'}
                           </span>
                         </div>
                         <h3>{activityName(cell.activityCode)}</h3>
@@ -2935,6 +3040,7 @@ function ManagerApp({
                             <strong>
                               {assignedStaff?.name ?? 'Not assigned'}
                             </strong>
+                            {qualificationMissing && <small className="qualification-missing-text">Not signed off for {activityName(cell.activityCode)}</small>}
                           </div>
                           <button
                             onClick={() =>

@@ -1404,3 +1404,26 @@ button { cursor: pointer; }
 
 /* v0.43 water-lead confirmations and logs */
 .logs-toolbar{display:flex;gap:12px;align-items:center;margin-bottom:18px}.logs-toolbar .search-box{flex:1}.logs-toolbar select{min-width:190px}.logs-list{display:grid;gap:12px}.log-card{border:1px solid #d8dee8;border-radius:14px;padding:16px;background:#fff}.log-card-top{display:flex;justify-content:space-between;gap:12px}.log-card-top time,.log-card small{color:#5d6778}.log-card h3{margin:10px 0 4px}.log-card p{margin:4px 0}.modal-backdrop{position:fixed;inset:0;background:rgba(14,22,35,.58);display:grid;place-items:center;padding:20px;z-index:1000}.water-confirmation-modal{width:min(620px,100%);background:#fff;border-radius:20px;padding:26px;box-shadow:0 24px 70px rgba(0,0,0,.3)}.water-confirmation-modal h2{margin:10px 0}.water-confirmation-modal p{line-height:1.5}.confirmation-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:20px}.confirmation-actions button{flex:1;min-width:150px}
+
+
+.qualification-shortage-alert {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  margin: 16px 0;
+  padding: 16px 18px;
+  border: 2px solid #b91c1c;
+  border-radius: 14px;
+  background: #fee2e2;
+  color: #111827;
+}
+.qualification-shortage-alert > svg { color: #b91c1c; flex: 0 0 auto; }
+.qualification-shortage-alert strong { color: #991b1b; font-size: 1rem; }
+.qualification-shortage-alert p { margin: 4px 0 8px; }
+.qualification-shortage-alert ul { margin: 0; padding-left: 20px; }
+.qualification-shortage-alert li + li { margin-top: 5px; }
+.staffing-card.qualification-missing,
+.compact-my-session-row.qualification-missing { border-color: #dc2626; background: #fff1f2; }
+.qualification-missing-text,
+.my-session-qualification-warning { color: #b91c1c; font-weight: 800; }
+.my-session-qualification-warning { white-space: nowrap; }

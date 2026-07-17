@@ -1,4 +1,4 @@
-# Adventure Centre Manager v0.44
+# Adventure Centre Manager v0.45
 
 This version adds the first cloud login and staff rota system.
 
@@ -232,7 +232,7 @@ After deploying v0.20, run `supabase/setup.sql` once in the Supabase SQL Editor 
 - Added manual Water Support selectors on the Staffing page.
 
 
-## v0.44
+## v0.45
 - Removed the thicker Programme grid school borders and restored the original grid appearance.
 - Instructor Arrivals cards now clearly show role, school, G-number group(s), building and Party Leader.
 - Shows “No building assigned” instead of leaving the building blank.
@@ -241,7 +241,7 @@ After deploying v0.20, run `supabase/setup.sql` once in the Supabase SQL Editor 
 - The current weekday receives a compact Today marker.
 
 
-## v0.44
+## v0.45
 - Canoe Lead and Kayak Lead assignments now require matching Sign-off tickets.
 - Auto-fill prefers a separate qualified Lead.
 - If a qualified Lead must also run a group, the app requires Head of Centre or Activities Manager permission confirmation.
@@ -249,10 +249,19 @@ After deploying v0.20, run `supabase/setup.sql` once in the Supabase SQL Editor 
 - Logs are visible only to Head of Centre and Activities Manager.
 
 
-## v0.44 staffing availability fixes
+## v0.45 staffing availability fixes
 
 - Shows a red day-specific warning when there are not enough available instructors to cover every activity.
 - Displays the number of additional instructors required.
 - Allows sickness to be recorded for any staff member, even when their login email has not yet been entered.
 - Removes sick staff from manual selection and auto-fill on the affected date.
 - Removes staff on holiday from manual selection and auto-fill for every date in their holiday range.
+
+
+## v0.45 qualification-based staffing
+
+- Auto-fill only assigns staff signed off for the activity.
+- Staffing warns when the available sign-offs cannot cover a session, even when total headcount is sufficient.
+- Manual assignment lists only qualified and available staff.
+- Existing invalid assignments are highlighted on Staffing and My Sessions.
+- Home page version display updated to v0.45.
