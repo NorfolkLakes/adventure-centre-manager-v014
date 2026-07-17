@@ -647,7 +647,7 @@ function ManagerApp({
     [programme],
   )
   const [selectedStaffingDay, setSelectedStaffingDay] = useState('')
-  const [staffingView, setStaffingView] = useState<'activity' | 'calendar'>('activity')
+  const [staffingView, setStaffingView] = useState<'activity' | 'calendar' | 'availability'>('activity')
   const [staffingZoom, setStaffingZoom] = useState<number>(() => {
     const saved = Number(localStorage.getItem('acm-staffing-zoom') ?? 100)
     return Number.isFinite(saved) ? Math.min(150, Math.max(70, saved)) : 100
@@ -872,9 +872,32 @@ function ManagerApp({
 
   async function setSingleDayOff(member: StaffMember, day: string, status: DayOffStatus | 'working', blankRed = false) {
     if (!canManageHolidays && !(accountRole === 'teamLeader' && status === 'sick')) return
-    if (status === 'working') await supabase.from('staff_days_off').delete().eq('staff_id', member.id).eq('day', day)
-    else await supabase.from('staff_days_off').upsert({ staff_id: member.id, staff_email: member.email ?? '', staff_name: member.name, day, status, note: blankRed ? 'blank-red' : null }, { onConflict: 'staff_id,day' })
-    loadDaysOff()
+    const result = status === 'working'
+      ? await supabase.from('staff_days_off').delete().eq('staff_id', member.id).eq('day', day)
+      : await supabase.from('staff_days_off').upsert({ staff_id: member.id, staff_email: member.email ?? '', staff_name: member.name, day, status, note: blankRed ? 'blank-red' : null }, { onConflict: 'staff_id,day' })
+    if (result.error) {
+      setImportMessage(`Availability could not be updated: ${result.error.message}`)
+      return
+    }
+
+    // Days Off & Sickness is the single source of truth for staffing. Clear
+    // legacy daily toggles so Auto-fill, the staffing views and Excel exports
+    // all use the same status immediately.
+    const currentWorking = workingByDay[day] ?? staff.map((item) => item.id)
+    const nextWorking = { ...workingByDay, [day]: [...new Set([...currentWorking, member.id])] }
+    const currentSickness = sicknessByDay[day] ?? []
+    const nextSickness = {
+      ...sicknessByDay,
+      [day]: status === 'sick'
+        ? [...new Set([...currentSickness, member.id])]
+        : currentSickness.filter((id) => id !== member.id),
+    }
+    setWorkingByDay(nextWorking)
+    setSicknessByDay(nextSickness)
+    localStorage.setItem(WORKING_KEY, JSON.stringify(nextWorking))
+    localStorage.setItem(SICKNESS_KEY, JSON.stringify(nextSickness))
+    await loadDaysOff()
+    setImportMessage(`${member.name} is now ${status === 'working' ? 'working' : dayOffLabel(status)} on ${day}.`)
   }
 
   function sortedDaysOffStaff() {
@@ -3086,7 +3109,9 @@ function ManagerApp({
         for (let column = 0; column < blockWidth; column += 1) setCell(row, start + column, '')
       }
 
-      sourceStaff.slice(0, 29).forEach((member, index) => {
+      const roleRank: Record<StaffRole, number> = { centreManager: 0, activityManager: 1, teamLeader: 2, staff: 3 }
+      const orderedStaff = [...sourceStaff].sort((a, b) => roleRank[resolvedRole(a)] - roleRank[resolvedRole(b)] || a.name.localeCompare(b.name))
+      orderedStaff.slice(0, 29).forEach((member, index) => {
         const row = index + 3
         const status = staffingStatus(member, day, sourceProgramme, sourceDaysOff, sourceWorking, sourceSickness)
         setCell(row, start, index + 1)
@@ -3605,6 +3630,7 @@ function ManagerApp({
                   <div className="staffing-view-switch" role="group" aria-label="Staffing view">
                     <button className={staffingView === 'activity' ? 'active' : ''} onClick={() => setStaffingView('activity')}>Activity View</button>
                     <button className={staffingView === 'calendar' ? 'active' : ''} onClick={() => setStaffingView('calendar')}>Calendar View</button>
+                    <button className={staffingView === 'availability' ? 'active' : ''} onClick={() => setStaffingView('availability')}>Days Off &amp; Sickness</button>
                   </div>
                   <div className="staffing-zoom-controls" role="group" aria-label="Staffing zoom">
                     <button aria-label="Zoom out" disabled={staffingZoom <= 70} onClick={() => setStaffingZoom((current) => { const next = Math.max(70, current - 10); localStorage.setItem('acm-staffing-zoom', String(next)); return next })}>−</button>
@@ -3631,51 +3657,13 @@ function ManagerApp({
                   </div>
                   </div>
 
-                  <div className="staffing-actions staffing-management-row">
-                    <button
-                      className="secondary-action"
-                      onClick={() =>
-                        setShowWorkingPanel((current) => !current)
-                      }
-                    >
-                      <Users size={17} />
-                      Staff in today
-                      <span className="count-badge neutral">
-                        {(
-                          workingByDay[activeStaffingDay] ??
-                          staff.map((member) => member.id)
-                        ).length}
-                      </span>
-                    </button>
-
-                    <button
-                      className="secondary-action"
-                      onClick={() => setShowSickPanel((current) => !current)}
-                    >
-                      <Users size={17} />
-                      Sick staff
-                      {(sicknessByDay[activeStaffingDay] ?? []).length > 0 && (
-                        <span className="count-badge">
-                          {(sicknessByDay[activeStaffingDay] ?? []).length}
-                        </span>
-                      )}
-                    </button>
-
-                    <button
-                      className="clear-staffing-button"
-                      onClick={() => clearDayStaffing(activeStaffingDay)}
-                    >
-                      <X size={17} />
-                      Clear day
-                    </button>
-
-                    <button
-                      className="auto-fill-button"
-                      onClick={() => autoFillStaffing(activeStaffingDay)}
-                    >
-                      <WandSparkles size={17} />
-                      Auto-fill staff
-                    </button>
+                  <div className="staffing-availability-summary" aria-label="Staffing availability summary">
+                    <article><span>Staff total</span><strong>{staff.length}</strong></article>
+                    <article><span>In today</span><strong>{staff.length - unavailableStaffIdsForDay(activeStaffingDay).size}</strong></article>
+                    <article><span>OFF / HOL</span><strong>{daysOff.filter((entry) => entry.day === activeStaffingDay && entry.status !== 'sick').length}</strong></article>
+                    <article className="sick-summary"><span>Sick</span><strong>{new Set([...(sicknessByDay[activeStaffingDay] ?? []), ...daysOff.filter((entry) => entry.day === activeStaffingDay && entry.status === 'sick').map((entry) => entry.staff_id)]).size}</strong></article>
+                    <button className="clear-staffing-button" onClick={() => clearDayStaffing(activeStaffingDay)}><X size={17}/>Clear day</button>
+                    <button className="auto-fill-button" onClick={() => autoFillStaffing(activeStaffingDay)}><WandSparkles size={17}/>Auto-fill staff</button>
                   </div>
                   <div className="staffing-actions staffing-download-row">
                     <button className="print-button" onClick={() => void exportDailyStaffing(activeStaffingDay)}><FileSpreadsheet size={17}/>Download day</button>
@@ -3709,87 +3697,6 @@ function ManagerApp({
                           </li>
                         ))}
                       </ul>
-                    </div>
-                  </section>
-                )}
-
-                {showWorkingPanel && (
-                  <section className="sickness-panel compact working-panel">
-                    <div className="sickness-heading">
-                      <div>
-                        <p className="eyebrow">Daily availability</p>
-                        <h3>Who is working on {activeStaffingDay}?</h3>
-                      </div>
-                      <button
-                        className="icon-button small"
-                        onClick={() => setShowWorkingPanel(false)}
-                      >
-                        <X size={17} />
-                      </button>
-                    </div>
-                    <p>
-                      Auto-fill and manual assignment only use people selected
-                      as working today.
-                    </p>
-                    <div className="sickness-chips">
-                      {staff.map((member) => {
-                        const working = (
-                          workingByDay[activeStaffingDay] ??
-                          staff.map((item) => item.id)
-                        ).includes(member.id)
-                        return (
-                          <button
-                            key={member.id}
-                            className={working ? 'working active' : 'working'}
-                            onClick={() =>
-                              toggleWorking(activeStaffingDay, member.id)
-                            }
-                          >
-                            {member.name}
-                            <span>{working ? 'Working' : 'Not in'}</span>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </section>
-                )}
-
-                {showSickPanel && (
-                  <section className="sickness-panel compact">
-                    <div className="sickness-heading">
-                      <div>
-                        <p className="eyebrow">Unavailable today</p>
-                        <h3>Who is sick on {activeStaffingDay}?</h3>
-                      </div>
-                      <button
-                        className="icon-button small"
-                        onClick={() => setShowSickPanel(false)}
-                      >
-                        <X size={17} />
-                      </button>
-                    </div>
-                    <p>
-                      Sick staff are removed from this day and cannot be selected
-                      or included by auto-fill.
-                    </p>
-                    <div className="sickness-chips">
-                      {staff.map((member) => {
-                        const sick = (
-                          sicknessByDay[activeStaffingDay] ?? []
-                        ).includes(member.id)
-                        return (
-                          <button
-                            key={member.id}
-                            className={sick ? 'sick active' : 'sick'}
-                            onClick={() =>
-                              toggleSick(activeStaffingDay, member.id)
-                            }
-                          >
-                            {member.name}
-                            <span>{sick ? 'Sick' : 'Available'}</span>
-                          </button>
-                        )
-                      })}
                     </div>
                   </section>
                 )}
@@ -3887,6 +3794,39 @@ function ManagerApp({
                   </section>
                 )}
 
+                {staffingView === 'availability' && (
+                  <section className="staffing-availability-panel">
+                    <div className="staffing-availability-heading">
+                      <div><p className="eyebrow">Single source of truth</p><h3>Days Off &amp; Sickness — {activeStaffingDay}</h3><p>Changes here immediately control Auto-fill, manual assignments, shortage warnings and Excel downloads.</p></div>
+                    </div>
+                    <div className="staffing-availability-table">
+                      <div className="availability-table-head">Staff member</div>
+                      <div className="availability-table-head">Role</div>
+                      <div className="availability-table-head">Status</div>
+                      {sortedDaysOffStaff().map((member) => {
+                        const existing = daysOff.find((entry) => entry.staff_id === member.id && entry.day === activeStaffingDay)
+                        const legacySick = (sicknessByDay[activeStaffingDay] ?? []).includes(member.id)
+                        const value: DayOffStatus | 'working' = existing?.status ?? (legacySick ? 'sick' : 'working')
+                        return <Fragment key={`staffing-availability-${member.id}`}>
+                          <div className="availability-staff-name"><strong>{member.name}</strong></div>
+                          <div><span className="role-pill">{roleLabel(resolvedRole(member))}</span></div>
+                          <div className={`availability-status status-${value}`}>
+                            <select value={value} disabled={!canManageHolidays && accountRole !== 'teamLeader'} onChange={(event) => void setSingleDayOff(member, activeStaffingDay, event.target.value as DayOffStatus | 'working')}>
+                              <option value="working">Working</option>
+                              {canManageHolidays && <option value="off">OFF</option>}
+                              {canManageHolidays && <option value="hol">HOL</option>}
+                              <option value="sick">SICK</option>
+                              {canManageHolidays && <option value="am_off">AM OFF</option>}
+                              {canManageHolidays && <option value="pm_off">PM OFF</option>}
+                            </select>
+                          </div>
+                        </Fragment>
+                      })}
+                    </div>
+                  </section>
+                )}
+
+                {staffingView !== 'availability' && (
                 <div className="staffing-zoom-stage" style={{ zoom: staffingZoom / 100 }}>
                 {staffingView === 'activity' ? (
                   <div className="staffing-grid">
@@ -3991,6 +3931,7 @@ function ManagerApp({
                   </section>
                 )}
                 </div>
+                )}
               </>
             )}
           </Panel>
