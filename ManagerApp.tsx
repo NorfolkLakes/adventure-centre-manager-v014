@@ -520,6 +520,10 @@ function ManagerApp({
   )
   const [selectedStaffingDay, setSelectedStaffingDay] = useState('')
   const [staffingView, setStaffingView] = useState<'activity' | 'calendar'>('activity')
+  const [staffingZoom, setStaffingZoom] = useState<number>(() => {
+    const saved = Number(localStorage.getItem('acm-staffing-zoom') ?? 100)
+    return Number.isFinite(saved) ? Math.min(150, Math.max(70, saved)) : 100
+  })
   const activeStaffingDay =
     selectedStaffingDay && programmeDays.includes(selectedStaffingDay)
       ? selectedStaffingDay
@@ -551,6 +555,7 @@ function ManagerApp({
   const [staffTimeline, setStaffTimeline] = useState<Record<string, {date:string;event:string}[]>>(() => readJson(STAFF_TIMELINE_KEY, {}))
   const [payrollSyncAt, setPayrollSyncAt] = useState(() => localStorage.getItem(PAYROLL_SYNC_KEY) ?? '')
   const [staffingArchives, setStaffingArchives] = useState<StaffingArchive[]>(() => readJson(STAFFING_ARCHIVES_KEY, []))
+  const [selectedStaffingLogMonth, setSelectedStaffingLogMonth] = useState('')
   const [holidayMonth, setHolidayMonth] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1))
   const [holidays, setHolidays] = useState<{id:string;staff_email:string;staff_name:string;start_date:string;end_date:string;note:string|null}[]>([])
   const [holidayStaffId, setHolidayStaffId] = useState('')
@@ -1453,7 +1458,7 @@ function ManagerApp({
 
   function saveProgramme(next: ProgrammeImport, previous?: ProgrammeImport) {
     const nextHistory = previous ? [previous, ...history].slice(0, 12) : history
-    if (previous && programmeWeekKey(previous) !== programmeWeekKey(next)) archiveSnapshot(previous)
+    if (previous) archiveSnapshot(previous, true)
     const migrated = migrateAssignments(previous ?? null, next, assignments)
     setAssignments(migrated)
     localStorage.setItem(ASSIGNMENT_KEY, JSON.stringify(migrated))
@@ -2766,14 +2771,45 @@ function ManagerApp({
       daysOff: structuredClone(daysOff),
       staff: structuredClone(staff),
     }
-    const next = [archive, ...staffingArchives.filter((item) => item.weekKey !== weekKey)].slice(0, 104)
+    const next = [archive, ...staffingArchives].slice(0, 260)
     setStaffingArchives(next)
     localStorage.setItem(STAFFING_ARCHIVES_KEY, JSON.stringify(next))
-    setImportMessage(`Staffing week ${weekKey} was saved permanently in Staffing Logs.`)
+    setImportMessage(`Staffing week ${weekKey} was archived permanently in Staffing Logs.`)
   }
 
   function xmlEscape(value: unknown) {
     return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;')
+  }
+
+  function sessionTime(session: string) {
+    const times: Record<string, string> = {
+      '1': '09:10–10:30',
+      '2': '10:45–12:15',
+      '3': '14:00–15:30',
+      '4': '15:45–17:15',
+      '5': '19:00–20:30',
+    }
+    return times[String(session)] ?? ''
+  }
+
+  function staffingArchiveMonth(archive: StaffingArchive) {
+    const source = `${archive.weekKey} ${archive.title} ${archive.sourceFileName}`
+    const months = ['january','february','march','april','may','june','july','august','september','october','november','december']
+    const match = source.match(/(?:^|\s)(\d{1,2})(?:st|nd|rd|th)?(?:\s*[-–]\s*\d{1,2}(?:st|nd|rd|th)?)?\s+([A-Za-z]+)(?:\s+(20\d{2}))?/i)
+    if (match) {
+      const monthIndex = months.indexOf(match[2].toLowerCase())
+      if (monthIndex >= 0) {
+        const year = Number(match[3] ?? new Date(archive.programme.importedAt || archive.archivedAt).getFullYear())
+        return `${year}-${String(monthIndex + 1).padStart(2, '0')}`
+      }
+    }
+    const fallback = new Date(archive.programme.importedAt || archive.archivedAt)
+    return `${fallback.getFullYear()}-${String(fallback.getMonth() + 1).padStart(2, '0')}`
+  }
+
+  function staffingMonthLabel(key: string) {
+    const [year, month] = key.split('-').map(Number)
+    return new Date(year, month - 1, 1).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })
   }
 
   function staffingColour(activityCode: string) {
@@ -2809,58 +2845,143 @@ function ManagerApp({
     return null
   }
 
-  function createStaffingExcel(sourceProgramme: ProgrammeImport, sourceAssignments: StaffingAssignment, sourceStaff: StaffMember[], sourceDaysOff: StaffDayOff[], sourceWorking: Record<string,string[]>, sourceSickness: Record<string,string[]>, selectedDays: string[], fileName: string) {
-    const sessions = Array.from(new Set(sourceProgramme.rows.filter((row) => selectedDays.includes(row.day)).map((row) => row.session))).sort((a,b)=>Number(a)-Number(b))
-    const dutyFor = (member: StaffMember, day: string, session: string) => sourceProgramme.rows.filter((row) => row.day === day && row.session === session).flatMap((row) => row.cells.filter((cell) => sourceAssignments[cellKey(row.id, cell.group)] === member.id && cell.activityCode && cell.activityCode !== 'Z').map((cell) => ({ code: cell.activityCode, group: cell.group })))
-    const styleForStatus = (status: DayOffStatus | null) => status === 'hol' ? 'holiday' : status === 'sick' ? 'sick' : status ? 'timeoff' : 'normal'
-    const cell = (value: unknown, style = 'normal', merge = 0) => `<Cell ss:StyleID="${style}"${merge ? ` ss:MergeAcross="${merge}"` : ''}><Data ss:Type="String">${xmlEscape(value)}</Data></Cell>`
-    const row = (cells: string[], height = 26) => `<Row ss:Height="${height}">${cells.join('')}</Row>`
-    const blockWidth = sessions.length + 2
-    const dayCells = (day: string, member: StaffMember, index: number) => {
-      const status = staffingStatus(member, day, sourceProgramme, sourceDaysOff, sourceWorking, sourceSickness)
-      const baseStyle = styleForStatus(status)
-      const dutyCells = sessions.map((session) => {
-        if (status) return cell(status === 'hol' ? 'HOLIDAY' : status === 'sick' ? 'SICK' : status === 'am_off' ? 'AM OFF' : status === 'pm_off' ? 'PM OFF' : 'OFF', baseStyle)
-        const duties = dutyFor(member, day, session)
-        if (!duties.length) return cell('', 'normal')
-        const style = duties.some((duty) => staffingColour(duty.code) === 'water') ? 'water' : duties.some((duty) => staffingColour(duty.code) === 'ropes') ? 'ropes' : 'normal'
-        return cell(duties.map((duty) => `${duty.code} · G${duty.group}`).join(' / '), style)
+  async function createStaffingExcel(sourceProgramme: ProgrammeImport, sourceAssignments: StaffingAssignment, sourceStaff: StaffMember[], sourceDaysOff: StaffDayOff[], sourceWorking: Record<string,string[]>, sourceSickness: Record<string,string[]>, selectedDays: string[], fileName: string) {
+    const response = await fetch(`${import.meta.env.BASE_URL}staffing-template.xlsx`)
+    if (!response.ok) throw new Error('The staffing Excel template could not be loaded.')
+    const template = await response.arrayBuffer()
+    const workbook = XLSX.read(template, { type: 'array', cellStyles: true })
+    const sheetName = workbook.SheetNames.includes('Sheet1') ? 'Sheet1' : workbook.SheetNames[0]
+    const worksheet = workbook.Sheets[sheetName]
+    if (!worksheet) throw new Error('Sheet1 is missing from the staffing template.')
+
+    workbook.SheetNames = [sheetName]
+    Object.keys(workbook.Sheets).forEach((name) => { if (name !== sheetName) delete workbook.Sheets[name] })
+
+    const dayBlocks = [
+      { key: 'mon', label: 'Mon', start: 0 },
+      { key: 'tue', label: 'Tues', start: 16 },
+      { key: 'wed', label: 'Wed', start: 32 },
+      { key: 'thu', label: 'Thur', start: 48 },
+      { key: 'fri', label: 'Fri', start: 64 },
+      { key: 'sat', label: 'Sat', start: 80 },
+      { key: 'sun', label: 'Sun', start: 96 },
+    ]
+    const normaliseDay = (value: string) => value.trim().toLowerCase().slice(0, 3)
+    const selectedKeys = new Set(selectedDays.map(normaliseDay))
+    const sourceDayFor = (blockKey: string) => Array.from(new Set(sourceProgramme.rows.map((row) => row.day))).find((day) => normaliseDay(day) === blockKey)
+    const sessions = ['1', '2', '3', '4', '5']
+    const sessionTimes = ['9:10-10:30', '10:45-12:15', '14:00-15:30', '15:45-17:15', '19:00-20:30']
+    const dutyFor = (member: StaffMember, day: string, session: string) => sourceProgramme.rows
+      .filter((row) => row.day === day && String(row.session) === session)
+      .flatMap((row) => row.cells
+        .filter((cell) => sourceAssignments[cellKey(row.id, cell.group)] === member.id && cell.activityCode && cell.activityCode !== 'Z')
+        .map((cell) => ({ code: cell.activityCode.toUpperCase(), group: cell.group })))
+
+    const cloneStyle = (sourceRef: string) => JSON.parse(JSON.stringify((worksheet[sourceRef] as XLSX.CellObject | undefined)?.s ?? {}))
+    const styles = {
+      number: cloneStyle('A5'),
+      staff: cloneStyle('B5'),
+      note: cloneStyle('C5'),
+      activity: cloneStyle('D5'),
+      group: cloneStyle('E5'),
+    }
+    const fills: Record<'water'|'ropes'|'holiday'|'sick'|'timeoff'|'normal', string | null> = {
+      water: '9DC3E6',
+      ropes: 'F4B6C2',
+      holiday: 'A9D18E',
+      sick: 'FF6666',
+      timeoff: 'FFF200',
+      normal: null,
+    }
+    const setCell = (row: number, col: number, value: string | number, baseStyle: object, fill: keyof typeof fills = 'normal') => {
+      const ref = XLSX.utils.encode_cell({ r: row, c: col })
+      const style: any = JSON.parse(JSON.stringify(baseStyle))
+      if (fills[fill]) style.fill = { patternType: 'solid', fgColor: { rgb: fills[fill] }, bgColor: { rgb: fills[fill] } }
+      else if (style.fill) style.fill = { patternType: 'none' }
+      worksheet[ref] = { t: typeof value === 'number' ? 'n' : 's', v: value, s: style } as XLSX.CellObject
+    }
+    const clearCellValue = (row: number, col: number, baseStyle: object) => setCell(row, col, '', baseStyle)
+
+    dayBlocks.forEach((block) => {
+      const sourceDay = sourceDayFor(block.key)
+      const included = selectedKeys.has(block.key)
+      setCell(0, block.start, `DAILY STAFFING: ${block.label}`, cloneStyle(XLSX.utils.encode_cell({r:0,c:block.start})))
+      sessionTimes.forEach((time, index) => setCell(1, block.start + 3 + index * 2, time, cloneStyle(XLSX.utils.encode_cell({r:1,c:block.start + 3 + index * 2}))))
+
+      for (let row = 2; row <= 28; row += 1) {
+        clearCellValue(row, block.start, styles.number)
+        clearCellValue(row, block.start + 1, styles.staff)
+        clearCellValue(row, block.start + 2, styles.note)
+        sessions.forEach((_, index) => {
+          clearCellValue(row, block.start + 3 + index * 2, styles.activity)
+          clearCellValue(row, block.start + 4 + index * 2, styles.group)
+        })
+      }
+
+      if (!included || !sourceDay) return
+      sourceStaff.slice(0, 27).forEach((member, index) => {
+        const row = index + 2
+        const status = staffingStatus(member, sourceDay, sourceProgramme, sourceDaysOff, sourceWorking, sourceSickness)
+        setCell(row, block.start, index + 1, styles.number)
+        setCell(row, block.start + 1, member.name, styles.staff)
+        if (status) {
+          const label = status === 'hol' ? 'HOL' : status === 'sick' ? 'SICK' : status === 'am_off' ? 'AM OFF' : status === 'pm_off' ? 'PM OFF' : 'OFF'
+          const fill = status === 'hol' ? 'holiday' : status === 'sick' ? 'sick' : 'timeoff'
+          setCell(row, block.start + 2, label, styles.note, fill)
+          sessions.forEach((_, sessionIndex) => {
+            setCell(row, block.start + 3 + sessionIndex * 2, label, styles.activity, fill)
+            setCell(row, block.start + 4 + sessionIndex * 2, '', styles.group, fill)
+          })
+          return
+        }
+        sessions.forEach((session, sessionIndex) => {
+          const duties = dutyFor(member, sourceDay, session)
+          if (!duties.length) return
+          const colour = duties.some((duty) => staffingColour(duty.code) === 'water') ? 'water' : duties.some((duty) => staffingColour(duty.code) === 'ropes') ? 'ropes' : 'normal'
+          setCell(row, block.start + 3 + sessionIndex * 2, duties.map((duty) => duty.code).join(' / '), styles.activity, colour)
+          setCell(row, block.start + 4 + sessionIndex * 2, duties.map((duty) => `G${duty.group}`).join(', '), styles.group, colour)
+        })
       })
-      return [cell(index + 1, 'number'), cell(member.name, baseStyle === 'normal' ? 'staff' : baseStyle), ...dutyCells]
+    })
+
+    if (selectedDays.length === 1) {
+      const chosen = normaliseDay(selectedDays[0])
+      const columns = (worksheet['!cols'] ?? Array.from({ length: 109 }, () => ({}))) as Array<Record<string, unknown>>
+      dayBlocks.forEach((block) => {
+        for (let col = block.start; col <= block.start + 12; col += 1) columns[col] = { ...(columns[col] ?? {}), hidden: block.key !== chosen }
+        if (block.start < 96) for (let col = block.start + 13; col <= block.start + 15; col += 1) columns[col] = { ...(columns[col] ?? {}), hidden: block.key !== chosen }
+      })
+      worksheet['!cols'] = columns
     }
-    let sheets = ''
-    if (selectedDays.length > 1) {
-      const columns = selectedDays.map(() => '<Column ss:Width="30"/><Column ss:Width="112"/>' + sessions.map(() => '<Column ss:Width="105"/>').join('') + '<Column ss:Width="18"/><Column ss:Width="18"/>').join('')
-      let rows = row(selectedDays.flatMap((day) => [cell(`DAILY STAFFING: ${day}`, 'title', blockWidth - 1), cell('', 'spacer'), cell('', 'spacer')]), 31)
-      rows += row(selectedDays.flatMap(() => [cell('No.', 'header'), cell('Staff', 'header'), ...sessions.map((session) => cell(`S${session}`, 'header')), cell('', 'spacer'), cell('', 'spacer')]), 28)
-      sourceStaff.forEach((member,index) => { rows += row(selectedDays.flatMap((day) => [...dayCells(day,member,index), cell('', 'spacer'), cell('', 'spacer')]),31) })
-      sheets = `<Worksheet ss:Name="Full Week"><Table>${columns}${rows}</Table><WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel"><PageSetup><Layout x:Orientation="Landscape"/><PageMargins x:Bottom="0.2" x:Left="0.15" x:Right="0.15" x:Top="0.2"/></PageSetup><FitToPage/><Print><FitWidth>1</FitWidth><FitHeight>1</FitHeight></Print></WorksheetOptions></Worksheet>`
-    } else {
-      const day = selectedDays[0]
-      const columns = '<Column ss:Width="32"/><Column ss:Width="118"/>' + sessions.map(() => '<Column ss:Width="116"/>').join('')
-      let rows = row([cell(`DAILY STAFFING: ${day}`, 'title', sessions.length + 1)],31)
-      rows += row([cell('No.','header'),cell('Staff','header'),...sessions.map((session)=>cell(`Session ${session}`,'header'))],28)
-      sourceStaff.forEach((member,index)=>{rows += row(dayCells(day,member,index),31)})
-      sheets = `<Worksheet ss:Name="${xmlEscape(day.slice(0,31))}"><Table>${columns}${rows}</Table><WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel"><PageSetup><Layout x:Orientation="Landscape"/><PageMargins x:Bottom="0.25" x:Left="0.2" x:Right="0.2" x:Top="0.25"/></PageSetup><FitToPage/><Print><FitWidth>1</FitWidth><FitHeight>1</FitHeight></Print></WorksheetOptions></Worksheet>`
-    }
-    const workbook = `<?xml version="1.0"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Styles><Style ss:ID="Default"><Font ss:FontName="Arial" ss:Size="9"/><Alignment ss:Vertical="Center" ss:WrapText="1"/></Style><Style ss:ID="normal"><Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders></Style><Style ss:ID="number" ss:Parent="normal"><Alignment ss:Horizontal="Center" ss:Vertical="Center"/></Style><Style ss:ID="staff" ss:Parent="normal"><Font ss:FontName="Arial" ss:Size="9" ss:Bold="1"/><Alignment ss:Horizontal="Left" ss:Vertical="Center"/></Style><Style ss:ID="header" ss:Parent="normal"><Font ss:FontName="Arial" ss:Size="9" ss:Bold="1"/><Interior ss:Color="#E7E6E6" ss:Pattern="Solid"/></Style><Style ss:ID="title" ss:Parent="normal"><Font ss:FontName="Arial" ss:Size="12" ss:Bold="1"/><Alignment ss:Horizontal="Left" ss:Vertical="Center"/><Interior ss:Color="#D9EAD3" ss:Pattern="Solid"/></Style><Style ss:ID="spacer"><Interior ss:Color="#FFFFFF" ss:Pattern="Solid"/></Style><Style ss:ID="water" ss:Parent="normal"><Interior ss:Color="#9DC3E6" ss:Pattern="Solid"/></Style><Style ss:ID="ropes" ss:Parent="normal"><Interior ss:Color="#F4B6C2" ss:Pattern="Solid"/></Style><Style ss:ID="holiday" ss:Parent="normal"><Interior ss:Color="#A9D18E" ss:Pattern="Solid"/><Font ss:FontName="Arial" ss:Size="9" ss:Bold="1"/></Style><Style ss:ID="sick" ss:Parent="normal"><Interior ss:Color="#FF6666" ss:Pattern="Solid"/><Font ss:FontName="Arial" ss:Size="9" ss:Bold="1"/></Style><Style ss:ID="timeoff" ss:Parent="normal"><Interior ss:Color="#FFF200" ss:Pattern="Solid"/><Font ss:FontName="Arial" ss:Size="9" ss:Bold="1"/></Style></Styles>${sheets}</Workbook>`
-    const url = URL.createObjectURL(new Blob([workbook], { type: 'application/vnd.ms-excel;charset=utf-8' }))
-    const link = document.createElement('a'); link.href = url; link.download = fileName; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000)
+
+    XLSX.writeFile(workbook, fileName, { bookType: 'xlsx', cellStyles: true, compression: true })
   }
 
-  function exportStaffingWeek() {
+  async function exportStaffingWeek() {
     if (!programme) return
-    createStaffingExcel(programme, assignments, staff, daysOff, workingByDay, sicknessByDay, programmeDays, `staffing-week-${programmeWeekKey(programme).replace(/[^a-z0-9]+/gi,'-')}.xls`)
+    try {
+      await createStaffingExcel(programme, assignments, staff, daysOff, workingByDay, sicknessByDay, programmeDays, `staffing-week-${programmeWeekKey(programme).replace(/[^a-z0-9]+/gi,'-')}.xlsx`)
+    } catch (error) {
+      setImportMessage(error instanceof Error ? error.message : 'The staffing workbook could not be downloaded.')
+    }
   }
 
-  function exportArchivedStaffing(archive: StaffingArchive, day?: string) {
+  async function exportArchivedStaffing(archive: StaffingArchive, day?: string) {
     const days = day ? [day] : Array.from(new Set(archive.programme.rows.map((row) => row.day)))
-    createStaffingExcel(archive.programme, archive.assignments, archive.staff, archive.daysOff, archive.workingByDay, archive.sicknessByDay, days, `staffing-${archive.weekKey.replace(/[^a-z0-9]+/gi,'-')}${day ? `-${day}` : ''}.xls`)
+    try {
+      await createStaffingExcel(archive.programme, archive.assignments, archive.staff, archive.daysOff, archive.workingByDay, archive.sicknessByDay, days, `staffing-${archive.weekKey.replace(/[^a-z0-9]+/gi,'-')}${day ? `-${day}` : ''}.xlsx`)
+    } catch (error) {
+      setImportMessage(error instanceof Error ? error.message : 'The archived staffing workbook could not be downloaded.')
+    }
   }
 
-  function exportDailyStaffing(day: string) {
+  async function exportDailyStaffing(day: string) {
     if (!programme || !day) return
-    createStaffingExcel(programme, assignments, staff, daysOff, workingByDay, sicknessByDay, [day], `${day}-daily-staffing.xls`)
+    try {
+      await createStaffingExcel(programme, assignments, staff, daysOff, workingByDay, sicknessByDay, [day], `${day}-daily-staffing.xlsx`)
+    } catch (error) {
+      setImportMessage(error instanceof Error ? error.message : 'The daily staffing workbook could not be downloaded.')
+    }
   }
 
   const filteredStaffingCells = populatedCells.filter(({ row, cell }) => {
@@ -2974,7 +3095,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.48</span></div>
+          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.58</span></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -3169,6 +3290,7 @@ function ManagerApp({
                     </div>
                   </section>
                 )}
+                </div>
               </>
             )}
           </Panel>
@@ -3186,7 +3308,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to accommodation, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v0.48</span>
+                  <span className="release-pill">v0.58</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
@@ -3299,22 +3421,21 @@ function ManagerApp({
               <EmptyProgramme onUpload={() => fileInputRef.current?.click()} />
             ) : (
               <>
-                <div className="staffing-view-switch" role="group" aria-label="Staffing view">
-                  <button
-                    className={staffingView === 'activity' ? 'active' : ''}
-                    onClick={() => setStaffingView('activity')}
-                  >
-                    Activity View
-                  </button>
-                  <button
-                    className={staffingView === 'calendar' ? 'active' : ''}
-                    onClick={() => setStaffingView('calendar')}
-                  >
-                    Calendar View
-                  </button>
+                <div className="staffing-view-toolbar">
+                  <div className="staffing-view-switch" role="group" aria-label="Staffing view">
+                    <button className={staffingView === 'activity' ? 'active' : ''} onClick={() => setStaffingView('activity')}>Activity View</button>
+                    <button className={staffingView === 'calendar' ? 'active' : ''} onClick={() => setStaffingView('calendar')}>Calendar View</button>
+                  </div>
+                  <div className="staffing-zoom-controls" role="group" aria-label="Staffing zoom">
+                    <button aria-label="Zoom out" disabled={staffingZoom <= 70} onClick={() => setStaffingZoom((current) => { const next = Math.max(70, current - 10); localStorage.setItem('acm-staffing-zoom', String(next)); return next })}>−</button>
+                    <strong>{staffingZoom}%</strong>
+                    <button aria-label="Zoom in" disabled={staffingZoom >= 150} onClick={() => setStaffingZoom((current) => { const next = Math.min(150, current + 10); localStorage.setItem('acm-staffing-zoom', String(next)); return next })}>+</button>
+                    <button className="zoom-reset" onClick={() => { setStaffingZoom(100); localStorage.setItem('acm-staffing-zoom', '100') }}>Reset</button>
+                  </div>
                 </div>
                 <div className="staffing-controls">
-                  <div className="day-tabs" role="tablist" aria-label="Staffing day">
+                  <div className="staffing-day-row">
+                  <div className="day-tabs staffing-day-tabs" role="tablist" aria-label="Staffing day">
                     {programmeDays.map((day) => (
                       <button
                         key={day}
@@ -3328,8 +3449,9 @@ function ManagerApp({
                       </button>
                     ))}
                   </div>
+                  </div>
 
-                  <div className="staffing-actions">
+                  <div className="staffing-actions staffing-management-row">
                     <button
                       className="secondary-action"
                       onClick={() =>
@@ -3374,8 +3496,10 @@ function ManagerApp({
                       <WandSparkles size={17} />
                       Auto-fill staff
                     </button>
-                    <button className="print-button" onClick={() => exportDailyStaffing(activeStaffingDay)}><FileSpreadsheet size={17}/>Download day</button>
-                    <button className="print-button" onClick={exportStaffingWeek}><FileSpreadsheet size={17}/>Download full week</button>
+                  </div>
+                  <div className="staffing-actions staffing-download-row">
+                    <button className="print-button" onClick={() => void exportDailyStaffing(activeStaffingDay)}><FileSpreadsheet size={17}/>Download day</button>
+                    <button className="print-button" onClick={() => void exportStaffingWeek()}><FileSpreadsheet size={17}/>Download full week</button>
                     {canViewLogs && <button className="secondary-action" onClick={() => archiveSnapshot(programme, true)}><History size={17}/>Archive week</button>}
                   </div>
                 </div>
@@ -3583,6 +3707,7 @@ function ManagerApp({
                   </section>
                 )}
 
+                <div className="staffing-zoom-stage" style={{ zoom: staffingZoom / 100 }}>
                 {staffingView === 'activity' ? (
                   <div className="staffing-grid">
                     {filteredStaffingCells.map(({ row, cell }) => {
@@ -3598,7 +3723,7 @@ function ManagerApp({
                         >
                           <div className="staffing-card-top">
                             <span>
-                              {row.day} · Session {row.session}
+                              {row.day} · Session {row.session} · {sessionTime(row.session)}
                             </span>
                             <span>
                               {qualificationMissing ? 'Qualification missing' : assignedStaff ? 'Ready' : 'Needs instructor'}
@@ -3649,7 +3774,7 @@ function ManagerApp({
                       ))}
                       {staffingCalendarSessions.map((session) => (
                         <Fragment key={`calendar-session-${session}`}>
-                          <div className="staffing-calendar-session">S{session}</div>
+                          <div className="staffing-calendar-session"><strong>Session {session}</strong><span>{sessionTime(session)}</span></div>
                           {programmeDays.map((day) => {
                             const items = staffingCalendarCells.filter(
                               ({ row }) => row.day === day && row.session === session,
@@ -3685,6 +3810,7 @@ function ManagerApp({
                     </div>
                   </section>
                 )}
+                </div>
               </>
             )}
           </Panel>
@@ -3899,14 +4025,24 @@ function ManagerApp({
 
 
         {page === 'staffingLogs' && canViewLogs && (
-          <Panel title="Staffing Logs" onBack={() => setPage('admin')}>
-            <section className="staffing-log-intro"><div><p className="eyebrow">Permanent weekly records</p><h3>Archived staffing weeks</h3><p>These snapshots do not change when a later programme is uploaded or edited.</p></div>{programme && <button className="primary" onClick={() => archiveSnapshot(programme, true)}><History size={17}/>Archive current week</button>}</section>
-            <div className="history-list">{staffingArchives.length === 0 ? <p>No staffing weeks have been archived yet.</p> : staffingArchives.map((archive) => {
-              const days = Array.from(new Set(archive.programme.rows.map((row) => row.day)))
-              return <article className="history-card staffing-log-card" key={archive.id}><div><h3>{archive.weekKey}</h3><p>{archive.title} · {archive.sourceFileName}</p><small>Archived {new Date(archive.archivedAt).toLocaleString('en-GB')} by {archive.archivedBy}</small></div><div className="staffing-log-actions"><button className="primary" onClick={() => exportArchivedStaffing(archive)}><FileSpreadsheet size={16}/>Download full week</button>{days.map((day) => <button className="secondary-action" key={day} onClick={() => exportArchivedStaffing(archive, day)}>{day}</button>)}</div></article>
-            })}</div>
+          <Panel title={selectedStaffingLogMonth ? staffingMonthLabel(selectedStaffingLogMonth) : 'Staffing Logs'} onBack={() => selectedStaffingLogMonth ? setSelectedStaffingLogMonth('') : setPage('admin')}>
+            <section className="staffing-log-intro"><div><p className="eyebrow">Permanent weekly records</p><h3>{selectedStaffingLogMonth ? `Weeks in ${staffingMonthLabel(selectedStaffingLogMonth)}` : 'Archived staffing months'}</h3><p>Archived weeks are locked snapshots and do not change when a later programme is edited or uploaded.</p></div>{programme && !selectedStaffingLogMonth && <button className="primary" onClick={() => archiveSnapshot(programme, true)}><History size={17}/>Archive current week</button>}</section>
+            {!selectedStaffingLogMonth ? (
+              <div className="staffing-month-grid">
+                {staffingArchives.length === 0 ? <p>No staffing weeks have been archived yet.</p> : Array.from(new Set(staffingArchives.map(staffingArchiveMonth))).sort().reverse().map((monthKey) => {
+                  const count = staffingArchives.filter((archive) => staffingArchiveMonth(archive) === monthKey).length
+                  return <button className="staffing-month-card" key={monthKey} onClick={() => setSelectedStaffingLogMonth(monthKey)}><History size={25}/><span><strong>{staffingMonthLabel(monthKey)}</strong><small>{count} archived week{count === 1 ? '' : 's'}</small></span><span className="staffing-month-open">Open</span></button>
+                })}
+              </div>
+            ) : (
+              <div className="history-list">{staffingArchives.filter((archive) => staffingArchiveMonth(archive) === selectedStaffingLogMonth).sort((a,b) => b.archivedAt.localeCompare(a.archivedAt)).map((archive) => {
+                const days = Array.from(new Set(archive.programme.rows.map((row) => row.day)))
+                return <article className="history-card staffing-log-card" key={archive.id}><div><h3>{archive.weekKey}</h3><p>{archive.title} · {archive.sourceFileName}</p><small>Archived {new Date(archive.archivedAt).toLocaleString('en-GB')} by {archive.archivedBy}</small></div><div className="staffing-log-actions"><button className="primary" onClick={() => exportArchivedStaffing(archive)}><FileSpreadsheet size={16}/>Download full week</button>{days.map((day) => <button className="secondary-action" key={day} onClick={() => exportArchivedStaffing(archive, day)}>{day}</button>)}</div></article>
+              })}</div>
+            )}
           </Panel>
         )}
+
 
         {page === 'formerStaff' && canManageStaff && (<Panel title="Former Staff" onBack={() => setPage('admin')}><div className="history-list">{formerStaff.length === 0 ? <p>No former staff records yet.</p> : formerStaff.map((record)=><article className="history-card" key={record.member.id}><div><h3>{record.member.name}</h3><p>{roleLabel(resolvedRole(record.member))} · {record.member.staffCode ?? 'Legacy record'}</p><p>Started: {record.member.startDate ?? 'Not recorded'} · Left: {record.endDate}</p>{record.notes && <p>{record.notes}</p>}</div><button className="primary" onClick={()=>reinstateFormer(record)}>Reinstate Staff</button></article>)}</div></Panel>)}
 

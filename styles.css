@@ -1605,3 +1605,54 @@ button { cursor: pointer; }
 .staffing-log-intro{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:18px;margin-bottom:18px;border:1px solid #cfe1db;border-radius:18px;background:linear-gradient(135deg,#f3faf7,#e8f4ef)}
 .staffing-log-intro h3,.staffing-log-intro p{margin:4px 0}.staffing-log-card{align-items:flex-start}.staffing-log-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.staffing-log-actions button{display:inline-flex;align-items:center;gap:6px}
 @media(max-width:760px){.staffing-log-intro{align-items:flex-start;flex-direction:column}.staffing-log-actions{justify-content:flex-start}}
+
+/* v0.57 staffing day navigation and monthly staffing logs */
+.staffing-day-row{width:100%;overflow-x:auto;padding:2px 0 7px;scrollbar-width:thin}
+.staffing-day-tabs{display:grid;grid-template-columns:repeat(7,minmax(118px,1fr));gap:8px;min-width:850px;width:100%}
+.staffing-day-tabs button{width:100%;min-height:45px;white-space:nowrap}
+.staffing-action-row{width:100%;padding-top:2px;border-top:1px solid #e3ece8}
+.staffing-calendar-session{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;text-align:center}
+.staffing-calendar-session span{font-size:.67rem;font-weight:700;color:#667b76;line-height:1.15}
+.staffing-month-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(245px,1fr));gap:14px}
+.staffing-month-card{display:flex;align-items:center;gap:13px;width:100%;padding:18px;border:1px solid #d5e3de;border-radius:16px;background:#fff;text-align:left;color:#214f47;box-shadow:0 5px 16px rgba(24,74,63,.06)}
+.staffing-month-card:hover{border-color:#72a99b;transform:translateY(-1px)}
+.staffing-month-card span:nth-child(2){display:flex;flex-direction:column;gap:4px;flex:1}.staffing-month-card strong{font-size:1rem}.staffing-month-card small{color:#71827e}.staffing-month-open{font-weight:850;color:#1c675b}
+@media(max-width:760px){.staffing-day-tabs{grid-template-columns:repeat(7,minmax(108px,1fr));min-width:790px}.staffing-actions>button{flex:1 1 145px}.staffing-month-grid{grid-template-columns:1fr}}
+
+/* v0.58 full-width day menu and separate staffing controls */
+.staffing-day-row{overflow:visible;padding-bottom:10px}
+.staffing-day-tabs{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));min-width:0;width:100%;gap:9px}
+.staffing-day-tabs button{min-width:0;width:100%;min-height:48px;padding:10px 6px;font-size:.86rem}
+.staffing-management-row,.staffing-download-row{display:flex;width:100%;gap:10px;flex-wrap:wrap}
+.staffing-management-row{padding-top:10px;border-top:1px solid #e3ece8}
+.staffing-download-row{padding-top:10px;margin-top:2px;border-top:1px dashed #d5e3de}
+@media(max-width:900px){.staffing-day-tabs{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:520px){.staffing-day-tabs{grid-template-columns:repeat(2,minmax(0,1fr))}.staffing-management-row>button,.staffing-download-row>button{flex:1 1 100%}}
+
+/* v0.59 staffing toolbar, day navigation and on-screen zoom */
+.staffing-view-toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:12px}
+.staffing-zoom-controls{display:flex;align-items:center;gap:7px;padding:6px 8px;border:1px solid #d5e3de;border-radius:10px;background:#fff}
+.staffing-zoom-controls button{min-width:38px;height:36px;border:1px solid #c5d3ce;border-radius:8px;background:#fff;font-weight:900;font-size:1.05rem;cursor:pointer}
+.staffing-zoom-controls button:disabled{opacity:.4;cursor:not-allowed}
+.staffing-zoom-controls strong{min-width:50px;text-align:center;font-size:.88rem}
+.staffing-zoom-controls .zoom-reset{min-width:58px;padding:0 10px;font-size:.78rem}
+.staffing-zoom-stage{transform-origin:top left;width:100%;overflow:visible}
+.staffing-day-row{width:100%;overflow:visible}
+.staffing-day-tabs{display:grid!important;grid-template-columns:repeat(7,minmax(92px,1fr))!important;gap:9px!important;width:100%!important;min-width:0!important}
+.staffing-day-tabs button{min-width:0!important;width:100%!important;white-space:nowrap!important}
+@media(max-width:900px){.staffing-day-tabs{grid-template-columns:repeat(4,minmax(105px,1fr))!important}}
+@media(max-width:560px){.staffing-view-toolbar{align-items:stretch}.staffing-zoom-controls{justify-content:center}.staffing-day-tabs{grid-template-columns:repeat(2,minmax(118px,1fr))!important}}
+
+/* v0.59 staffing day visibility and on-screen zoom */
+.staffing-view-toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:12px}
+.staffing-zoom-controls{display:flex;align-items:center;gap:7px;padding:6px 8px;border:1px solid #d5e3de;border-radius:10px;background:#fff}
+.staffing-zoom-controls button{min-width:38px;height:36px;border:1px solid #c5d3ce;border-radius:8px;background:#fff;font-weight:900;font-size:1.05rem;cursor:pointer}
+.staffing-zoom-controls button:disabled{opacity:.4;cursor:not-allowed}
+.staffing-zoom-controls strong{min-width:50px;text-align:center;font-size:.88rem}
+.staffing-zoom-controls .zoom-reset{min-width:58px;padding:0 10px;font-size:.78rem}
+.staffing-zoom-stage{transform-origin:top left;width:100%;overflow:visible}
+.staffing-day-row{width:100%;overflow:visible}
+.staffing-day-tabs{display:grid!important;grid-template-columns:repeat(7,minmax(92px,1fr))!important;gap:9px!important;width:100%!important;min-width:0!important}
+.staffing-day-tabs button{min-width:0!important;width:100%!important;white-space:nowrap!important}
+@media(max-width:900px){.staffing-day-tabs{grid-template-columns:repeat(4,minmax(105px,1fr))!important}}
+@media(max-width:560px){.staffing-view-toolbar{align-items:stretch}.staffing-zoom-controls{justify-content:center}.staffing-day-tabs{grid-template-columns:repeat(2,minmax(118px,1fr))!important}}

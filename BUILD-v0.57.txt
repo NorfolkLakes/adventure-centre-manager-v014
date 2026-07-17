@@ -1,0 +1,14 @@
+Adventure Centre Manager v0.57
+
+Build on your Mac:
+rm -rf node_modules
+npm ci --no-audit --no-fund
+npm run build
+
+Changes:
+- Staffing Monday-Sunday day menu has its own full-width row.
+- Action/download buttons are on a separate row.
+- Session times: 09:10-10:30, 10:45-12:15, 14:00-15:30, 15:45-17:15, 19:00-20:30.
+- Excel staffing downloads include activity names and group numbers.
+- Staffing logs are organised Month -> Week -> Day downloads.
+- Archived weeks remain fixed when the live programme changes.

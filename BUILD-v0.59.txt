@@ -1,0 +1,9 @@
+Adventure Centre Manager v0.59
+
+Included:
+- Every new programme upload automatically archives the current staffing snapshot first, including replacement programmes for the same week.
+- Historical snapshots remain unchanged and are organised under Staffing Logs by month and week.
+- Daily Staffing day tabs have their own responsive full-width row.
+- Activity View and Calendar View include persistent 70%-150% zoom controls.
+- Staffing downloads use the exact uploaded staffing workbook as public/staffing-template.xlsx.
+- Daily and full-week downloads populate the existing template cells, with separate activity and group columns.

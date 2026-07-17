@@ -1,0 +1,3 @@
+Adventure Centre Manager v0.58
+
+Staffing day menu redesigned and staffing Excel downloads now use the uploaded Sheet1 workbook as the exact template.
