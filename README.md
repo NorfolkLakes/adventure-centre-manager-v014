@@ -312,7 +312,7 @@ Adds permanent and loan staff lifecycle management, Former Staff and Loan Staff 
 - Calculates new permanent staff from their employment start date to the end of the selected month.
 - Excludes weekends, loan staff, OFF days, holidays and sickness from worked-day totals.
 
-## v0.56 staffing downloads and archive
+## v0.57 staffing downloads and archive
 
 - Staffing downloads auto-read the current programme and assignments, so programme edits are reflected immediately.
 - Download the selected day or the complete week.
@@ -321,3 +321,10 @@ Adds permanent and loan staff lifecycle management, Former Staff and Loan Staff 
 - When a different programme week is imported, the previous staffing week is archived automatically.
 - Admin → Staffing Logs keeps locked weekly snapshots and allows full-week or individual-day downloads.
 - Existing staff assignments are migrated to matching day/session/group cells when a revised programme is imported.
+
+
+## v0.57
+- Full-width Monday–Sunday staffing day navigation separate from action buttons.
+- Session times shown on screen and in staffing Excel exports.
+- Activity names and group numbers included in downloaded staffing cells.
+- Staffing Logs organised Month → Week with locked historical downloads.
