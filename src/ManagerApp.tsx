@@ -2974,18 +2974,17 @@ function ManagerApp({
   }
 
   async function createStaffingExcel(sourceProgramme: ProgrammeImport, sourceAssignments: StaffingAssignment, sourceStaff: StaffMember[], sourceDaysOff: StaffDayOff[], sourceWorking: Record<string,string[]>, sourceSickness: Record<string,string[]>, selectedDays: string[], fileName: string) {
+    const ExcelJS = (window as Window & { ExcelJS?: any }).ExcelJS
+    if (!ExcelJS) throw new Error('The Excel export library did not load. Refresh the page and try again.')
+
     const response = await fetch(`${import.meta.env.BASE_URL}staffing-template.xlsx`)
     if (!response.ok) throw new Error('The staffing Excel template could not be loaded.')
 
-    // SheetJS writes a fresh, standards-compliant XLSX package. The previous
-    // low-level ZIP/XML rewriter could create files that Excel needed to repair.
-    const workbook = XLSX.read(await response.arrayBuffer(), {
-      type: 'array',
-      cellStyles: true,
-      cellDates: true,
-      dense: false,
-    })
-    const template = workbook.Sheets[workbook.SheetNames[0]]
+    // ExcelJS writes real cell styles (including fills) and produces an XLSX
+    // package that Microsoft Excel opens without a repair warning.
+    const templateWorkbook = new ExcelJS.Workbook()
+    await templateWorkbook.xlsx.load(await response.arrayBuffer())
+    const template = templateWorkbook.worksheets[0]
     if (!template) throw new Error('The staffing template worksheet is missing.')
 
     const normaliseDay = (value: string) => value.trim().toLowerCase().slice(0, 3)
@@ -3000,69 +2999,76 @@ function ManagerApp({
     const blockWidth = 13
     const blockGap = 3
     const rowCount = 38
-    const output = XLSX.utils.aoa_to_sheet([])
+    const outputWorkbook = new ExcelJS.Workbook()
+    outputWorkbook.creator = 'Norfolk Lakes'
+    outputWorkbook.title = fileName.replace(/\.xlsx$/i, '')
+    const output = outputWorkbook.addWorksheet('Staffing', {
+      pageSetup: { ...template.pageSetup },
+      properties: { ...template.properties },
+      views: template.views ? JSON.parse(JSON.stringify(template.views)) : undefined,
+    })
 
-    const cloneValue = <T,>(value: T): T => {
-      if (value === undefined || value === null) return value
-      return JSON.parse(JSON.stringify(value)) as T
-    }
-    const sourceCell = (row: number, column: number) => template[XLSX.utils.encode_cell({ r: row, c: column })]
-    const destinationCell = (row: number, column: number) => XLSX.utils.encode_cell({ r: row, c: column })
+    const clone = <T,>(value: T): T => value == null ? value : JSON.parse(JSON.stringify(value)) as T
 
-    // Build only the requested tables. Daily = one A:M table. Weekly = one
-    // contiguous table block for each programme day, with no copied tables below.
+    // Copy only the single template table for every requested programme day.
+    // This prevents hidden, duplicate and historic tables from entering exports.
     days.forEach((_, dayIndex) => {
-      const destinationStart = dayIndex * (blockWidth + blockGap)
-      for (let row = 0; row < rowCount; row += 1) {
-        for (let column = 0; column < blockWidth; column += 1) {
-          const original = sourceCell(row, column)
-          if (!original) continue
-          output[destinationCell(row, destinationStart + column)] = cloneValue(original)
+      const destinationStart = dayIndex * (blockWidth + blockGap) + 1
+      for (let column = 1; column <= blockWidth; column += 1) {
+        const sourceColumn = template.getColumn(column)
+        const targetColumn = output.getColumn(destinationStart + column - 1)
+        targetColumn.width = sourceColumn.width
+        targetColumn.hidden = false
+        targetColumn.outlineLevel = sourceColumn.outlineLevel
+      }
+      for (let row = 1; row <= rowCount; row += 1) {
+        const sourceRow = template.getRow(row)
+        const targetRow = output.getRow(row)
+        if (dayIndex === 0) {
+          targetRow.height = sourceRow.height
+          targetRow.hidden = false
+          targetRow.outlineLevel = sourceRow.outlineLevel
+        }
+        for (let column = 1; column <= blockWidth; column += 1) {
+          const sourceCell = sourceRow.getCell(column)
+          const targetCell = targetRow.getCell(destinationStart + column - 1)
+          targetCell.value = clone(sourceCell.value)
+          targetCell.style = clone(sourceCell.style)
+          if (sourceCell.numFmt) targetCell.numFmt = sourceCell.numFmt
+          if (sourceCell.note) targetCell.note = clone(sourceCell.note)
         }
       }
     })
 
-    output['!rows'] = cloneValue((template as XLSX.WorkSheet)['!rows'] ?? []).slice(0, rowCount)
-    output['!cols'] = []
-    days.forEach((_, dayIndex) => {
-      const destinationStart = dayIndex * (blockWidth + blockGap)
-      for (let column = 0; column < blockWidth; column += 1) {
-        output['!cols']![destinationStart + column] = cloneValue((template as XLSX.WorkSheet)['!cols']?.[column] ?? { wch: 10 })
-      }
-      if (dayIndex < days.length - 1) {
-        for (let gap = 0; gap < blockGap; gap += 1) output['!cols']![destinationStart + blockWidth + gap] = { wch: 2 }
-      }
-    })
-
-    const templateMerges = ((template as XLSX.WorkSheet)['!merges'] ?? []) as XLSX.Range[]
-    output['!merges'] = []
+    const templateMerges: string[] = clone((template as any).model?.merges ?? [])
     days.forEach((_, dayIndex) => {
       const offset = dayIndex * (blockWidth + blockGap)
-      templateMerges
-        .filter((merge) => merge.s.r < rowCount && merge.e.r < rowCount && merge.s.c < blockWidth && merge.e.c < blockWidth)
-        .forEach((merge) => output['!merges']!.push({
-          s: { r: merge.s.r, c: merge.s.c + offset },
-          e: { r: merge.e.r, c: merge.e.c + offset },
-        }))
+      templateMerges.forEach((merge) => {
+        const range = XLSX.utils.decode_range(merge)
+        if (range.s.r >= rowCount || range.e.r >= rowCount || range.s.c >= blockWidth || range.e.c >= blockWidth) return
+        output.mergeCells(
+          range.s.r + 1,
+          range.s.c + 1 + offset,
+          range.e.r + 1,
+          range.e.c + 1 + offset,
+        )
+      })
     })
 
-    const noFill = { patternType: 'none' }
     const fills = {
-      water: { patternType: 'solid', fgColor: { rgb: '9DC3E6' }, bgColor: { rgb: '9DC3E6' } },
-      ropes: { patternType: 'solid', fgColor: { rgb: 'F4B6C2' }, bgColor: { rgb: 'F4B6C2' } },
-      hol: { patternType: 'solid', fgColor: { rgb: 'C6E0B4' }, bgColor: { rgb: 'C6E0B4' } },
-      off: { patternType: 'solid', fgColor: { rgb: 'FFE699' }, bgColor: { rgb: 'FFE699' } },
-      sick: { patternType: 'solid', fgColor: { rgb: 'F4CCCC' }, bgColor: { rgb: 'F4CCCC' } },
-    }
+      water: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF9DC3E6' }, bgColor: { argb: 'FF9DC3E6' } },
+      ropes: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF4B6C2' }, bgColor: { argb: 'FFF4B6C2' } },
+      hol: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFC6E0B4' }, bgColor: { argb: 'FFC6E0B4' } },
+      off: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFE699' }, bgColor: { argb: 'FFFFE699' } },
+      sick: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF4CCCC' }, bgColor: { argb: 'FFF4CCCC' } },
+    } as const
+
     const setCell = (row: number, column: number, value: string | number, fill: keyof typeof fills | null = null) => {
-      const address = destinationCell(row, column)
-      const cell = output[address] ?? { t: typeof value === 'number' ? 'n' : 's', v: value }
-      cell.t = typeof value === 'number' ? 'n' : 's'
-      cell.v = value
-      delete cell.f
-      cell.s = cloneValue(cell.s ?? {})
-      cell.s.fill = cloneValue(fill ? fills[fill] : noFill)
-      output[address] = cell
+      const cell = output.getRow(row + 1).getCell(column + 1)
+      cell.value = value
+      // Keep borders, font, alignment and number formatting from the template.
+      // Only replace the fill so activity/status colours are visible in Excel.
+      cell.fill = fill ? clone(fills[fill]) : { type: 'pattern', pattern: 'none' }
     }
 
     const dutyFor = (member: StaffMember, day: string, session: string) => sourceProgramme.rows
@@ -3076,7 +3082,6 @@ function ManagerApp({
       setCell(0, start, `DAILY STAFFING: ${day}`)
       sessionTimes.forEach((time, index) => setCell(1, start + 3 + index * 2, time))
 
-      // Clear the data area while retaining template borders and alignment.
       for (let row = 2; row < rowCount; row += 1) {
         for (let column = 0; column < blockWidth; column += 1) setCell(row, start + column, '')
       }
@@ -3112,17 +3117,16 @@ function ManagerApp({
       })
     })
 
-    const finalColumn = (days.length - 1) * (blockWidth + blockGap) + blockWidth - 1
-    output['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: rowCount - 1, c: finalColumn } })
-    output['!autofilter'] = undefined
-    output['!protect'] = undefined
-    output['!margins'] = cloneValue((template as XLSX.WorkSheet)['!margins'])
-    output['!pageSetup'] = cloneValue((template as XLSX.WorkSheet)['!pageSetup'])
+    output.pageSetup = {
+      ...clone(template.pageSetup),
+      printArea: `A1:${XLSX.utils.encode_col((days.length - 1) * (blockWidth + blockGap) + blockWidth - 1)}${rowCount}`,
+      fitToPage: true,
+      fitToWidth: 1,
+      fitToHeight: 1,
+    }
+    output.headerFooter = clone(template.headerFooter)
 
-    const cleanWorkbook = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(cleanWorkbook, output, 'Staffing')
-    cleanWorkbook.Props = { Title: fileName.replace(/\.xlsx$/i, ''), Company: 'Norfolk Lakes' }
-    const bytes = XLSX.write(cleanWorkbook, { bookType: 'xlsx', type: 'array', cellStyles: true, compression: true }) as ArrayBuffer
+    const bytes = await outputWorkbook.xlsx.writeBuffer()
     const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
