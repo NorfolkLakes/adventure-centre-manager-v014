@@ -530,10 +530,11 @@ function ManagerApp({
   const [holidaySummaryStaffId, setHolidaySummaryStaffId] = useState('')
   const [holidaySickDate, setHolidaySickDate] = useState('')
   const [daysOff, setDaysOff] = useState<StaffDayOff[]>([])
-  const [daysOffView, setDaysOffView] = useState<'month' | 'week'>('month')
+  const [daysOffView, setDaysOffView] = useState<'month' | 'week' | 'day'>('month')
   const [daysOffWeek, setDaysOffWeek] = useState(() => {
     const now = new Date(); const monday = new Date(now); monday.setDate(now.getDate() - ((now.getDay() + 6) % 7)); return monday
   })
+  const [daysOffDay, setDaysOffDay] = useState(() => dateKey(new Date()))
   const [daysOffStaffId, setDaysOffStaffId] = useState('')
   const [daysOffStatus, setDaysOffStatus] = useState<DayOffStatus>('off')
   const [daysOffStart, setDaysOffStart] = useState('')
@@ -718,11 +719,80 @@ function ManagerApp({
     return status === 'am_off' ? 'AM OFF' : status === 'pm_off' ? 'PM OFF' : status.toUpperCase()
   }
 
-  function printDaysOff(view: 'month' | 'week') {
+  function printDaysOff(view: 'month' | 'week' | 'day') {
     document.body.setAttribute('data-print-days-off', view)
     window.print()
     setTimeout(() => document.body.removeAttribute('data-print-days-off'), 250)
   }
+
+  function downloadDaysOffExcel(view: 'month' | 'week' | 'day') {
+    const escapeXml = (value: unknown) => String(value ?? '')
+      .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;')
+    const statusStyle = (status?: DayOffStatus) => status ? `status-${status}` : 'working'
+    const cell = (value: unknown, style = 'grid', mergeAcross = 0) =>
+      `<Cell ss:StyleID="${style}"${mergeAcross ? ` ss:MergeAcross="${mergeAcross}"` : ''}><Data ss:Type="String">${escapeXml(value)}</Data></Cell>`
+    const row = (cells: string[], height = 22) => `<Row ss:Height="${height}">${cells.join('')}</Row>`
+    const workbookStart = `<?xml version="1.0"?><?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet" xmlns:html="http://www.w3.org/TR/REC-html40">
+<Styles>
+<Style ss:ID="Default" ss:Name="Normal"><Alignment ss:Vertical="Center"/><Font ss:FontName="Arial" ss:Size="11"/></Style>
+<Style ss:ID="title"><Alignment ss:Horizontal="Center" ss:Vertical="Center"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="2"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="2"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="2"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="2"/></Borders><Font ss:FontName="Arial" ss:Size="16" ss:Bold="1"/></Style>
+<Style ss:ID="header"><Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders><Font ss:FontName="Arial" ss:Size="11" ss:Bold="1"/><Interior ss:Color="#E7E6E6" ss:Pattern="Solid"/></Style>
+<Style ss:ID="grid"><Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders><Font ss:FontName="Arial" ss:Size="11"/></Style>
+<Style ss:ID="staff"><Alignment ss:Horizontal="Center" ss:Vertical="Center"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders><Font ss:FontName="Arial" ss:Size="11" ss:Bold="1"/></Style>
+<Style ss:ID="working"><Alignment ss:Horizontal="Center" ss:Vertical="Center"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders></Style>
+<Style ss:ID="status-off"><Alignment ss:Horizontal="Center" ss:Vertical="Center"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders><Interior ss:Color="#FFF200" ss:Pattern="Solid"/></Style>
+<Style ss:ID="status-hol"><Alignment ss:Horizontal="Center" ss:Vertical="Center"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders><Interior ss:Color="#00B050" ss:Pattern="Solid"/></Style>
+<Style ss:ID="status-sick"><Alignment ss:Horizontal="Center" ss:Vertical="Center"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders><Interior ss:Color="#FF6666" ss:Pattern="Solid"/></Style>
+<Style ss:ID="status-am_off"><Alignment ss:Horizontal="Center" ss:Vertical="Center"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders><Interior ss:Color="#FFF200" ss:Pattern="Solid"/></Style>
+<Style ss:ID="status-pm_off"><Alignment ss:Horizontal="Center" ss:Vertical="Center"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Left" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1"/><Border ss:Position="Top" ss:LineStyle="Continuous" ss:Weight="1"/></Borders><Interior ss:Color="#FFF200" ss:Pattern="Solid"/></Style>
+</Styles>`
+    let sheetName = 'Days Off'
+    let columns = ''
+    let rows = ''
+    let printLandscape = true
+    let fileName = 'days-off.xls'
+
+    if (view === 'week') {
+      const dates = daysOffWeekDates()
+      sheetName = 'Weekly Staffing'
+      fileName = `weekly-staffing-${dateKey(dates[0])}.xls`
+      columns = '<Column ss:Width="42"/><Column ss:Width="125"/>' + dates.map(() => '<Column ss:Width="86"/>').join('')
+      rows += row([cell('WEEKLY STAFFING:', 'title', 8)], 30)
+      rows += row([cell('', 'grid', 8)], 8)
+      rows += row([cell('No.', 'header'), cell('Staff', 'header'), ...dates.map(d => cell(d.toLocaleDateString('en-GB',{weekday:'short'}).toUpperCase(),'header'))], 23)
+      rows += row([cell('', 'header'), cell('', 'header'), ...dates.map(d => cell(d.toLocaleDateString('en-GB',{day:'numeric',month:'short'}),'header'))], 23)
+      staff.forEach((member, index) => {
+        rows += row([cell(index+1,'grid'),cell(member.name,'staff'),...dates.map(d=>{const entry=daysOff.find(x=>x.staff_id===member.id&&x.day===dateKey(d));return cell(entry?dayOffLabel(entry.status):'',statusStyle(entry?.status))})])
+      })
+    } else if (view === 'day') {
+      const chosen = parseDateKey(daysOffDay)
+      sheetName = 'Daily Days Off'
+      fileName = `daily-days-off-${daysOffDay}.xls`
+      printLandscape = false
+      columns = '<Column ss:Width="42"/><Column ss:Width="140"/><Column ss:Width="100"/><Column ss:Width="190"/>'
+      rows += row([cell('DAILY STAFFING:', 'title', 3)], 30)
+      rows += row([cell(chosen.toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'}),'header',3)],26)
+      rows += row([cell('No.','header'),cell('Staff','header'),cell('Status','header'),cell('Availability','header')],24)
+      staff.forEach((member,index)=>{const entry=daysOff.find(x=>x.staff_id===member.id&&x.day===daysOffDay);const availability=!entry?'Available all day':entry.status==='am_off'?'Unavailable Sessions 1 & 2':entry.status==='pm_off'?'Unavailable Session 5':'Unavailable all day';rows+=row([cell(index+1),cell(member.name,'staff'),cell(entry?dayOffLabel(entry.status):'',statusStyle(entry?.status)),cell(availability)])})
+    } else {
+      const year=holidayMonth.getFullYear(), month=holidayMonth.getMonth(), count=new Date(year,month+1,0).getDate()
+      const dates=Array.from({length:count},(_,i)=>new Date(year,month,i+1))
+      sheetName = 'Monthly Days Off'
+      fileName = `monthly-days-off-${year}-${String(month+1).padStart(2,'0')}.xls`
+      columns = '<Column ss:Width="38"/><Column ss:Width="110"/>' + dates.map(()=>'<Column ss:Width="34"/>').join('')
+      rows += row([cell(`MONTHLY DAYS OFF — ${holidayMonth.toLocaleDateString('en-GB',{month:'long',year:'numeric'}).toUpperCase()}`,'title',count+1)],30)
+      rows += row([cell('No.','header'),cell('Staff','header'),...dates.map(d=>cell(`${d.toLocaleDateString('en-GB',{weekday:'short'})} ${d.getDate()}`,'header'))],30)
+      staff.forEach((member,index)=>{rows+=row([cell(index+1),cell(member.name,'staff'),...dates.map(d=>{const entry=daysOff.find(x=>x.staff_id===member.id&&x.day===dateKey(d));return cell(entry?dayOffLabel(entry.status):'',statusStyle(entry?.status))})])})
+    }
+
+    const xml = `${workbookStart}<Worksheet ss:Name="${escapeXml(sheetName)}"><Table>${columns}${rows}</Table><WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel"><PageSetup><Layout x:Orientation="${printLandscape?'Landscape':'Portrait'}"/><PageMargins x:Bottom="0.35" x:Left="0.25" x:Right="0.25" x:Top="0.35"/></PageSetup><FitToPage/><Print><FitWidth>1</FitWidth><FitHeight>1</FitHeight><ValidPrinterInfo/></Print><Selected/></WorksheetOptions></Worksheet></Workbook>`
+    const blob = new Blob([xml], { type: 'application/vnd.ms-excel;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a'); link.href = url; link.download = fileName; link.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
+
 
   async function loadHolidays() {
     const { data, error } = await supabase
@@ -947,6 +1017,11 @@ function ManagerApp({
   function dateKey(date: Date) {
     const year = date.getFullYear(); const month = String(date.getMonth()+1).padStart(2,'0'); const day = String(date.getDate()).padStart(2,'0')
     return `${year}-${month}-${day}`
+  }
+
+  function parseDateKey(value: string) {
+    const [year, month, day] = value.split('-').map(Number)
+    return new Date(year, month - 1, day)
   }
 
   function unavailableStaffIdsForSession(day: string, session?: string): Set<string> {
@@ -3450,9 +3525,13 @@ function ManagerApp({
             <div className="days-off-toolbar no-print">
               <div className="staffing-view-toggle">
                 <button className={daysOffView === 'month' ? 'active' : ''} onClick={() => setDaysOffView('month')}>Month View</button>
-                <button className={daysOffView === 'week' ? 'active' : ''} onClick={() => setDaysOffView('week')}>Days Off View</button>
+                <button className={daysOffView === 'week' ? 'active' : ''} onClick={() => setDaysOffView('week')}>Weekly View</button>
+                <button className={daysOffView === 'day' ? 'active' : ''} onClick={() => setDaysOffView('day')}>Daily View</button>
               </div>
-              <button className="secondary-action" onClick={() => printDaysOff(daysOffView)}><Printer size={17}/>Print {daysOffView === 'month' ? 'Month' : 'Week'}</button>
+              <div className="days-off-export-actions">
+                <button className="secondary-action" onClick={() => downloadDaysOffExcel(daysOffView)}><FileSpreadsheet size={17}/>Download Excel</button>
+                <button className="secondary-action" onClick={() => printDaysOff(daysOffView)}><Printer size={17}/>Print</button>
+              </div>
             </div>
 
             {canManageHolidays && <section className="days-off-range-editor no-print">
@@ -3472,11 +3551,18 @@ function ManagerApp({
               </div>
               <div className="holiday-weekdays">{['Mon','Tue','Wed','Thu','Fri','Sat','Sun'].map(d=><strong key={d}>{d}</strong>)}</div>
               <div className="holiday-calendar">{holidayCalendarDays().map(date=>{const key=dateKey(date); const entries=daysOff.filter(x=>x.day===key); const legacyHol=holidays.filter(h=>h.start_date<=key&&h.end_date>=key).map(h=>({id:h.id,staff_name:h.staff_name,status:'hol' as DayOffStatus})); return <article key={key} className={`holiday-day ${date.getMonth()!==holidayMonth.getMonth()?'outside':''}`}><span className="holiday-date">{date.getDate()}</span>{[...legacyHol,...entries].map((x:any)=><div key={`${x.id}-${key}`} className={`day-off-entry status-${x.status}`}><span>{x.staff_name}</span><b>{dayOffLabel(x.status)}</b></div>)}</article>})}</div>
-            </section> : <section className="weekly-days-off print-week-sheet">
+            </section> : daysOffView === 'week' ? <section className="weekly-days-off print-week-sheet">
               <div className="weekly-sheet-heading"><div><h2>WEEKLY STAFFING</h2><p>Days Off</p></div><div className="week-nav no-print"><button onClick={()=>{const d=new Date(daysOffWeek);d.setDate(d.getDate()-7);setDaysOffWeek(d)}}>Previous</button><button onClick={()=>{const n=new Date();n.setDate(n.getDate()-((n.getDay()+6)%7));setDaysOffWeek(n)}}>This week</button><button onClick={()=>{const d=new Date(daysOffWeek);d.setDate(d.getDate()+7);setDaysOffWeek(d)}}>Next</button></div></div>
               <div className="weekly-grid" style={{gridTemplateColumns:`180px repeat(7,minmax(105px,1fr))`}}>
                 <div className="weekly-head staff-head">Staff</div>{daysOffWeekDates().map(d=><div className="weekly-head" key={dateKey(d)}><strong>{d.toLocaleDateString('en-GB',{weekday:'long'})}</strong><span>{d.toLocaleDateString('en-GB',{day:'numeric',month:'short'})}</span></div>)}
                 {staff.map(member=><Fragment key={member.id}><div className="staff-name-cell">{member.name}</div>{daysOffWeekDates().map(d=>{const key=dateKey(d); const existing=daysOff.find(x=>x.staff_id===member.id&&x.day===key); return <div className={`day-off-cell ${existing?`status-${existing.status}`:''}`} key={`${member.id}-${key}`}><select className="no-print" value={existing?.status??'working'} disabled={!canManageHolidays && accountRole!=='teamLeader'} onChange={e=>setSingleDayOff(member,key,e.target.value as DayOffStatus|'working')}><option value="working">Working</option>{canManageHolidays&&<option value="off">OFF</option>}{canManageHolidays&&<option value="hol">HOL</option>}<option value="sick">SICK</option>{canManageHolidays&&<option value="am_off">AM OFF</option>}{canManageHolidays&&<option value="pm_off">PM OFF</option>}</select><strong className="print-only">{existing?dayOffLabel(existing.status):''}</strong></div>})}</Fragment>)}
+              </div>
+              <div className="days-off-legend"><span className="status-off">OFF</span><span className="status-hol">HOL</span><span className="status-sick">SICK</span><span className="status-am_off">AM OFF</span><span className="status-pm_off">PM OFF</span></div>
+            </section> : <section className="daily-days-off print-day-sheet">
+              <div className="weekly-sheet-heading"><div><p className="eyebrow">Daily Days Off</p><h2>{parseDateKey(daysOffDay).toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</h2></div><div className="week-nav no-print"><button onClick={()=>{const d=parseDateKey(daysOffDay);d.setDate(d.getDate()-1);setDaysOffDay(dateKey(d))}}>Previous</button><button onClick={()=>setDaysOffDay(dateKey(new Date()))}>Today</button><button onClick={()=>{const d=parseDateKey(daysOffDay);d.setDate(d.getDate()+1);setDaysOffDay(dateKey(d))}}>Next</button><input type="date" value={daysOffDay} onChange={e=>setDaysOffDay(e.target.value)}/></div></div>
+              <div className="daily-days-off-grid">
+                <div className="daily-head">Staff</div><div className="daily-head">Status</div><div className="daily-head">Availability</div>
+                {staff.map(member=>{const existing=daysOff.find(x=>x.staff_id===member.id&&x.day===daysOffDay);const availability=!existing?'Available all day':existing.status==='am_off'?'Unavailable Sessions 1 & 2':existing.status==='pm_off'?'Unavailable Session 5':'Unavailable all day';return <Fragment key={member.id}><div className="staff-name-cell">{member.name}</div><div className={`day-off-cell ${existing?`status-${existing.status}`:''}`}><select className="no-print" value={existing?.status??'working'} disabled={!canManageHolidays&&accountRole!=='teamLeader'} onChange={e=>setSingleDayOff(member,daysOffDay,e.target.value as DayOffStatus|'working')}><option value="working">Working</option>{canManageHolidays&&<option value="off">OFF</option>}{canManageHolidays&&<option value="hol">HOL</option>}<option value="sick">SICK</option>{canManageHolidays&&<option value="am_off">AM OFF</option>}{canManageHolidays&&<option value="pm_off">PM OFF</option>}</select><strong className="print-only">{existing?dayOffLabel(existing.status):''}</strong></div><div className="daily-availability">{availability}</div></Fragment>})}
               </div>
               <div className="days-off-legend"><span className="status-off">OFF</span><span className="status-hol">HOL</span><span className="status-sick">SICK</span><span className="status-am_off">AM OFF</span><span className="status-pm_off">PM OFF</span></div>
             </section>}
