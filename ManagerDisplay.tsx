@@ -23,6 +23,7 @@ type WeatherState = {
 }
 
 const buildings = ['Kingfisher', 'Swan', 'Grebe', 'Bittern', 'Mallard', 'Teal']
+const ARRIVAL_ASSIGNMENTS_KEY = 'acm-arrival-assignments'
 
 function isoDate(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
@@ -88,6 +89,9 @@ export default function ManagerDisplay() {
   const [state, setState] = useState<LiveState>({ programme: null, staff: [], arrivalAssignments: {} })
   const [dayOff, setDayOff] = useState<DayOffEntry[]>([])
   const [weather, setWeather] = useState<WeatherState | null>(null)
+  const [localArrivalAssignments, setLocalArrivalAssignments] = useState<Record<string, ArrivalAssignment>>(() => {
+    try { return JSON.parse(localStorage.getItem(ARRIVAL_ASSIGNMENTS_KEY) ?? '{}') as Record<string, ArrivalAssignment> } catch { return {} }
+  })
   const [now, setNow] = useState(new Date())
 
   async function loadLiveState() {
@@ -120,16 +124,22 @@ export default function ManagerDisplay() {
     void loadLiveState()
     void loadDayOff()
     void loadWeather()
+    const refreshLocalArrivals = () => {
+      try { setLocalArrivalAssignments(JSON.parse(localStorage.getItem(ARRIVAL_ASSIGNMENTS_KEY) ?? '{}') as Record<string, ArrivalAssignment>) } catch { setLocalArrivalAssignments({}) }
+    }
     const timer = window.setInterval(() => {
       setNow(new Date())
+      refreshLocalArrivals()
       void loadLiveState()
       void loadDayOff()
       void loadWeather()
     }, 30000)
     const liveChannel = supabase.channel('manager-display-live').on('postgres_changes', { event: '*', schema: 'public', table: 'app_live_state', filter: 'id=eq.main' }, () => void loadLiveState()).subscribe()
     const absenceChannel = supabase.channel('manager-display-absence').on('postgres_changes', { event: '*', schema: 'public', table: 'staff_days_off' }, () => void loadDayOff()).subscribe()
+    window.addEventListener('storage', refreshLocalArrivals)
     return () => {
       window.clearInterval(timer)
+      window.removeEventListener('storage', refreshLocalArrivals)
       void supabase.removeChannel(liveChannel)
       void supabase.removeChannel(absenceChannel)
     }
@@ -149,7 +159,15 @@ export default function ManagerDisplay() {
       .map((school) => {
         const arrivalRow = programme.rows.find((row) => row.session === '3' && row.schoolLabel?.trim().toLowerCase() === school.schoolName.trim().toLowerCase())
           ?? programme.rows.find((row) => row.schoolLabel?.trim().toLowerCase() === school.schoolName.trim().toLowerCase())
-        const assignment = arrivalRow ? state.arrivalAssignments[arrivalKey(arrivalRow)] : undefined
+        const mergedAssignments = { ...localArrivalAssignments, ...state.arrivalAssignments }
+        let assignment = arrivalRow ? mergedAssignments[arrivalKey(arrivalRow)] : undefined
+        if (!assignment?.flatIds?.length) {
+          const sameDayCandidates = Object.entries(mergedAssignments)
+            .filter(([key, value]) => key.startsWith(`${arrivalRow?.day ?? ''}::`) && Boolean(value?.flatIds?.length))
+            .map(([, value]) => value)
+          if (sameDayCandidates.length === 1) assignment = sameDayCandidates[0]
+          else if ((programme.schoolDetails ?? []).length === 1) assignment = Object.values(mergedAssignments).find((value) => Boolean(value?.flatIds?.length))
+        }
         const groups = school.groupNumbers?.length
           ? school.groupNumbers
           : [...new Set(programme.rows.flatMap((row) => row.schoolLabel?.trim().toLowerCase() === school.schoolName.trim().toLowerCase() ? row.cells.map((cell) => cell.group) : []))]
@@ -165,7 +183,7 @@ export default function ManagerDisplay() {
         }
       })
       .sort((a, b) => a.name.localeCompare(b.name))
-  }, [state.programme, state.arrivalAssignments, today])
+  }, [state.programme, state.arrivalAssignments, localArrivalAssignments, today])
 
   return <main className="manager-display-shell" aria-label="Manager display">
     <header className="manager-display-header">

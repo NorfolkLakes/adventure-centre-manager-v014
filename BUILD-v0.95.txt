@@ -1,0 +1,12 @@
+Adventure Centre Manager v0.95
+
+Updates
+- Manager Display now reads live Arrivals accommodation allocations, including a local browser fallback, and refreshes automatically.
+- Restored Programme Builder school exports: School PDF and School Excel.
+- Added professional whole-centre exports: Centre PDF and Centre Excel.
+- Added a permanent Professional Exports panel above the programme grid.
+- Applied the clean light Manager Display visual style throughout the app: white surfaces, light-grey background, dark navy text and blue accents.
+- Existing activity colours remain in programme cells and exports.
+
+Validation
+- TypeScript compilation completed successfully with tsc -b.

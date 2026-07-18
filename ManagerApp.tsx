@@ -2229,6 +2229,88 @@ function ManagerApp({
     setProgrammeBuilderMessage(`${school.name || 'School'} professional portrait programme opened for printing.`)
   }
 
+
+
+  async function downloadSchoolProgrammeExcel(schoolId: string) {
+    const school = programmeBuilder.schools.find((item) => item.id === schoolId)
+    if (!school) return
+    const groups = builderGroups.filter((entry) => entry.school.id === schoolId).map((entry) => entry.group)
+    const ExcelJS = (window as Window & { ExcelJS?: any }).ExcelJS
+    if (!ExcelJS) { setProgrammeBuilderMessage('The Excel export library did not load. Refresh the page and try again.'); return }
+    if (!groups.length) { setProgrammeBuilderMessage('Add at least one group before exporting.'); return }
+    const workbook = new ExcelJS.Workbook()
+    const sheet = workbook.addWorksheet('School Programme', { pageSetup: { orientation: 'portrait', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 1, margins: { left: 0.25, right: 0.25, top: 0.35, bottom: 0.35, header: 0.1, footer: 0.1 } } })
+    const lastColumn = groups.length + 2
+    sheet.mergeCells(1, 1, 1, lastColumn)
+    sheet.getCell(1, 1).value = 'MANOR ADVENTURE · NORFOLK LAKES'
+    sheet.getCell(1, 1).font = { bold: true, size: 18, color: { argb: 'FF17324D' } }
+    sheet.getCell(1, 1).alignment = { horizontal: 'center', vertical: 'middle' }
+    sheet.getRow(1).height = 30
+    sheet.mergeCells(2, 1, 2, lastColumn)
+    sheet.getCell(2, 1).value = school.name || school.programmeName || 'School Programme'
+    sheet.getCell(2, 1).font = { bold: true, size: 15 }
+    sheet.getCell(2, 1).alignment = { horizontal: 'center' }
+    sheet.mergeCells(3, 1, 3, lastColumn)
+    sheet.getCell(3, 1).value = friendlyProgrammeDateRange(school.arrivalDate, school.departureDate)
+    sheet.getCell(3, 1).alignment = { horizontal: 'center' }
+    const header = sheet.addRow(['DAY', 'SES', ...groups.map((group) => `G${group}`)])
+    header.eachCell((cell: any) => { cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF17324D' } }; cell.font = { bold: true, color: { argb: 'FFFFFFFF' } }; cell.alignment = { horizontal: 'center', vertical: 'middle' }; cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } } })
+    const printDays = builderDays.filter((dayInfo) => dayInfo.date >= normaliseBuilderDate(school.arrivalDate) && dayInfo.date <= normaliseBuilderDate(school.departureDate))
+    for (const dayInfo of printDays) {
+      for (const session of BUILDER_SESSIONS) {
+        const stateForSchool = builderSchoolSessionState(school, dayInfo.date, session)
+        if (stateForSchool !== 'activity' && stateForSchool !== 'arrival') continue
+        const values = groups.map((group) => stateForSchool === 'arrival' ? 'ARRIVAL' : (programmeBuilder.assignments[builderAssignmentKey(dayInfo.day, session, group)] ?? ''))
+        const row = sheet.addRow([dayInfo.day, session, ...values])
+        row.height = 25
+        row.eachCell((cell: any, col: number) => {
+          cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }
+          cell.border = { top: { style: 'thin', color: { argb: 'FF9BA7B1' } }, left: { style: 'thin', color: { argb: 'FF9BA7B1' } }, bottom: { style: 'thin', color: { argb: 'FF9BA7B1' } }, right: { style: 'thin', color: { argb: 'FF9BA7B1' } } }
+          if (col > 2) {
+            const code = String(cell.value ?? '')
+            const colour = code === 'ARRIVAL' ? '#d95361' : (activities.find((activity) => activity.code === code)?.colour ?? '#f3f5f7')
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${colour.replace('#', '').toUpperCase()}` } }
+            cell.font = { bold: true }
+          } else cell.font = { bold: true }
+        })
+      }
+    }
+    sheet.columns = [{ width: 14 }, { width: 8 }, ...groups.map(() => ({ width: Math.max(12, Math.min(20, 85 / Math.max(groups.length, 1))) }))]
+    sheet.views = [{ state: 'frozen', ySplit: 4, xSplit: 2 }]
+    sheet.headerFooter.oddFooter = 'Manor Adventure · Norfolk Lakes · School Programme'
+    const buffer = await workbook.xlsx.writeBuffer()
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+    const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `${(school.name || 'school').replace(/[^a-z0-9_-]+/gi, '-')}-programme.xlsx`; a.click(); URL.revokeObjectURL(url)
+    setProgrammeBuilderMessage(`${school.name || 'School'} Excel programme downloaded.`)
+  }
+
+  function printCentreProgrammeBuilder() {
+    const escapeHtml = (value: string) => value.replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character] ?? character))
+    const groups = builderGroups
+    if (!groups.length) { setProgrammeBuilderMessage('Add at least one group before exporting.'); return }
+    const rows = builderDays.flatMap((dayInfo) => BUILDER_SESSIONS.map((session) => {
+      const cells = groups.map(({ group, school }) => {
+        const stateForSchool = builderSchoolSessionState(school, dayInfo.date, session)
+        const code = programmeBuilder.assignments[builderAssignmentKey(dayInfo.day, session, group)] ?? ''
+        const label = stateForSchool === 'arrival' ? 'ARRIVAL' : stateForSchool === 'departed' ? 'DEPARTED' : stateForSchool === 'offsite' ? 'OFF SITE' : code || '—'
+        const colour = label === 'ARRIVAL' ? '#d95361' : (activities.find((activity) => activity.code === code)?.colour ?? '#f5f6f7')
+        return `<td style="background:${colour}">${escapeHtml(label)}</td>`
+      }).join('')
+      return `<tr><th>${escapeHtml(dayInfo.day)}</th><th>${session}</th>${cells}</tr>`
+    })).join('')
+    const headers = groups.map(({ group, school }) => `<th>G${group}<small>${escapeHtml(school.name || 'School')}</small></th>`).join('')
+    const popup = window.open('', '_blank', 'width=1400,height=900')
+    if (!popup) { setProgrammeBuilderMessage('Allow pop-ups to export the centre programme PDF.'); return }
+    popup.document.write(`<!doctype html><html><head><title>Centre Programme</title><style>@page{size:A4 landscape;margin:7mm}*{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}body{font-family:Arial;margin:0;color:#17212b}.head{display:flex;justify-content:space-between;align-items:end;border-bottom:3px solid #2f6f9f;margin-bottom:8px}.head h1{margin:0;font-size:24px;color:#17324d}.head p{margin:2px 0 7px}table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:${groups.length>18?'7px':groups.length>12?'8px':'9px'}th,td{border:1px solid #80909d;padding:4px;text-align:center;font-weight:700;overflow-wrap:anywhere}thead th{background:#17324d;color:white}thead small{display:block;font-size:7px;margin-top:2px}.no-print{position:fixed;right:10px;top:10px;background:#17324d;color:white;border:0;border-radius:6px;padding:9px 12px;font-weight:700}@media print{.no-print{display:none}}</style></head><body><button class="no-print" onclick="window.print()">Save / Print PDF</button><div class="head"><div><h1>Norfolk Lakes Centre Programme</h1><p>${escapeHtml(programmeBuilder.name || 'Programme')}</p></div><strong>${escapeHtml(friendlyProgrammeDateRange(programmeBuilder.startDate, programmeBuilder.endDate))}</strong></div><table><thead><tr><th>DAY</th><th>SES</th>${headers}</tr></thead><tbody>${rows}</tbody></table><script>setTimeout(()=>window.print(),500)<\/script></body></html>`)
+    popup.document.close()
+    setProgrammeBuilderMessage('Professional centre programme opened for PDF printing.')
+  }
+
+  async function downloadCentreProgrammeBuilderExcel() {
+    const generated = publishProgrammeDraft(programmeBuilder)
+    void downloadPublishedProgrammeExcel(generated)
+  }
+
   function publishProgrammeDraft(draft: ProgrammeBuilderDraft) {
     const days = builderDateRange(draft.startDate, draft.endDate)
     let nextGroup = 1
@@ -2279,6 +2361,7 @@ function ManagerApp({
     setProgrammeBuilderMessage('Programme loaded into Programme and Daily Staffing.')
     setImportMessage(`Loaded ${next.title} from the saved programme library.`)
     setPage('programme')
+    return next
   }
 
   function publishProgrammeBuilder() {
@@ -2376,16 +2459,17 @@ function ManagerApp({
     return value
   }
 
-  async function downloadPublishedProgrammeExcel() {
-    if (!programme) return
+  async function downloadPublishedProgrammeExcel(sourceProgramme?: ProgrammeImport) {
+    const exportProgramme: ProgrammeImport | null = sourceProgramme ?? programme
+    if (!exportProgramme) return
     const ExcelJS = (window as Window & { ExcelJS?: any }).ExcelJS
     if (!ExcelJS) {
       setImportMessage('The Excel export library did not load. Refresh the page and try again.')
       return
     }
 
-    const title = programme.title || programme.sourceFileName.replace(/\.xlsx$/i, '') || 'Centre Programme'
-    const mergedRows = Array.from(programme.rows.reduce((map, row) => {
+    const title = exportProgramme.title || exportProgramme.sourceFileName.replace(/\.xlsx$/i, '') || 'Centre Programme'
+    const mergedRows = Array.from(exportProgramme.rows.reduce((map, row) => {
       const key = `${row.day}|${row.session}`
       const current = map.get(key)
       if (!current) map.set(key, { ...row, cells: row.cells.map((cell) => ({ ...cell })) })
@@ -2425,7 +2509,7 @@ function ManagerApp({
       },
     })
 
-    const totalColumns = Math.max(3, programme.groupNumbers.length + 2)
+    const totalColumns = Math.max(3, exportProgramme.groupNumbers.length + 2)
     const lastColumn = sheet.getColumn(totalColumns).letter
     const darkGreen = '173F37'
     const midGreen = '2D6657'
@@ -2450,7 +2534,7 @@ function ManagerApp({
 
     sheet.mergeCells(`A3:${lastColumn}3`)
     const dateCell = sheet.getCell('A3')
-    dateCell.value = friendlyProgrammeDateRange(programme.startDate ?? '', programme.endDate ?? '')
+    dateCell.value = friendlyProgrammeDateRange(exportProgramme.startDate ?? '', exportProgramme.endDate ?? '')
     dateCell.font = { name: 'Aptos', size: 10, bold: true, color: { argb: 'FF53645D' } }
     dateCell.alignment = { horizontal: 'center', vertical: 'middle' }
     sheet.getRow(3).height = 18
@@ -2464,8 +2548,8 @@ function ManagerApp({
     const schoolBlocks: Array<{ name: string; start: number; end: number; colour: string }> = []
     let blockStart = 3
     let previousSchool = ''
-    programme.groupNumbers.forEach((group, index) => {
-      const school = programmeGroupSchool(programme, group) || 'Unassigned'
+    exportProgramme.groupNumbers.forEach((group, index) => {
+      const school = programmeGroupSchool(exportProgramme, group) || 'Unassigned'
       const column = index + 3
       if (school !== previousSchool) {
         if (schoolBlocks.length) schoolBlocks[schoolBlocks.length - 1].end = column - 1
@@ -2515,7 +2599,7 @@ function ManagerApp({
       return (r * 299 + g * 587 + b * 114) / 1000 < 145 ? 'FFFFFF' : '16211C'
     }
     const displayCode = (value: string) => {
-      const schoolName = (programme.schoolDetails ?? []).find((school) => school.schoolName.toLowerCase() === value.toLowerCase())?.schoolName
+      const schoolName = (exportProgramme.schoolDetails ?? []).find((school) => school.schoolName.toLowerCase() === value.toLowerCase())?.schoolName
       if (schoolName) return 'ARRIVAL'
       return value === '—' ? '' : value
     }
@@ -2536,7 +2620,7 @@ function ManagerApp({
       excelRow.getCell(1).value = row.day
       excelRow.getCell(2).value = row.session
 
-      programme.groupNumbers.forEach((group, groupIndex) => {
+      exportProgramme.groupNumbers.forEach((group, groupIndex) => {
         const rawValue = programmeCellDisplay(row, group)
         const value = displayCode(rawValue)
         const cell = excelRow.getCell(groupIndex + 3)
@@ -2589,7 +2673,7 @@ function ManagerApp({
 
     sheet.getColumn(1).width = 6
     sheet.getColumn(2).width = 5
-    programme.groupNumbers.forEach((_, index) => { sheet.getColumn(index + 3).width = 10.5 })
+    exportProgramme.groupNumbers.forEach((_, index) => { sheet.getColumn(index + 3).width = 10.5 })
     sheet.autoFilter = { from: { row: 6, column: 1 }, to: { row: outputRow - 1, column: totalColumns } }
     sheet.pageSetup.printArea = `A1:${lastColumn}${outputRow - 1}`
     sheet.pageSetup.printTitlesRow = '1:6'
@@ -2622,7 +2706,7 @@ function ManagerApp({
     })
 
     const appState = workbook.addWorksheet('_ACM_DATA', { state: 'veryHidden' })
-    appState.getCell('A1').value = JSON.stringify({ programme, draft: programmeBuilder, exportedAt: new Date().toISOString(), format: 'ACM_APP_PROGRAMME_V1' })
+    appState.getCell('A1').value = JSON.stringify({ exportProgramme, draft: programmeBuilder, exportedAt: new Date().toISOString(), format: 'ACM_APP_PROGRAMME_V1' })
 
     try {
       const logoResponse = await fetch(`${import.meta.env.BASE_URL}manor-adventure-logo.png`)
@@ -2645,7 +2729,7 @@ function ManagerApp({
     link.click()
     link.remove()
     URL.revokeObjectURL(link.href)
-    setImportMessage('Downloaded the professional centre programme workbook using your saved activity colours.')
+    setImportMessage('Downloaded the professional centre exportProgramme workbook using your saved activity colours.')
   }
 
   function updateActivity(rowId: string, group: number, activityCode: string) {
@@ -4518,7 +4602,7 @@ function ManagerApp({
                   </div>
                   <div className="programme-toolbar-actions">
                     <button className="secondary-action" onClick={() => setPage('programmeBuilder')}><CalendarRange size={18}/>Edit programme</button>
-                    <button className="primary" onClick={downloadPublishedProgrammeExcel}><FileSpreadsheet size={18}/>Download Excel</button>
+                    <button className="primary" onClick={() => void downloadPublishedProgrammeExcel()}><FileSpreadsheet size={18}/>Download Excel</button>
                   </div>
                 </>
               )}
@@ -5106,12 +5190,17 @@ function ManagerApp({
                     <label>Number of groups<input type="number" min="1" max="30" value={school.groups} onChange={(event) => updateBuilderSchool(school.id, { groups: Math.max(1, Number(event.target.value) || 1) })}/></label>
                     <div><strong>First-choice activities</strong><p className="builder-help">Select the activities requested by the school. There is no separate first-choice field.</p><div className="builder-activity-chips">{activities.filter((activity) => activity.code !== 'Z').map((activity) => { const active = school.requestedActivities.includes(activity.code); return <button type="button" key={activity.code} className={active ? 'chip active' : 'chip'} onClick={() => updateBuilderSchool(school.id, { requestedActivities: active ? school.requestedActivities.filter((code) => code !== activity.code) : [...school.requestedActivities, activity.code] })}>{activity.code}<small>{activity.name}</small></button> })}</div></div>
                     <div className="builder-form-grid"><label>Backup option 1<select value={school.backupOption1} onChange={(event) => updateBuilderSchool(school.id, { backupOption1: event.target.value })}><option value="">No backup selected</option>{activities.filter((activity) => activity.code !== 'Z').map((activity) => <option key={activity.code} value={activity.code}>{activity.code} – {activity.name}</option>)}</select></label><label>Backup option 2<select value={school.backupOption2} onChange={(event) => updateBuilderSchool(school.id, { backupOption2: event.target.value })}><option value="">No backup selected</option>{activities.filter((activity) => activity.code !== 'Z').map((activity) => <option key={activity.code} value={activity.code}>{activity.code} – {activity.name}</option>)}</select></label></div>
-                    <div className="builder-school-actions"><button className="secondary-action" onClick={() => autoFillProgrammeBuilder(school.id)}><WandSparkles size={17}/>Auto Fill School</button><button className="secondary-action" onClick={() => printSchoolProgramme(school.id)}><Printer size={17}/>Print School Programme</button></div>
+                    <div className="builder-school-actions"><button className="secondary-action" onClick={() => autoFillProgrammeBuilder(school.id)}><WandSparkles size={17}/>Auto Fill School</button><button className="secondary-action" onClick={() => printSchoolProgramme(school.id)}><Printer size={17}/>School PDF</button><button className="secondary-action" onClick={() => void downloadSchoolProgrammeExcel(school.id)}><FileSpreadsheet size={17}/>School Excel</button></div>
                     {programmeBuilder.schools.length > 1 && <button className="icon-button small" title="Remove school" onClick={() => removeBuilderSchool(school.id)}><Trash2 size={16}/></button>}
                   </article>)}</div>
                 </section>
 
                 {programmeBuilder.schools.some((school) => school.purchaseType === 'bargain') && <section className="builder-section bargain-rules"><div className="builder-section-heading"><div><p className="eyebrow">Bargain Special rules</p><h3>Package limits</h3></div></div><label className="builder-limit-field">Maximum sessions per group<input type="number" min="1" max="35" value={programmeBuilder.bargainSessionLimit} onChange={(event) => updateProgrammeBuilder({ bargainSessionLimit: Math.max(1, Number(event.target.value) || 1) })}/></label><p>Select the activities included in this package. These can be updated when you provide the Bargain Special reference sheet.</p><div className="builder-activity-chips">{activities.map((activity) => { const active = programmeBuilder.bargainAllowedActivities.includes(activity.code); return <button key={activity.code} className={active ? 'chip active' : 'chip'} onClick={() => updateProgrammeBuilder({ bargainAllowedActivities: active ? programmeBuilder.bargainAllowedActivities.filter((code) => code !== activity.code) : [...programmeBuilder.bargainAllowedActivities, activity.code] })} title={activity.name}>{activity.code}<small>{activity.name}</small></button> })}</div></section>}
+
+                <section className="programme-export-card">
+                  <div><p className="eyebrow">Professional exports</p><h3>Print and download the completed programme</h3><p>School files are designed for teachers and accommodation. Centre files show every school and group in one operational grid.</p></div>
+                  <div className="programme-export-actions"><button className="secondary-action" onClick={printCentreProgrammeBuilder}><Printer size={17}/>Centre PDF</button><button className="secondary-action" onClick={() => void downloadCentreProgrammeBuilderExcel()}><FileSpreadsheet size={17}/>Centre Excel</button></div>
+                </section>
 
                 <section className="builder-section">
                   <div className="builder-section-heading"><div><p className="eyebrow">Programme grid</p><h3>Assign activities</h3></div><span>{builderGroups.length} groups · {builderDays.length} days</span></div>
@@ -5136,7 +5225,7 @@ function ManagerApp({
         {page === 'admin' && (
           <Panel title="Admin" onBack={() => setPage('dashboard')}>
             <section className="admin-choice-grid">
-              <section className="display-manager-card"><div><Monitor size={34}/><div><h3>Display Manager</h3><p>Open or copy the live read-only links for screens around the centre.</p></div></div><div className="display-link-list">{([['Staff room','staff-room'],['Reception','reception'],['Programme','programme']] as const).map(([label,mode]) => { const url = new URL(window.location.href); url.searchParams.set('display',mode); return <article key={mode}><strong>{label}</strong><code>{url.toString()}</code><button onClick={() => window.open(url.toString(),'_blank','noopener,noreferrer')}>Open</button><button onClick={() => { void navigator.clipboard.writeText(url.toString()); setImportMessage(`${label} display link copied.`) }}>Copy link</button></article> })}</div></section>
+              <section className="display-manager-card"><div><Monitor size={34}/><div><h3>Display Manager</h3><p>Open or copy the live read-only links for screens around the centre.</p></div></div><div className="display-link-list">{([['Staff room','staff-room'],['Manager','manager'],['Programme','programme']] as const).map(([label,mode]) => { const url = new URL(window.location.href); url.searchParams.set('display',mode); return <article key={mode}><strong>{label}</strong><code>{url.toString()}</code><button onClick={() => window.open(url.toString(),'_blank','noopener,noreferrer')}>Open</button><button onClick={() => { void navigator.clipboard.writeText(url.toString()); setImportMessage(`${label} display link copied.`) }}>Copy link</button></article> })}</div></section>
               {canManageStaff && <button className="admin-choice-card programme-builder-card" onClick={() => setPage('programmeBuilder')}>
                 <CalendarRange size={34} />
                 <div><h3>Programme Builder</h3><p>Design Bargain Special or Normal Purchase programmes, preview them and publish them.</p></div>
