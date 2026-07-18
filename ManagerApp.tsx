@@ -26,7 +26,6 @@ import {
   X,
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
-import { LightningStatusCard } from './LightningMonitor'
 
 type ZipEntry = {
   name: string
@@ -4436,7 +4435,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v1.00</span></div><small>Norfolk Lakes</small></div></div>
+          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v1.01</span></div><small>Norfolk Lakes</small></div></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -4549,7 +4548,6 @@ function ManagerApp({
               </div>
             </section>
 
-            <LightningStatusCard />
 
             <section className="action-grid">
               <Action
@@ -4658,7 +4656,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to accommodation, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v1.00</span>
+                  <span className="release-pill">v1.01</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">

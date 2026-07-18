@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react'
 import { Building2, CalendarDays, CloudSun, HeartPulse, School, Users } from 'lucide-react'
 import { supabase } from './lib/supabase'
 import type { ArrivalAssignment, ProgrammeImport, ProgrammeRow, StaffMember } from './types'
-import { LightningStatusCard } from './LightningMonitor'
 
 type DayOffEntry = {
   staff_id: string
@@ -199,7 +198,6 @@ export default function ManagerDisplay() {
       </div>
     </header>
 
-    <LightningStatusCard compact />
 
     <section className="manager-display-metrics">
       <article><School /><div><span>Schools on site</span><strong>{schools.length}</strong></div></article>

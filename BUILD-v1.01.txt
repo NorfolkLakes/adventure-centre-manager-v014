@@ -1,0 +1,7 @@
+Adventure Centre Manager v1.01
+
+Changes:
+- Removed the Lightning Safety Monitor from Home.
+- Removed the Lightning Safety Monitor from Manager Display.
+- Removed Weatherbit API configuration and the Supabase lightning Edge Function.
+- Preserved the existing Norfolk Lakes weather card and all other v1.00 functionality.

@@ -368,38 +368,3 @@ Adds permanent and loan staff lifecycle management, Former Staff and Loan Staff 
 ## v0.80 – Protected manual programme updates
 
 Adds automatic locking for manually edited programme cells, Update Programme and Reset Locks controls, consecutive Canoe/Kayak Bargain Special scheduling, and preferences to place water sessions after arrival while avoiding Friday/departure-day water where practical.
-
-## Lightning Safety Monitor (v1.00)
-
-The monitor requires live strike data. Configure one of these values in `.env`:
-
-```env
-VITE_LIGHTNING_PROXY_URL=https://your-protected-endpoint.example/lightning
-```
-
-Recommended for production. The endpoint should proxy Weatherbit's Current Lightning API and return its JSON response.
-
-For local testing only:
-
-```env
-VITE_WEATHERBIT_API_KEY=your_weatherbit_key
-```
-
-The browser-visible key option is not recommended on a public GitHub Pages deployment. The trigger is fixed at 7 miles and the all-clear period is 30 minutes. The app never reports "safe" when the live service is unavailable.
-
-### Recommended Supabase setup
-
-The project includes `supabase/functions/lightning/index.ts`, which keeps the Weatherbit key off GitHub Pages.
-
-```bash
-supabase secrets set WEATHERBIT_API_KEY=YOUR_KEY
-supabase functions deploy lightning --no-verify-jwt
-```
-
-Because the app already has `VITE_SUPABASE_URL`, it automatically uses:
-
-```text
-<SUPABASE_URL>/functions/v1/lightning
-```
-
-No browser-side Weatherbit key is needed with this setup.
