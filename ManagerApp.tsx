@@ -183,6 +183,63 @@ const LOAN_HISTORY_KEY = 'acm-loan-history'
 const STAFF_TIMELINE_KEY = 'acm-staff-timeline'
 const PAYROLL_SYNC_KEY = 'acm-payroll-sync'
 const STAFFING_ARCHIVES_KEY = 'acm-staffing-archives'
+const PROGRAMME_BUILDER_KEY = 'acm-programme-builder-draft'
+
+type ProgrammePurchaseType = 'bargain' | 'normal'
+type BuilderSchool = { id: string; name: string; programmeName: string; purchaseType: ProgrammePurchaseType; arrivalDate: string; departureDate: string; notes: string; groups: number; requestedActivities: string[]; backupOption1: string; backupOption2: string; locked: boolean }
+type ProgrammeBuilderDraft = {
+  name: string
+  startDate: string
+  endDate: string
+  purchaseType: ProgrammePurchaseType
+  bargainSessionLimit: number
+  bargainAllowedActivities: string[]
+  schools: BuilderSchool[]
+  assignments: Record<string, string>
+  notes: string
+}
+
+const DEFAULT_BARGAIN_CODES = ['ARCH', 'BT', 'VB', 'MO', 'OC', 'LR', 'AIR', 'CF']
+const BUILDER_SESSIONS = ['1', '2', '3', '4', '5']
+const BUILDER_DAY_NAMES = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']
+
+function blankProgrammeBuilderDraft(): ProgrammeBuilderDraft {
+  const today = new Date()
+  const monday = new Date(today)
+  const offset = (today.getDay() + 6) % 7
+  monday.setDate(today.getDate() - offset)
+  const friday = new Date(monday)
+  friday.setDate(monday.getDate() + 4)
+  const iso = (date: Date) => date.toISOString().slice(0, 10)
+  return {
+    name: '', startDate: iso(monday), endDate: iso(friday), purchaseType: 'normal',
+    bargainSessionLimit: 15, bargainAllowedActivities: DEFAULT_BARGAIN_CODES,
+    schools: [{ id: `school-${Date.now()}`, name: '', programmeName: '', purchaseType: 'normal', arrivalDate: iso(monday), departureDate: iso(friday), notes: '', groups: 1, requestedActivities: [], backupOption1: '', backupOption2: '', locked: false }], assignments: {}, notes: '',
+  }
+}
+
+function builderDateRange(startDate: string, endDate: string) {
+  if (!startDate || !endDate) return [] as { date: string; day: string; label: string }[]
+  const start = new Date(`${startDate}T12:00:00`)
+  const end = new Date(`${endDate}T12:00:00`)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return []
+  const result: { date: string; day: string; label: string }[] = []
+  const cursor = new Date(start)
+  while (cursor <= end && result.length < 7) {
+    const day = BUILDER_DAY_NAMES[(cursor.getDay() + 6) % 7]
+    result.push({ date: cursor.toISOString().slice(0, 10), day, label: cursor.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) })
+    cursor.setDate(cursor.getDate() + 1)
+  }
+  return result
+}
+
+function friendlyProgrammeDateRange(startDate: string, endDate: string) {
+  if (!startDate || !endDate) return 'Dates not set'
+  const start = new Date(`${startDate}T12:00:00`)
+  const end = new Date(`${endDate}T12:00:00`)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 'Dates not set'
+  return `${start.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} – ${end.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`
+}
 
 
 type MySessionDuty = {
@@ -448,7 +505,7 @@ type ArrivalSchoolSegment = {
 }
 
 function arrivalSchoolSegments(row: ProgrammeRow): ArrivalSchoolSegment[] {
-  if (row.session !== '3' || !isArrivalDay(row.day)) {
+  if (row.session !== '3' || (!isArrivalDay(row.day) && !row.schoolLabel?.trim())) {
     return []
   }
 
@@ -618,6 +675,26 @@ function ManagerApp({
   const [activities, setActivities] = useState<Activity[]>(() =>
     readJson(ACTIVITIES_KEY, startingActivities),
   )
+  const [programmeBuilder, setProgrammeBuilder] = useState<ProgrammeBuilderDraft>(() => {
+    const saved = readJson(PROGRAMME_BUILDER_KEY, blankProgrammeBuilderDraft())
+    return {
+      ...saved,
+      schools: (saved.schools ?? []).map((school) => ({
+        ...school,
+        programmeName: school.programmeName ?? school.name ?? '',
+        purchaseType: school.purchaseType ?? saved.purchaseType ?? 'normal',
+        arrivalDate: school.arrivalDate ?? saved.startDate ?? '',
+        departureDate: school.departureDate ?? saved.endDate ?? '',
+        notes: school.notes ?? saved.notes ?? '',
+        requestedActivities: school.requestedActivities ?? [],
+        backupOption1: school.backupOption1 ?? '',
+        backupOption2: school.backupOption2 ?? '',
+        locked: school.locked ?? false,
+      })),
+    }
+  })
+  const [programmeBuilderView, setProgrammeBuilderView] = useState<'build' | 'preview'>('build')
+  const [programmeBuilderMessage, setProgrammeBuilderMessage] = useState('')
   const [assignments, setAssignments] = useState<StaffingAssignment>(() =>
     readJson(ASSIGNMENT_KEY, {}),
   )
@@ -647,7 +724,7 @@ function ManagerApp({
     [programme],
   )
   const [selectedStaffingDay, setSelectedStaffingDay] = useState('')
-  const [staffingView, setStaffingView] = useState<'activity' | 'calendar'>('activity')
+  const [staffingView, setStaffingView] = useState<'activity' | 'calendar' | 'availability'>('activity')
   const [staffingZoom, setStaffingZoom] = useState<number>(() => {
     const saved = Number(localStorage.getItem('acm-staffing-zoom') ?? 100)
     return Number.isFinite(saved) ? Math.min(150, Math.max(70, saved)) : 100
@@ -705,6 +782,7 @@ function ManagerApp({
   const [selectedDaysOffCell, setSelectedDaysOffCell] = useState<string>('')
   const [showDaysOffHelp, setShowDaysOffHelp] = useState(false)
   const weeklyCellRefs = useRef(new Map<string, HTMLDivElement>())
+  const dailyCellRefs = useRef(new Map<string, HTMLDivElement>())
   const [publishedStaffDuties, setPublishedStaffDuties] = useState<{staff_email:string;staff_name:string;day:string;session:string;activity_name:string;duty_type:string}[]>([])
   const [lastSharedUpdate, setLastSharedUpdate] = useState<{updated_by_name:string;updated_by_email:string;updated_at:string;section:string} | null>(null)
   const [waterLeadLogs, setWaterLeadLogs] = useState<{id:string;created_at:string;programme_day:string;session:string;discipline:string;lead_staff_name:string;lead_staff_id:string;lead_group:number|null;overseen_groups:number[];confirmed_by_name:string;confirmed_by_email:string;permission_from:string}[]>([])
@@ -865,16 +943,79 @@ function ManagerApp({
     const rows = uniqueDatesInRange(daysOffStart, daysOffEnd).map((day) => ({
       staff_id: member.id, staff_email: member.email ?? '', staff_name: member.name, day, status: daysOffStatus, note: null,
     }))
+
+    // Update the screen immediately. Staffing selectors and summary cards read
+    // this same state, so there is no delay while Supabase sends the change back.
+    const previousDaysOff = daysOff
+    setDaysOff((current) => {
+      const affected = new Set(rows.map((row) => row.day))
+      return [
+        ...current.filter((entry) => !(entry.staff_id === member.id && affected.has(entry.day))),
+        ...rows.map((row) => ({ ...row, id: `pending-${member.id}-${row.day}` } as StaffDayOff)),
+      ]
+    })
+
     const { error } = await supabase.from('staff_days_off').upsert(rows, { onConflict: 'staff_id,day' })
-    if (error) setImportMessage(`Days Off could not be saved: ${error.message}`)
-    else { setImportMessage(`${member.name}'s days off were updated.`); loadDaysOff() }
+    if (error) {
+      setDaysOff(previousDaysOff)
+      setImportMessage(`Days Off could not be saved: ${error.message}`)
+    } else {
+      setImportMessage(`${member.name}'s days off were updated.`)
+      await loadDaysOff()
+    }
   }
 
   async function setSingleDayOff(member: StaffMember, day: string, status: DayOffStatus | 'working', blankRed = false) {
     if (!canManageHolidays && !(accountRole === 'teamLeader' && status === 'sick')) return
-    if (status === 'working') await supabase.from('staff_days_off').delete().eq('staff_id', member.id).eq('day', day)
-    else await supabase.from('staff_days_off').upsert({ staff_id: member.id, staff_email: member.email ?? '', staff_name: member.name, day, status, note: blankRed ? 'blank-red' : null }, { onConflict: 'staff_id,day' })
-    loadDaysOff()
+
+    // Staffing tabs use programme labels such as FRI, while the Days Off calendar
+    // stores ISO dates. Always persist and compare the ISO date when available.
+    const availabilityDay = programme && !/^\d{4}-\d{2}-\d{2}$/.test(day)
+      ? dateForProgrammeDay(programme, day)
+      : day
+
+    // Optimistic update: all staffing calculations, information boxes, Auto-fill
+    // and manual selection are blocked the instant the calendar value changes.
+    const previousDaysOff = daysOff
+    setDaysOff((current) => {
+      const withoutExisting = current.filter((entry) => !(entry.staff_id === member.id && entry.day === availabilityDay))
+      if (status === 'working') return withoutExisting
+      return [...withoutExisting, {
+        id: `pending-${member.id}-${availabilityDay}`,
+        staff_id: member.id,
+        staff_email: member.email ?? '',
+        staff_name: member.name,
+        day: availabilityDay,
+        status,
+        note: blankRed ? 'blank-red' : null,
+      }]
+    })
+
+    const currentWorking = workingByDay[day] ?? staff.map((item) => item.id)
+    const nextWorking = { ...workingByDay, [day]: [...new Set([...currentWorking, member.id])] }
+    const currentSickness = sicknessByDay[day] ?? []
+    const nextSickness = {
+      ...sicknessByDay,
+      [day]: status === 'sick'
+        ? [...new Set([...currentSickness, member.id])]
+        : currentSickness.filter((id) => id !== member.id),
+    }
+    setWorkingByDay(nextWorking)
+    setSicknessByDay(nextSickness)
+    localStorage.setItem(WORKING_KEY, JSON.stringify(nextWorking))
+    localStorage.setItem(SICKNESS_KEY, JSON.stringify(nextSickness))
+
+    const result = status === 'working'
+      ? await supabase.from('staff_days_off').delete().eq('staff_id', member.id).eq('day', availabilityDay)
+      : await supabase.from('staff_days_off').upsert({ staff_id: member.id, staff_email: member.email ?? '', staff_name: member.name, day: availabilityDay, status, note: blankRed ? 'blank-red' : null }, { onConflict: 'staff_id,day' })
+    if (result.error) {
+      setDaysOff(previousDaysOff)
+      setImportMessage(`Availability could not be updated: ${result.error.message}`)
+      return
+    }
+
+    await loadDaysOff()
+    setImportMessage(`${member.name} is now ${status === 'working' ? 'working' : dayOffLabel(status)} on ${availabilityDay}.`)
   }
 
   function sortedDaysOffStaff() {
@@ -909,6 +1050,28 @@ function ManagerApp({
     const shortcuts: Record<string, DayOffStatus> = { o: 'off', h: 'hol', s: 'sick', a: 'am_off', p: 'pm_off' }
     if (key === 'r') { event.preventDefault(); void setSingleDayOff(member, day, 'sick', true); return }
     if (shortcuts[key]) { event.preventDefault(); void setSingleDayOff(member, day, shortcuts[key]); }
+  }
+
+  function focusDailyCell(row: number) {
+    const members = sortedDaysOffStaff()
+    const nextRow = Math.max(0, Math.min(members.length - 1, row))
+    const key = `${members[nextRow]?.id}-${daysOffDay}`
+    setSelectedDaysOffCell(key)
+    requestAnimationFrame(() => dailyCellRefs.current.get(key)?.focus())
+  }
+
+  function handleDailyCellKeyDown(event: KeyboardEvent<HTMLDivElement>, member: StaffMember, row: number) {
+    const target = event.target as HTMLElement
+    if (['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName)) return
+    const key = event.key.toLowerCase()
+    if (event.key === 'ArrowUp') { event.preventDefault(); focusDailyCell(row - 1); return }
+    if (event.key === 'ArrowDown' || event.key === 'Enter') { event.preventDefault(); focusDailyCell(row + 1); return }
+    if (event.key === 'ArrowLeft') { event.preventDefault(); const d = parseDateKey(daysOffDay); d.setDate(d.getDate() - 1); setDaysOffDay(dateKey(d)); return }
+    if (event.key === 'ArrowRight' || event.key === 'Tab') { event.preventDefault(); const d = parseDateKey(daysOffDay); d.setDate(d.getDate() + 1); setDaysOffDay(dateKey(d)); return }
+    if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); void setSingleDayOff(member, daysOffDay, 'working'); return }
+    const shortcuts: Record<string, DayOffStatus> = { o: 'off', h: 'hol', s: 'sick', a: 'am_off', p: 'pm_off' }
+    if (key === 'r') { event.preventDefault(); void setSingleDayOff(member, daysOffDay, 'sick', true); return }
+    if (shortcuts[key]) { event.preventDefault(); void setSingleDayOff(member, daysOffDay, shortcuts[key]); }
   }
 
   function daysOffWeekDates() {
@@ -1403,17 +1566,27 @@ function ManagerApp({
     const ranked = [...activityCounts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     const mostRun = ranked[0] ?? null
     const leastRun = ranked.length ? [...ranked].sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]))[0] : null
-    const holidayDays = new Set(
+    const holidayDateSet = new Set(
       holidays
         .filter((holiday) =>
           (email && holiday.staff_email.trim().toLowerCase() === email) ||
           holiday.staff_name.trim().toLowerCase() === name,
         )
         .flatMap((holiday) => uniqueDatesInRange(holiday.start_date, holiday.end_date)),
-    ).size
-    const sickDays = Object.entries(sicknessByDay).filter(([, ids]) => ids.includes(holidaySummaryMember.id)).length
-    return { daysWorked, sessionsWorked, mostRun, leastRun, holidayDays, sickDays }
-  }, [holidaySummaryMember, publishedStaffDuties, holidays, sicknessByDay])
+    )
+    daysOff
+      .filter((entry) => memberIdForDayOff(entry) === holidaySummaryMember.id && entry.status === 'hol')
+      .forEach((entry) => holidayDateSet.add(entry.day))
+    const sickDateSet = new Set(
+      Object.entries(sicknessByDay)
+        .filter(([, ids]) => ids.includes(holidaySummaryMember.id))
+        .map(([day]) => day),
+    )
+    daysOff
+      .filter((entry) => memberIdForDayOff(entry) === holidaySummaryMember.id && entry.status === 'sick')
+      .forEach((entry) => sickDateSet.add(entry.day))
+    return { daysWorked, sessionsWorked, mostRun, leastRun, holidayDays: holidayDateSet.size, sickDays: sickDateSet.size }
+  }, [holidaySummaryMember, publishedStaffDuties, holidays, sicknessByDay, daysOff, staff])
 
   function holidayCalendarDays() {
     const first = new Date(holidayMonth.getFullYear(), holidayMonth.getMonth(), 1)
@@ -1434,26 +1607,48 @@ function ManagerApp({
     return new Date(year, month - 1, day)
   }
 
+  function memberIdForDayOff(entry: StaffDayOff): string | null {
+    if (staff.some((member) => member.id === entry.staff_id)) return entry.staff_id
+    const email = entry.staff_email.trim().toLowerCase()
+    const name = normaliseIdentity(entry.staff_name)
+    return staff.find((member) =>
+      (email && member.email?.trim().toLowerCase() === email) ||
+      normaliseIdentity(member.name) === name,
+    )?.id ?? null
+  }
+
   function unavailableStaffIdsForSession(day: string, session?: string): Set<string> {
-    const ids = new Set<string>(sicknessByDay[day] ?? [])
+    const availabilityDay = programme ? dateForProgrammeDay(programme, day) : day
+    // staff_days_off is the single live source of truth. Legacy local
+    // sickness maps are intentionally ignored so old cached values cannot
+    // keep somebody marked sick after the calendar is changed to Working.
+    const ids = new Set<string>()
     holidays
-      .filter((holiday) => holiday.start_date <= day && holiday.end_date >= day)
+      .filter((holiday) => holiday.start_date <= availabilityDay && holiday.end_date >= availabilityDay)
       .forEach((holiday) => {
         const email = holiday.staff_email.trim().toLowerCase()
         const name = normaliseIdentity(holiday.staff_name)
         const member = staff.find((item) => (email && item.email?.trim().toLowerCase() === email) || normaliseIdentity(item.name) === name)
         if (member) ids.add(member.id)
       })
-    daysOff.filter((entry) => entry.day === day).forEach((entry) => {
+    daysOff.filter((entry) => entry.day === availabilityDay).forEach((entry) => {
+      const memberId = memberIdForDayOff(entry)
+      if (!memberId) return
       const wholeDay = ['off','hol','sick'].includes(entry.status)
       const amBlocked = entry.status === 'am_off' && ['1','2'].includes(session ?? '')
       const pmBlocked = entry.status === 'pm_off' && session === '5'
-      if (wholeDay || amBlocked || pmBlocked) ids.add(entry.staff_id)
+      if (wholeDay || amBlocked || pmBlocked) ids.add(memberId)
     })
     return ids
   }
 
-  function unavailableStaffIdsForDay(day: string): Set<string> { return unavailableStaffIdsForSession(day) }
+  function unavailableStaffIdsForDay(day: string): Set<string> {
+    const ids = new Set<string>()
+    for (const session of ['1','2','3','4','5']) {
+      unavailableStaffIdsForSession(day, session).forEach((id) => ids.add(id))
+    }
+    return ids
+  }
 
   function sessionDemandForDay(day: string) {
     if (!programme) return []
@@ -1582,6 +1777,130 @@ function ManagerApp({
 
       return changed ? next : current
     })
+  }
+
+  const builderDays = builderDateRange(programmeBuilder.startDate, programmeBuilder.endDate)
+  const builderGroups = useMemo(() => {
+    let nextGroup = 1
+    return programmeBuilder.schools.flatMap((school) =>
+      Array.from({ length: Math.max(1, school.groups) }, () => ({ school, group: nextGroup++ })),
+    )
+  }, [programmeBuilder.schools])
+
+  function saveProgrammeBuilderDraft(next = programmeBuilder, message = 'Draft saved.') {
+    setProgrammeBuilder(next)
+    localStorage.setItem(PROGRAMME_BUILDER_KEY, JSON.stringify(next))
+    setProgrammeBuilderMessage(message)
+  }
+
+  function updateProgrammeBuilder(patch: Partial<ProgrammeBuilderDraft>) {
+    const next = { ...programmeBuilder, ...patch }
+    setProgrammeBuilder(next)
+    localStorage.setItem(PROGRAMME_BUILDER_KEY, JSON.stringify(next))
+    setProgrammeBuilderMessage('Draft auto-saved.')
+  }
+
+  function addBuilderSchool() {
+    updateProgrammeBuilder({ schools: [...programmeBuilder.schools, { id: `school-${Date.now()}`, name: '', programmeName: '', purchaseType: 'normal', arrivalDate: programmeBuilder.startDate, departureDate: programmeBuilder.endDate, notes: '', groups: 1, requestedActivities: [], backupOption1: '', backupOption2: '', locked: false }] })
+  }
+
+  function updateBuilderSchool(id: string, patch: Partial<BuilderSchool>) {
+    updateProgrammeBuilder({ schools: programmeBuilder.schools.map((school) => school.id === id ? { ...school, ...patch } : school) })
+  }
+
+  function removeBuilderSchool(id: string) {
+    if (programmeBuilder.schools.length === 1) return
+    updateProgrammeBuilder({ schools: programmeBuilder.schools.filter((school) => school.id !== id) })
+  }
+
+  function builderAssignmentKey(day: string, session: string, group: number) { return `${day}|${session}|${group}` }
+
+
+  function builderSchoolSessionState(school: BuilderSchool, date: string, session: string) {
+    if (!school.arrivalDate || !school.departureDate) return 'activity' as const
+    if (date < school.arrivalDate || date > school.departureDate) return 'offsite' as const
+    if (date === school.arrivalDate) {
+      if (session === '3') return 'arrival' as const
+      if (session === '1' || session === '2') return 'offsite' as const
+    }
+    if (date === school.departureDate && ['3', '4', '5'].includes(session)) return 'departed' as const
+    return 'activity' as const
+  }
+
+  function autoFillProgrammeBuilder(schoolId: string) {
+    const school = programmeBuilder.schools.find((item) => item.id === schoolId)
+    if (!school) return
+    const schoolGroups = builderGroups.filter((entry) => entry.school.id === schoolId)
+    const requested = school.requestedActivities.length ? school.requestedActivities : activities.filter((item) => item.code !== 'Z').map((item) => item.code)
+    const allowed = school.purchaseType === 'bargain' ? requested.filter((code) => programmeBuilder.bargainAllowedActivities.includes(code)) : requested
+    if (!allowed.length) { setProgrammeBuilderMessage(`Choose at least one activity for ${school.name || 'this school'}.`); return }
+    const next = { ...programmeBuilder.assignments }
+    let index = 0
+    for (const dayInfo of builderDays) for (const session of BUILDER_SESSIONS) {
+      const state = builderSchoolSessionState(school, dayInfo.date, session)
+      for (const { group } of schoolGroups) {
+        const key = builderAssignmentKey(dayInfo.day, session, group)
+        if (state !== 'activity') next[key] = ''
+        else { next[key] = allowed[index % allowed.length]; index += 1 }
+      }
+    }
+    updateProgrammeBuilder({ assignments: next })
+    setProgrammeBuilderMessage(`${school.name || 'School'} auto-filled using its dates and package.`)
+  }
+
+  function setBuilderActivity(day: string, session: string, group: number, activityCode: string) {
+    updateProgrammeBuilder({ assignments: { ...programmeBuilder.assignments, [builderAssignmentKey(day, session, group)]: activityCode } })
+  }
+
+  function builderValidation() {
+    const issues: string[] = []
+    if (!programmeBuilder.name.trim()) issues.push('Add a programme name.')
+    if (!builderDays.length) issues.push('Choose a valid programme date range of up to seven days.')
+    if (programmeBuilder.schools.some((school) => !school.name.trim())) issues.push('Every school needs a name.')
+    if (!builderGroups.length) issues.push('Add at least one group.')
+    for (const school of programmeBuilder.schools) {
+      if (!school.programmeName.trim()) issues.push(`${school.name || 'Each school'} needs a programme name.`)
+      if (!school.arrivalDate || !school.departureDate || school.departureDate < school.arrivalDate) issues.push(`${school.name || 'Each school'} needs valid arrival and departure dates.`)
+      if (school.arrivalDate < programmeBuilder.startDate || school.departureDate > programmeBuilder.endDate) issues.push(`${school.name || 'A school'} dates must sit inside the programme week.`)
+      if (school.purchaseType === 'bargain') {
+        for (const { group } of builderGroups.filter((entry) => entry.school.id === school.id)) {
+          const used = Object.entries(programmeBuilder.assignments).filter(([key, value]) => key.endsWith(`|${group}`) && value).map(([, value]) => value)
+          if (used.some((code) => !programmeBuilder.bargainAllowedActivities.includes(code))) issues.push(`${school.name} contains an activity outside the Bargain Special package.`)
+          if (used.length > programmeBuilder.bargainSessionLimit) issues.push(`Group ${group} exceeds the ${programmeBuilder.bargainSessionLimit}-session Bargain Special limit.`)
+        }
+      }
+    }
+    return Array.from(new Set(issues))
+  }
+
+  function publishProgrammeBuilder() {
+    const issues = builderValidation()
+    if (issues.length) { setProgrammeBuilderMessage(`Cannot publish: ${issues[0]}`); return }
+    const rows: ProgrammeRow[] = []
+    for (const dayInfo of builderDays) {
+      for (const session of BUILDER_SESSIONS) {
+        for (const school of programmeBuilder.schools) {
+          const schoolGroups = builderGroups.filter((entry) => entry.school.id === school.id)
+          rows.push({
+            id: `builder-${dayInfo.day}-${session}-${school.id}`,
+            day: dayInfo.day, session, schoolLabel: school.name.trim(),
+            cells: schoolGroups.map(({ group }) => { const state = builderSchoolSessionState(school, dayInfo.date, session); return { group, activityCode: state === 'arrival' ? school.name.trim() : state === 'activity' ? (programmeBuilder.assignments[builderAssignmentKey(dayInfo.day, session, group)] ?? '') : '' } }),
+          })
+        }
+      }
+    }
+    const next: ProgrammeImport = {
+      title: programmeBuilder.name.trim(), sheetName: 'Programme Builder',
+      groupNumbers: builderGroups.map(({ group }) => group), rows, importedAt: new Date().toISOString(),
+      sourceFileName: `${programmeBuilder.name.trim().replace(/[^a-z0-9]+/gi, '-') || 'programme'}-built-in-app.xlsx`,
+      startDate: programmeBuilder.startDate, endDate: programmeBuilder.endDate,
+      schoolDetails: programmeBuilder.schools.map((school) => ({ id: school.id, schoolName: school.name.trim(), programmeName: school.programmeName.trim(), purchaseType: school.purchaseType, arrivalDate: school.arrivalDate, departureDate: school.departureDate, notes: school.notes })),
+    }
+    saveProgramme(next, programme ?? undefined)
+    ensureWorkingStaffForDays(builderDays.map((entry) => entry.day))
+    setProgrammeBuilderMessage('Programme published to Programme and Daily Staffing.')
+    setImportMessage(`Published ${programmeBuilder.name.trim()} from Programme Builder.`)
+    setPage('programme')
   }
 
   function saveProgramme(next: ProgrammeImport, previous?: ProgrammeImport) {
@@ -2206,29 +2525,29 @@ function ManagerApp({
   function autoFillStaffing(day: string) {
     if (!programme || !day) return
 
-    const sickIds = unavailableStaffIdsForSession(day, '3')
     const workingIds = new Set(
       workingByDay[day] ?? staff.map((member) => member.id),
     )
+    // Start from the current rota, but remove assignments that are now blocked
+    // by the live Days Off & Sickness calendar. This prevents Auto-fill from
+    // leaving SICK/OFF/HOL staff on sessions and applies AM/PM rules per session.
     const nextAssignments: StaffingAssignment = { ...assignments }
-
-    // Remove assignments for sick staff on this day before rebuilding gaps.
-    programme.rows
-      .filter((row) => row.day === day)
-      .forEach((row) =>
-        row.cells.forEach((cell) => {
-          const key = cellKey(row.id, cell.group)
-          const assignedId = nextAssignments[key]
-          if (assignedId && sickIds.has(assignedId)) delete nextAssignments[key]
-        }),
-      )
+    const rowsForDay = programme.rows.filter((row) => row.day === day)
+    for (const row of rowsForDay) {
+      const blocked = unavailableStaffIdsForSession(day, row.session)
+      for (const cell of activityCellsForRow(row)) {
+        const key = cellKey(row.id, cell.group)
+        const assignedStaffId = nextAssignments[key]
+        if (assignedStaffId && blocked.has(assignedStaffId)) delete nextAssignments[key]
+      }
+    }
 
     const workload = new Map<string, number>()
     Object.entries(nextAssignments).forEach(([, staffId]) => {
       workload.set(staffId, (workload.get(staffId) ?? 0) + 1)
     })
 
-    const dayRows = programme.rows.filter((row) => row.day === day)
+    const dayRows = rowsForDay
 
     for (const row of dayRows) {
       for (const cell of activityCellsForRow(row)) {
@@ -2240,7 +2559,7 @@ function ManagerApp({
           .filter(
             (member) =>
               workingIds.has(member.id) &&
-              !sickIds.has(member.id) &&
+              !unavailableStaffIdsForSession(day, row.session).has(member.id) &&
               qualificationIsValid(member, cell.activityCode) &&
               !arrivalStaffForDaySession(day, row.session).has(member.id),
           )
@@ -2283,14 +2602,14 @@ function ManagerApp({
     for (const need of waterSupportNeedsForDay(day)) {
       const supportKey = waterSupportKey(day, need.session, need.discipline)
       const currentId = nextWaterSupport[supportKey]
-      const currentStillValid = currentId && staff.find((member) => member.id === currentId)?.qualifications.includes(leadQualificationCode(need.discipline)) && !sickIds.has(currentId) && workingIds.has(currentId) && !arrivalStaffForDaySession(day, need.session).has(currentId) && (!staffBusyInSession(currentId, day, need.session, nextAssignments) || disciplineAssignments(day, need.session, need.discipline, nextAssignments).some((item) => item.staffId === currentId))
+      const currentStillValid = currentId && staff.find((member) => member.id === currentId)?.qualifications.includes(leadQualificationCode(need.discipline)) && !unavailableStaffIdsForSession(day, need.session).has(currentId) && workingIds.has(currentId) && !arrivalStaffForDaySession(day, need.session).has(currentId) && (!staffBusyInSession(currentId, day, need.session, nextAssignments) || disciplineAssignments(day, need.session, need.discipline, nextAssignments).some((item) => item.staffId === currentId))
       if (currentStillValid) continue
       delete nextWaterSupport[supportKey]
       const qualificationCode = leadQualificationCode(need.discipline)
       const spareLead = staff.filter((member) =>
         member.qualifications.includes(qualificationCode) &&
         workingIds.has(member.id) &&
-        !sickIds.has(member.id) &&
+        !unavailableStaffIdsForSession(day, need.session).has(member.id) &&
         !staffBusyInSession(member.id, day, need.session, nextAssignments) &&
         !Object.entries(nextWaterSupport).some(([key, id]) => key.startsWith(`${day}::${need.session}::`) && id === member.id)
       ).sort((a,b) => rolePriority(resolvedRole(a))-rolePriority(resolvedRole(b)) || (workload.get(a.id)??0)-(workload.get(b.id)??0) || a.name.localeCompare(b.name))[0]
@@ -2948,14 +3267,35 @@ function ManagerApp({
   }
 
   function dateForProgrammeDay(sourceProgramme: ProgrammeImport, day: string) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(day)) return day
+    if (sourceProgramme.startDate) { const rank = weekdayRank(day); const start = new Date(`${sourceProgramme.startDate}T12:00:00`); if (rank < 99 && !Number.isNaN(start.getTime())) { const startRank = ((start.getDay() + 6) % 7) + 1; const result = new Date(start); result.setDate(start.getDate() + ((rank - startRank + 7) % 7)); return result.toISOString().slice(0, 10) } }
     const source = `${sourceProgramme.title} ${sourceProgramme.sourceFileName}`
-    const match = source.match(/(\d{1,2})(?:st|nd|rd|th)?\s*[-–]\s*(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)(?:\s+(20\d{2}))?/i)
-    if (!match) return day
     const months = ['january','february','march','april','may','june','july','august','september','october','november','december']
-    const month = months.indexOf(match[3].toLowerCase())
+
+    // Supports both "29th June - 5th July 2026" and "29th - 5th July 2026".
+    const splitMonth = source.match(/(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)\s*[-–]\s*(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)(?:\s+(20\d{2}))?/i)
+    const sameMonth = source.match(/(\d{1,2})(?:st|nd|rd|th)?\s*[-–]\s*(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)(?:\s+(20\d{2}))?/i)
+
+    let firstDay: number
+    let firstMonthName: string
+    let explicitYear: string | undefined
+    if (splitMonth) {
+      firstDay = Number(splitMonth[1])
+      firstMonthName = splitMonth[2]
+      explicitYear = splitMonth[5]
+    } else if (sameMonth) {
+      firstDay = Number(sameMonth[1])
+      firstMonthName = sameMonth[3]
+      explicitYear = sameMonth[4]
+    } else {
+      return day
+    }
+
+    const month = months.indexOf(firstMonthName.toLowerCase())
     if (month < 0) return day
-    const year = Number(match[4] ?? new Date(sourceProgramme.importedAt).getFullYear())
-    const first = new Date(year, month, Number(match[1]))
+    const importedYear = new Date(sourceProgramme.importedAt).getFullYear()
+    const year = Number(explicitYear ?? (Number.isFinite(importedYear) ? importedYear : new Date().getFullYear()))
+    const first = new Date(year, month, firstDay)
     const wanted = ['SUN','MON','TUE','WED','THU','FRI','SAT'].findIndex((item) => day.toUpperCase().startsWith(item))
     if (wanted < 0) return day
     const date = new Date(first)
@@ -2963,10 +3303,15 @@ function ManagerApp({
     return dateKey(date)
   }
 
-  function staffingStatus(member: StaffMember, day: string, sourceProgramme: ProgrammeImport, sourceDaysOff: StaffDayOff[], sourceWorking: Record<string,string[]>, sourceSickness: Record<string,string[]>) {
-    if ((sourceSickness[day] ?? []).includes(member.id)) return 'sick' as DayOffStatus
+  function staffingStatus(member: StaffMember, day: string, sourceProgramme: ProgrammeImport, sourceDaysOff: StaffDayOff[], sourceWorking: Record<string,string[]>, _sourceSickness: Record<string,string[]>) {
     const isoDay = dateForProgrammeDay(sourceProgramme, day)
-    const exact = sourceDaysOff.find((entry) => entry.staff_id === member.id && entry.day === isoDay)
+    const memberEmail = (member.email ?? '').trim().toLowerCase()
+    const memberName = normaliseIdentity(member.name)
+    const exact = sourceDaysOff.find((entry) => entry.day === isoDay && (
+      entry.staff_id === member.id ||
+      (memberEmail && entry.staff_email.trim().toLowerCase() === memberEmail) ||
+      normaliseIdentity(entry.staff_name) === memberName
+    ))
     if (exact?.status) return exact.status
     const working = sourceWorking[day]
     if (working && !working.includes(member.id)) return 'off' as DayOffStatus
@@ -2974,292 +3319,180 @@ function ManagerApp({
   }
 
   async function createStaffingExcel(sourceProgramme: ProgrammeImport, sourceAssignments: StaffingAssignment, sourceStaff: StaffMember[], sourceDaysOff: StaffDayOff[], sourceWorking: Record<string,string[]>, sourceSickness: Record<string,string[]>, selectedDays: string[], fileName: string) {
+    const ExcelJS = (window as Window & { ExcelJS?: any }).ExcelJS
+    if (!ExcelJS) throw new Error('The Excel export library did not load. Refresh the page and try again.')
+
     const response = await fetch(`${import.meta.env.BASE_URL}staffing-template.xlsx`)
     if (!response.ok) throw new Error('The staffing Excel template could not be loaded.')
 
-    // Work directly on the original XLSX package. This deliberately avoids
-    // SheetJS re-writing the workbook, because that removes the template's
-    // conditional formatting, thick borders, print settings and colour rules.
-    const templateBytes = new Uint8Array(await response.arrayBuffer())
-    const zipEntries = readZipEntries(templateBytes)
-    const sheetPath = 'xl/worksheets/sheet1.xml'
-    const sheetEntry = zipEntries.find((entry) => entry.name === sheetPath)
-    if (!sheetEntry) throw new Error('Sheet1 is missing from the staffing template.')
-    const sheetBytes = await zipInflate(sheetEntry.compressed, sheetEntry.method)
+    // ExcelJS writes real cell styles (including fills) and produces an XLSX
+    // package that Microsoft Excel opens without a repair warning.
+    const templateWorkbook = new ExcelJS.Workbook()
+    await templateWorkbook.xlsx.load(await response.arrayBuffer())
+    const template = templateWorkbook.worksheets[0]
+    if (!template) throw new Error('The staffing template worksheet is missing.')
 
-    const parser = new DOMParser()
-    const serializer = new XMLSerializer()
-    const ns = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
-    const worksheetDocument = parser.parseFromString(zipDecoder.decode(sheetBytes), 'application/xml')
-    if (worksheetDocument.querySelector('parsererror')) throw new Error('The staffing template worksheet could not be read.')
-
-    const stylesPath = 'xl/styles.xml'
-    const stylesEntry = zipEntries.find((entry) => entry.name === stylesPath)
-    if (!stylesEntry) throw new Error('The staffing template styles are missing.')
-    const stylesBytes = await zipInflate(stylesEntry.compressed, stylesEntry.method)
-    const stylesDocument = parser.parseFromString(zipDecoder.decode(stylesBytes), 'application/xml')
-    if (stylesDocument.querySelector('parsererror')) throw new Error('The staffing template styles could not be read.')
-    const cellXfs = stylesDocument.getElementsByTagNameNS(ns, 'cellXfs')[0]
-    if (!cellXfs) throw new Error('The staffing template cell styles are missing.')
-    const styleVariants = new Map<string, string>()
-    const styleWithFill = (styleId: string, fillId: number) => {
-      const key = `${styleId}:${fillId}`
-      const cached = styleVariants.get(key)
-      if (cached) return cached
-      const sourceStyle = cellXfs.children.item(Number(styleId)) as Element | null
-      if (!sourceStyle) return styleId
-      const variant = sourceStyle.cloneNode(true) as Element
-      variant.setAttribute('fillId', String(fillId))
-      variant.setAttribute('applyFill', '1')
-      cellXfs.appendChild(variant)
-      const nextId = String(cellXfs.children.length - 1)
-      cellXfs.setAttribute('count', String(cellXfs.children.length))
-      styleVariants.set(key, nextId)
-      return nextId
-    }
-
-    const cells = new Map<string, Element>()
-    Array.from(worksheetDocument.getElementsByTagNameNS(ns, 'c')).forEach((cell) => {
-      const ref = cell.getAttribute('r')
-      if (ref) cells.set(ref, cell)
-    })
-
-    const setRawCell = (ref: string, value: string | number, styleRef?: string, fillId?: number) => {
-      const cell = cells.get(ref)
-      if (!cell) return
-      while (cell.firstChild) cell.removeChild(cell.firstChild)
-      if (styleRef) {
-        const source = cells.get(styleRef)
-        const styleId = source?.getAttribute('s')
-        if (styleId) cell.setAttribute('s', fillId === undefined ? styleId : styleWithFill(styleId, fillId))
-      } else if (fillId !== undefined) {
-        const styleId = cell.getAttribute('s') ?? '0'
-        cell.setAttribute('s', styleWithFill(styleId, fillId))
-      }
-      if (typeof value === 'number') {
-        cell.removeAttribute('t')
-        const v = worksheetDocument.createElementNS(ns, 'v')
-        v.textContent = String(value)
-        cell.appendChild(v)
-      } else if (value !== '') {
-        cell.setAttribute('t', 'inlineStr')
-        const is = worksheetDocument.createElementNS(ns, 'is')
-        const t = worksheetDocument.createElementNS(ns, 't')
-        t.setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:space', 'preserve')
-        t.textContent = value
-        is.appendChild(t)
-        cell.appendChild(is)
-      } else {
-        cell.removeAttribute('t')
-      }
-    }
-
-    const columnName = (index: number) => {
-      let value = index + 1
-      let result = ''
-      while (value > 0) {
-        value -= 1
-        result = String.fromCharCode(65 + (value % 26)) + result
-        value = Math.floor(value / 26)
-      }
-      return result
-    }
-    const ref = (rowZeroBased: number, colZeroBased: number) => `${columnName(colZeroBased)}${rowZeroBased + 1}`
-
-    const originalBlocks = [
-      { key: 'mon', label: 'Mon', start: 0 },
-      { key: 'tue', label: 'Tues', start: 16 },
-      { key: 'wed', label: 'Wed', start: 32 },
-      { key: 'thu', label: 'Thur', start: 48 },
-      { key: 'fri', label: 'Fri', start: 64 },
-      { key: 'sat', label: 'Sat', start: 80 },
-      { key: 'sun', label: 'Sun', start: 96 },
-    ]
     const normaliseDay = (value: string) => value.trim().toLowerCase().slice(0, 3)
-    const selectedKeys = selectedDays.map(normaliseDay)
-    const sourceDayFor = (blockKey: string) => Array.from(new Set(sourceProgramme.rows.map((row) => row.day))).find((day) => normaliseDay(day) === blockKey)
+    const programmeDays = Array.from(new Set(sourceProgramme.rows.map((row) => row.day)))
+    const days = selectedDays
+      .map((requested) => programmeDays.find((day) => normaliseDay(day) === normaliseDay(requested)))
+      .filter((day): day is string => Boolean(day))
+    if (!days.length) throw new Error('No matching programme days were found for this download.')
+
     const sessions = ['1', '2', '3', '4', '5']
     const sessionTimes = ['9:10-10:30', '10:45-12:15', '14:00-15:30', '15:45-17:15', '19:00-20:30']
+    // The old template includes a redundant status column between the staff
+    // name and Session 1. Export A, B and D:M so Session 1 starts immediately
+    // after the name while preserving the existing timetable layout.
+    const sourceColumns = [1, 2, ...Array.from({ length: 10 }, (_, index) => index + 4)]
+    const blockWidth = sourceColumns.length
+    const blockGap = 3
+    const rowCount = 38
+    const outputWorkbook = new ExcelJS.Workbook()
+    outputWorkbook.creator = 'Norfolk Lakes'
+    outputWorkbook.title = fileName.replace(/\.xlsx$/i, '')
+    const output = outputWorkbook.addWorksheet('Staffing', {
+      pageSetup: { ...template.pageSetup },
+      properties: { ...template.properties },
+      views: template.views ? JSON.parse(JSON.stringify(template.views)) : undefined,
+    })
+
+    const clone = <T,>(value: T): T => value == null ? value : JSON.parse(JSON.stringify(value)) as T
+
+    // Copy only the single template table for every requested programme day.
+    // This prevents hidden, duplicate and historic tables from entering exports.
+    days.forEach((_, dayIndex) => {
+      const destinationStart = dayIndex * (blockWidth + blockGap) + 1
+      sourceColumns.forEach((sourceColumnNumber, outputColumnIndex) => {
+        const sourceColumn = template.getColumn(sourceColumnNumber)
+        const targetColumn = output.getColumn(destinationStart + outputColumnIndex)
+        targetColumn.width = sourceColumn.width
+        targetColumn.hidden = false
+        targetColumn.outlineLevel = sourceColumn.outlineLevel
+      })
+      for (let row = 1; row <= rowCount; row += 1) {
+        const sourceRow = template.getRow(row)
+        const targetRow = output.getRow(row)
+        if (dayIndex === 0) {
+          targetRow.height = sourceRow.height
+          targetRow.hidden = false
+          targetRow.outlineLevel = sourceRow.outlineLevel
+        }
+        sourceColumns.forEach((sourceColumnNumber, outputColumnIndex) => {
+          const sourceCell = sourceRow.getCell(sourceColumnNumber)
+          const targetCell = targetRow.getCell(destinationStart + outputColumnIndex)
+          targetCell.value = clone(sourceCell.value)
+          targetCell.style = clone(sourceCell.style)
+          if (sourceCell.numFmt) targetCell.numFmt = sourceCell.numFmt
+          if (sourceCell.note) targetCell.note = clone(sourceCell.note)
+        })
+      }
+    })
+
+    const templateMerges: string[] = clone((template as any).model?.merges ?? [])
+    const mappedColumn = (zeroBasedSourceColumn: number) => {
+      const oneBased = zeroBasedSourceColumn + 1
+      if (oneBased <= 2) return oneBased - 1
+      if (oneBased === 3) return null
+      if (oneBased <= 13) return oneBased - 2
+      return null
+    }
+    days.forEach((_, dayIndex) => {
+      const offset = dayIndex * (blockWidth + blockGap)
+      templateMerges.forEach((merge) => {
+        const range = XLSX.utils.decode_range(merge)
+        if (range.s.r >= rowCount || range.e.r >= rowCount || range.s.c >= 13 || range.e.c >= 13) return
+        let mappedStart = mappedColumn(range.s.c)
+        let mappedEnd = mappedColumn(range.e.c)
+        // A merge spanning the removed column remains a continuous merge after
+        // the remaining columns are shifted left. A merge only in column C is dropped.
+        if (mappedStart == null && mappedEnd == null) return
+        if (mappedStart == null) mappedStart = mappedEnd
+        if (mappedEnd == null) mappedEnd = mappedStart
+        if (mappedStart == null || mappedEnd == null) return
+        output.mergeCells(range.s.r + 1, mappedStart + 1 + offset, range.e.r + 1, mappedEnd + 1 + offset)
+      })
+    })
+
+    const fills = {
+      water: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF9DC3E6' }, bgColor: { argb: 'FF9DC3E6' } },
+      ropes: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF4B6C2' }, bgColor: { argb: 'FFF4B6C2' } },
+      hol: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFC6E0B4' }, bgColor: { argb: 'FFC6E0B4' } },
+      off: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFE699' }, bgColor: { argb: 'FFFFE699' } },
+      sick: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF4CCCC' }, bgColor: { argb: 'FFF4CCCC' } },
+    } as const
+
+    const setCell = (row: number, column: number, value: string | number, fill: keyof typeof fills | null = null) => {
+      const cell = output.getRow(row + 1).getCell(column + 1)
+      cell.value = value
+      // Keep borders, font, alignment and number formatting from the template.
+      // Only replace the fill so activity/status colours are visible in Excel.
+      cell.fill = fill ? clone(fills[fill]) : { type: 'pattern', pattern: 'none' }
+    }
+
     const dutyFor = (member: StaffMember, day: string, session: string) => sourceProgramme.rows
       .filter((row) => row.day === day && String(row.session) === session)
       .flatMap((row) => row.cells
         .filter((cell) => sourceAssignments[cellKey(row.id, cell.group)] === member.id && cell.activityCode && cell.activityCode !== 'Z')
         .map((cell) => ({ code: cell.activityCode.toUpperCase(), group: cell.group })))
 
-    // Daily downloads always use the first A:M block so they open and print
-    // exactly like the original paper template. Weekly downloads retain all
-    // original Monday-Sunday blocks.
-    const dayHasStaffingData = (day: string) => {
-      const rowIds = new Set(sourceProgramme.rows.filter((row) => row.day === day).map((row) => row.id))
-      const hasAssignments = Object.entries(sourceAssignments).some(([key, staffId]) => rowIds.has(key.split('::')[0]) && Boolean(staffId))
-      const isoDay = dateForProgrammeDay(sourceProgramme, day)
-      return hasAssignments || (sourceSickness[day] ?? []).length > 0 || sourceDaysOff.some((entry) => entry.day === isoDay) || Object.prototype.hasOwnProperty.call(sourceWorking, day)
-    }
+    days.forEach((day, dayIndex) => {
+      const start = dayIndex * (blockWidth + blockGap)
+      setCell(0, start, `DAILY STAFFING: ${day}`)
+      sessionTimes.forEach((time, index) => setCell(1, start + 2 + index * 2, time))
 
-    const blocksToFill = selectedDays.length === 1
-      ? [{ key: selectedKeys[0], label: selectedDays[0], start: 0 }]
-      : originalBlocks.filter((block) => selectedKeys.includes(block.key) && Boolean(sourceDayFor(block.key)) && dayHasStaffingData(sourceDayFor(block.key)!))
-
-    // Remove every copied table below the first row of day blocks. The source
-    // workbook contains additional historic/layout tables down to row 324;
-    // exports must contain only the single top staffing strip.
-    const maxColumn = selectedDays.length === 1 ? 12 : 108
-    const sheetData = worksheetDocument.getElementsByTagNameNS(ns, 'sheetData')[0]
-    Array.from(sheetData?.children ?? []).forEach((rowElement) => {
-      const rowNumber = Number((rowElement as Element).getAttribute('r') ?? '0')
-      if (rowNumber > 38) {
-        rowElement.parentNode?.removeChild(rowElement)
-        return
+      for (let row = 2; row < rowCount; row += 1) {
+        for (let column = 0; column < blockWidth; column += 1) setCell(row, start + column, '')
       }
-      Array.from((rowElement as Element).children).forEach((cellElement) => {
-        const address = (cellElement as Element).getAttribute('r') ?? ''
-        const match = address.match(/^([A-Z]+)(\d+)$/)
-        if (!match) return
-        let column = 0
-        for (const character of match[1]) column = column * 26 + character.charCodeAt(0) - 64
-        if (column - 1 > maxColumn) cellElement.parentNode?.removeChild(cellElement)
-      })
-    })
 
-    const columns = worksheetDocument.getElementsByTagNameNS(ns, 'cols')[0]
-    Array.from(columns?.children ?? []).forEach((columnElement) => {
-      const min = Number((columnElement as Element).getAttribute('min') ?? '1')
-      const max = Number((columnElement as Element).getAttribute('max') ?? String(min))
-      const allowedMax = maxColumn + 1
-      if (min > allowedMax) columnElement.parentNode?.removeChild(columnElement)
-      else if (max > allowedMax) (columnElement as Element).setAttribute('max', String(allowedMax))
-    })
+      const roleRank: Record<StaffRole, number> = { centreManager: 0, activityManager: 1, teamLeader: 2, staff: 3 }
+      const orderedStaff = [...sourceStaff].sort((a, b) => roleRank[resolvedRole(a)] - roleRank[resolvedRole(b)] || a.name.localeCompare(b.name))
+      orderedStaff.slice(0, 29).forEach((member, index) => {
+        const row = index + 3
+        const status = staffingStatus(member, day, sourceProgramme, sourceDaysOff, sourceWorking, sourceSickness)
+        setCell(row, start, index + 1)
+        setCell(row, start + 1, member.name)
 
-    const mergeCells = worksheetDocument.getElementsByTagNameNS(ns, 'mergeCells')[0]
-    Array.from(mergeCells?.children ?? []).forEach((mergeElement) => {
-      const range = (mergeElement as Element).getAttribute('ref') ?? ''
-      const addresses = range.split(':')
-      const outside = addresses.some((address) => {
-        const match = address.match(/^([A-Z]+)(\d+)$/)
-        if (!match) return true
-        let column = 0
-        for (const character of match[1]) column = column * 26 + character.charCodeAt(0) - 64
-        return column - 1 > maxColumn || Number(match[2]) > 38
-      })
-      if (outside) mergeElement.parentNode?.removeChild(mergeElement)
-    })
-    if (mergeCells) mergeCells.setAttribute('count', String(mergeCells.children.length))
-
-    // Template conditional-format ranges include old tables and can introduce
-    // stray colours. Export colours are written explicitly from current data.
-    Array.from(worksheetDocument.getElementsByTagNameNS(ns, 'conditionalFormatting')).forEach((element) => element.parentNode?.removeChild(element))
-    Array.from(worksheetDocument.getElementsByTagNameNS(ns, 'rowBreaks')).forEach((element) => element.parentNode?.removeChild(element))
-    Array.from(worksheetDocument.getElementsByTagNameNS(ns, 'colBreaks')).forEach((element) => element.parentNode?.removeChild(element))
-
-    // Clear values only. The original cell styles, borders,
-    // formatting, row heights, column widths, merged cells and print setup stay.
-    originalBlocks.forEach((block) => {
-      for (let row = 2; row <= 37; row += 1) {
-        for (let col = block.start; col <= block.start + 12; col += 1) {
-          const targetRef = ref(row, col)
-          setRawCell(targetRef, '', targetRef, 0)
-        }
-      }
-    })
-
-    blocksToFill.forEach((block) => {
-      const sourceDay = sourceDayFor(block.key)
-      if (!sourceDay) return
-      setRawCell(ref(0, block.start), `DAILY STAFFING: ${sourceDay}`, 'A1')
-      sessionTimes.forEach((time, index) => setRawCell(ref(1, block.start + 3 + index * 2), time, ref(1, 3 + index * 2)))
-
-      sourceStaff.slice(0, 29).forEach((member, index) => {
-        const row = index + 3 // template staff rows start on Excel row 4
-        const status = staffingStatus(member, sourceDay, sourceProgramme, sourceDaysOff, sourceWorking, sourceSickness)
-        const numberRef = ref(row, block.start)
-        const nameRef = ref(row, block.start + 1)
-        const statusRef = ref(row, block.start + 2)
-        setRawCell(numberRef, index + 1, numberRef, 0)
-        setRawCell(nameRef, member.name, nameRef, 0)
-        setRawCell(statusRef, '', statusRef, 0)
-
-        if (status) {
-          const label = status === 'hol' ? 'HOL' : status === 'sick' ? 'SICK' : status === 'am_off' ? 'AM OFF' : status === 'pm_off' ? 'PM OFF' : 'OFF'
-          const absenceFill = status === 'hol' ? 3 : status === 'sick' ? 6 : 2
-          setRawCell(statusRef, label, statusRef, absenceFill)
-          sessions.forEach((_, sessionIndex) => {
-            const sessionNumber = sessionIndex + 1
-            const unavailable = status === 'hol' || status === 'sick' || status === 'off' ||
-              (status === 'am_off' && sessionNumber <= 2) || (status === 'pm_off' && sessionNumber === 5)
-            const activityRef = ref(row, block.start + 3 + sessionIndex * 2)
-            const groupRef = ref(row, block.start + 4 + sessionIndex * 2)
-            setRawCell(activityRef, unavailable ? label : '', activityRef, unavailable ? absenceFill : 0)
-            setRawCell(groupRef, '', groupRef, unavailable ? absenceFill : 0)
-          })
-          return
-        }
-
+        const statusLabel = status === 'hol' ? 'HOL' : status === 'sick' ? 'SICK' : status === 'am_off' ? 'AM OFF' : status === 'pm_off' ? 'PM OFF' : status === 'off' ? 'OFF' : ''
+        const statusFill = status === 'hol' ? 'hol' : status === 'sick' ? 'sick' : status ? 'off' : null
         sessions.forEach((session, sessionIndex) => {
-          const duties = dutyFor(member, sourceDay, session)
-          const activityRef = ref(row, block.start + 3 + sessionIndex * 2)
-          const groupRef = ref(row, block.start + 4 + sessionIndex * 2)
-          const dutyColours = duties.map((duty) => staffingColour(duty.code))
-          const activityFill = dutyColours.includes('water') ? 5 : dutyColours.includes('ropes') ? 10 : 0
-          setRawCell(activityRef, duties.map((duty) => duty.code).join(' / '), activityRef, activityFill)
-          setRawCell(groupRef, duties.map((duty) => `G${duty.group}`).join(', '), groupRef, 0)
+          const duties = dutyFor(member, day, session)
+          const colours = duties.map((duty) => staffingColour(duty.code))
+          const activityFill = colours.includes('water') ? 'water' : colours.includes('ropes') ? 'ropes' : null
+          const sessionNumber = sessionIndex + 1
+          const unavailable = Boolean(status) && (
+            status === 'hol' || status === 'sick' || status === 'off' ||
+            (status === 'am_off' && sessionNumber <= 2) ||
+            (status === 'pm_off' && sessionNumber === 5)
+          )
+
+          // The live availability calendar wins over rota assignments. A blocked
+          // session must contain only its status and must never export an activity.
+          if (unavailable) {
+            setCell(row, start + 2 + sessionIndex * 2, statusLabel, statusFill)
+            setCell(row, start + 3 + sessionIndex * 2, '', statusFill)
+          } else if (duties.length > 0) {
+            setCell(row, start + 2 + sessionIndex * 2, duties.map((duty) => duty.code).join(' / '), activityFill)
+            setCell(row, start + 3 + sessionIndex * 2, duties.map((duty) => `G${duty.group}`).join(', '), activityFill)
+          } else {
+            setCell(row, start + 2 + sessionIndex * 2, '')
+            setCell(row, start + 3 + sessionIndex * 2, '')
+          }
         })
       })
     })
 
-    const lastColumn = selectedDays.length === 1 ? 'M' : 'DE'
-    const dimension = worksheetDocument.getElementsByTagNameNS(ns, 'dimension')[0]
-    dimension?.setAttribute('ref', `A1:${lastColumn}38`)
-
-    const replacements: Record<string, Uint8Array> = {
-      [sheetPath]: zipEncoder.encode(serializer.serializeToString(worksheetDocument)),
-      [stylesPath]: zipEncoder.encode(serializer.serializeToString(stylesDocument)),
+    output.pageSetup = {
+      ...clone(template.pageSetup),
+      printArea: `A1:${XLSX.utils.encode_col((days.length - 1) * (blockWidth + blockGap) + blockWidth - 1)}${rowCount}`,
+      fitToPage: true,
+      fitToWidth: 1,
+      fitToHeight: 1,
     }
-    const excludedPaths = new Set<string>(['xl/worksheets/sheet2.xml', 'xl/worksheets/_rels/sheet2.xml.rels'])
+    output.headerFooter = clone(template.headerFooter)
 
-    // Keep only the actual staffing worksheet. The uploaded workbook also has
-    // a Plan B sheet, which must never appear in downloaded staffing files.
-    const workbookEntry = zipEntries.find((entry) => entry.name === 'xl/workbook.xml')
-    if (workbookEntry) {
-      const workbookXml = await zipInflate(workbookEntry.compressed, workbookEntry.method)
-      const workbookDocument = parser.parseFromString(zipDecoder.decode(workbookXml), 'application/xml')
-      const sheetsElement = workbookDocument.getElementsByTagNameNS(ns, 'sheets')[0]
-      Array.from(sheetsElement?.children ?? []).forEach((sheetElement) => {
-        if ((sheetElement as Element).getAttribute('name') !== 'Sheet1') sheetElement.parentNode?.removeChild(sheetElement)
-      })
-      const workbookView = workbookDocument.getElementsByTagNameNS(ns, 'workbookView')[0]
-      workbookView?.setAttribute('activeTab', '0')
-      workbookView?.setAttribute('firstSheet', '0')
-      Array.from(workbookDocument.getElementsByTagNameNS(ns, 'definedName')).forEach((definedName) => {
-        if (definedName.getAttribute('name') === '_xlnm.Print_Area') definedName.textContent = `'Sheet1'!$A$1:$${lastColumn}$38`
-        definedName.setAttribute('localSheetId', '0')
-      })
-      replacements['xl/workbook.xml'] = zipEncoder.encode(serializer.serializeToString(workbookDocument))
-    }
-
-    const relsPath = 'xl/_rels/workbook.xml.rels'
-    const relsEntry = zipEntries.find((entry) => entry.name === relsPath)
-    if (relsEntry) {
-      const relsXml = await zipInflate(relsEntry.compressed, relsEntry.method)
-      const relsDocument = parser.parseFromString(zipDecoder.decode(relsXml), 'application/xml')
-      Array.from(relsDocument.documentElement.children).forEach((relationship) => {
-        if ((relationship as Element).getAttribute('Target')?.endsWith('worksheets/sheet2.xml')) relationship.parentNode?.removeChild(relationship)
-      })
-      replacements[relsPath] = zipEncoder.encode(serializer.serializeToString(relsDocument))
-    }
-
-    const contentTypesPath = '[Content_Types].xml'
-    const contentTypesEntry = zipEntries.find((entry) => entry.name === contentTypesPath)
-    if (contentTypesEntry) {
-      const contentTypesXml = await zipInflate(contentTypesEntry.compressed, contentTypesEntry.method)
-      const contentTypesDocument = parser.parseFromString(zipDecoder.decode(contentTypesXml), 'application/xml')
-      Array.from(contentTypesDocument.documentElement.children).forEach((override) => {
-        if ((override as Element).getAttribute('PartName') === '/xl/worksheets/sheet2.xml') override.parentNode?.removeChild(override)
-      })
-      replacements[contentTypesPath] = zipEncoder.encode(serializer.serializeToString(contentTypesDocument))
-    }
-
-    const output = await rewriteXlsxPackage(templateBytes, replacements, excludedPaths)
-    const blob = new Blob([output], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+    const bytes = await outputWorkbook.xlsx.writeBuffer()
+    const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url
@@ -3267,7 +3500,7 @@ function ManagerApp({
     document.body.appendChild(anchor)
     anchor.click()
     anchor.remove()
-    URL.revokeObjectURL(url)
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
   async function exportStaffingWeek() {
@@ -3408,7 +3641,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.61</span></div>
+          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.73</span></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -3620,7 +3853,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to accommodation, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v0.61</span>
+                  <span className="release-pill">v0.73</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
@@ -3729,6 +3962,7 @@ function ManagerApp({
 
         {page === 'staffing' && (
           <Panel title="Daily staffing" onBack={() => setPage('dashboard')}>
+            {programme && <div className="staffing-date-context"><article><span>Programme</span><strong>{programme.title}</strong><small>{programmeDays.length ? friendlyProgrammeDateRange(dateForProgrammeDay(programme, programmeDays[0]), dateForProgrammeDay(programme, programmeDays[programmeDays.length - 1])) : programme.title}</small></article><article className="today-card"><span>Selected programme date</span><strong>{new Date(`${dateForProgrammeDay(programme, activeStaffingDay)}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</strong></article></div>}
             {!programme ? (
               <EmptyProgramme onUpload={() => fileInputRef.current?.click()} />
             ) : (
@@ -3737,6 +3971,7 @@ function ManagerApp({
                   <div className="staffing-view-switch" role="group" aria-label="Staffing view">
                     <button className={staffingView === 'activity' ? 'active' : ''} onClick={() => setStaffingView('activity')}>Activity View</button>
                     <button className={staffingView === 'calendar' ? 'active' : ''} onClick={() => setStaffingView('calendar')}>Calendar View</button>
+                    <button onClick={() => setPage('holidays')}>Days Off &amp; Sickness</button>
                   </div>
                   <div className="staffing-zoom-controls" role="group" aria-label="Staffing zoom">
                     <button aria-label="Zoom out" disabled={staffingZoom <= 70} onClick={() => setStaffingZoom((current) => { const next = Math.max(70, current - 10); localStorage.setItem('acm-staffing-zoom', String(next)); return next })}>−</button>
@@ -3763,51 +3998,25 @@ function ManagerApp({
                   </div>
                   </div>
 
-                  <div className="staffing-actions staffing-management-row">
-                    <button
-                      className="secondary-action"
-                      onClick={() =>
-                        setShowWorkingPanel((current) => !current)
-                      }
-                    >
-                      <Users size={17} />
-                      Staff in today
-                      <span className="count-badge neutral">
-                        {(
-                          workingByDay[activeStaffingDay] ??
-                          staff.map((member) => member.id)
-                        ).length}
-                      </span>
-                    </button>
-
-                    <button
-                      className="secondary-action"
-                      onClick={() => setShowSickPanel((current) => !current)}
-                    >
-                      <Users size={17} />
-                      Sick staff
-                      {(sicknessByDay[activeStaffingDay] ?? []).length > 0 && (
-                        <span className="count-badge">
-                          {(sicknessByDay[activeStaffingDay] ?? []).length}
-                        </span>
-                      )}
-                    </button>
-
-                    <button
-                      className="clear-staffing-button"
-                      onClick={() => clearDayStaffing(activeStaffingDay)}
-                    >
-                      <X size={17} />
-                      Clear day
-                    </button>
-
-                    <button
-                      className="auto-fill-button"
-                      onClick={() => autoFillStaffing(activeStaffingDay)}
-                    >
-                      <WandSparkles size={17} />
-                      Auto-fill staff
-                    </button>
+                  <div className="staffing-availability-summary" aria-label="Staffing availability summary">
+                    <article><span>Staff total</span><strong>{staff.length}</strong></article>
+                    <article><span>In today</span><strong>{staff.length - unavailableStaffIdsForDay(activeStaffingDay).size}</strong></article>
+                    <article><span>OFF / HOL</span><strong>{(() => {
+                      const availabilityDay = programme ? dateForProgrammeDay(programme, activeStaffingDay) : activeStaffingDay
+                      return new Set(daysOff
+                        .filter((entry) => entry.day === availabilityDay && entry.status !== 'sick')
+                        .map((entry) => memberIdForDayOff(entry) ?? entry.staff_id)).size
+                    })()}</strong></article>
+                    <article className="sick-summary"><span>Sick</span><strong>{(() => {
+                      const availabilityDay = programme ? dateForProgrammeDay(programme, activeStaffingDay) : activeStaffingDay
+                      return new Set(
+                        daysOff
+                          .filter((entry) => entry.day === availabilityDay && entry.status === 'sick')
+                          .map((entry) => memberIdForDayOff(entry) ?? entry.staff_id),
+                      ).size
+                    })()}</strong></article>
+                    <button className="clear-staffing-button" onClick={() => clearDayStaffing(activeStaffingDay)}><X size={17}/>Clear day</button>
+                    <button className="auto-fill-button" onClick={() => autoFillStaffing(activeStaffingDay)}><WandSparkles size={17}/>Auto-fill staff</button>
                   </div>
                   <div className="staffing-actions staffing-download-row">
                     <button className="print-button" onClick={() => void exportDailyStaffing(activeStaffingDay)}><FileSpreadsheet size={17}/>Download day</button>
@@ -3841,87 +4050,6 @@ function ManagerApp({
                           </li>
                         ))}
                       </ul>
-                    </div>
-                  </section>
-                )}
-
-                {showWorkingPanel && (
-                  <section className="sickness-panel compact working-panel">
-                    <div className="sickness-heading">
-                      <div>
-                        <p className="eyebrow">Daily availability</p>
-                        <h3>Who is working on {activeStaffingDay}?</h3>
-                      </div>
-                      <button
-                        className="icon-button small"
-                        onClick={() => setShowWorkingPanel(false)}
-                      >
-                        <X size={17} />
-                      </button>
-                    </div>
-                    <p>
-                      Auto-fill and manual assignment only use people selected
-                      as working today.
-                    </p>
-                    <div className="sickness-chips">
-                      {staff.map((member) => {
-                        const working = (
-                          workingByDay[activeStaffingDay] ??
-                          staff.map((item) => item.id)
-                        ).includes(member.id)
-                        return (
-                          <button
-                            key={member.id}
-                            className={working ? 'working active' : 'working'}
-                            onClick={() =>
-                              toggleWorking(activeStaffingDay, member.id)
-                            }
-                          >
-                            {member.name}
-                            <span>{working ? 'Working' : 'Not in'}</span>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </section>
-                )}
-
-                {showSickPanel && (
-                  <section className="sickness-panel compact">
-                    <div className="sickness-heading">
-                      <div>
-                        <p className="eyebrow">Unavailable today</p>
-                        <h3>Who is sick on {activeStaffingDay}?</h3>
-                      </div>
-                      <button
-                        className="icon-button small"
-                        onClick={() => setShowSickPanel(false)}
-                      >
-                        <X size={17} />
-                      </button>
-                    </div>
-                    <p>
-                      Sick staff are removed from this day and cannot be selected
-                      or included by auto-fill.
-                    </p>
-                    <div className="sickness-chips">
-                      {staff.map((member) => {
-                        const sick = (
-                          sicknessByDay[activeStaffingDay] ?? []
-                        ).includes(member.id)
-                        return (
-                          <button
-                            key={member.id}
-                            className={sick ? 'sick active' : 'sick'}
-                            onClick={() =>
-                              toggleSick(activeStaffingDay, member.id)
-                            }
-                          >
-                            {member.name}
-                            <span>{sick ? 'Sick' : 'Available'}</span>
-                          </button>
-                        )
-                      })}
                     </div>
                   </section>
                 )}
@@ -4019,6 +4147,40 @@ function ManagerApp({
                   </section>
                 )}
 
+                {staffingView === 'availability' && (
+                  <section className="staffing-availability-panel">
+                    <div className="staffing-availability-heading">
+                      <div><p className="eyebrow">Single source of truth</p><h3>Days Off &amp; Sickness — {activeStaffingDay}</h3><p>Changes here immediately control Auto-fill, manual assignments, shortage warnings and Excel downloads.</p></div>
+                    </div>
+                    <div className="staffing-availability-table">
+                      <div className="availability-table-head">Staff member</div>
+                      <div className="availability-table-head">Role</div>
+                      <div className="availability-table-head">Status</div>
+                      {sortedDaysOffStaff().map((member) => {
+                        const availabilityDay = programme ? dateForProgrammeDay(programme, activeStaffingDay) : activeStaffingDay
+                        const existing = daysOff.find((entry) => memberIdForDayOff(entry) === member.id && entry.day === availabilityDay)
+                        const legacySick = [...(sicknessByDay[activeStaffingDay] ?? []), ...(sicknessByDay[availabilityDay] ?? [])].includes(member.id)
+                        const value: DayOffStatus | 'working' = existing?.status ?? (legacySick ? 'sick' : 'working')
+                        return <Fragment key={`staffing-availability-${member.id}`}>
+                          <div className="availability-staff-name"><strong>{member.name}</strong></div>
+                          <div><span className="role-pill">{roleLabel(resolvedRole(member))}</span></div>
+                          <div className={`availability-status status-${value}`}>
+                            <select value={value} disabled={!canManageHolidays && accountRole !== 'teamLeader'} onChange={(event) => void setSingleDayOff(member, activeStaffingDay, event.target.value as DayOffStatus | 'working')}>
+                              <option value="working">Working</option>
+                              {canManageHolidays && <option value="off">OFF</option>}
+                              {canManageHolidays && <option value="hol">HOL</option>}
+                              <option value="sick">SICK</option>
+                              {canManageHolidays && <option value="am_off">AM OFF</option>}
+                              {canManageHolidays && <option value="pm_off">PM OFF</option>}
+                            </select>
+                          </div>
+                        </Fragment>
+                      })}
+                    </div>
+                  </section>
+                )}
+
+                {staffingView !== 'availability' && (
                 <div className="staffing-zoom-stage" style={{ zoom: staffingZoom / 100 }}>
                 {staffingView === 'activity' ? (
                   <div className="staffing-grid">
@@ -4123,6 +4285,7 @@ function ManagerApp({
                   </section>
                 )}
                 </div>
+                )}
               </>
             )}
           </Panel>
@@ -4173,18 +4336,74 @@ function ManagerApp({
           </section>
         )}
 
+        {page === 'programmeBuilder' && canManageStaff && (
+          <Panel title="Programme Builder" onBack={() => setPage('admin')}>
+            <div className="builder-topbar">
+              <div className="staffing-view-switch" role="group" aria-label="Programme builder view">
+                <button className={programmeBuilderView === 'build' ? 'active' : ''} onClick={() => setProgrammeBuilderView('build')}>Build View</button>
+                <button className={programmeBuilderView === 'preview' ? 'active' : ''} onClick={() => setProgrammeBuilderView('preview')}>Preview Calendar</button>
+              </div>
+              <div className="builder-actions">
+                <button className="secondary-action" onClick={() => saveProgrammeBuilderDraft()}><FileSpreadsheet size={18}/>Save draft</button>
+                <button className="primary" onClick={publishProgrammeBuilder}><CheckCircle2 size={18}/>Publish programme</button>
+              </div>
+            </div>
+            {programmeBuilderMessage && <p className="builder-message">{programmeBuilderMessage}</p>}
+
+            {programmeBuilderView === 'build' ? (
+              <>
+                <section className="builder-settings-card">
+                  <div className="builder-field-grid">
+                    <label>Programme week name<input value={programmeBuilder.name} onChange={(event) => updateProgrammeBuilder({ name: event.target.value })} placeholder="e.g. 13–17 July 2026"/></label>
+                    <label>Week start<input type="date" value={programmeBuilder.startDate} onChange={(event) => updateProgrammeBuilder({ startDate: event.target.value })}/></label>
+                    <label>Week end<input type="date" value={programmeBuilder.endDate} onChange={(event) => updateProgrammeBuilder({ endDate: event.target.value })}/></label>
+                  </div>
+                </section>
+
+                <section className="builder-section">
+                  <div className="builder-section-heading"><div><p className="eyebrow">Schools and groups</p><h3>Who is attending?</h3></div><button className="secondary-action" onClick={addBuilderSchool}><Plus size={17}/>Add school</button></div>
+                  <div className="builder-school-grid">{programmeBuilder.schools.map((school, index) => <article className="builder-school-card" key={school.id}>
+                    <div className="builder-section-heading"><strong>School {index + 1}</strong><label className="builder-lock"><input type="checkbox" checked={school.locked} onChange={(event) => updateBuilderSchool(school.id, { locked: event.target.checked })}/>Lock programme</label></div>
+                    <label>School name<input value={school.name} onChange={(event) => updateBuilderSchool(school.id, { name: event.target.value })} placeholder="School name"/></label>
+                    <label>Programme name<input value={school.programmeName} onChange={(event) => updateBuilderSchool(school.id, { programmeName: event.target.value })} placeholder="e.g. Oakwood School – July"/></label>
+                    <div className="builder-form-grid"><label>Purchase type<select value={school.purchaseType} onChange={(event) => updateBuilderSchool(school.id, { purchaseType: event.target.value as ProgrammePurchaseType })}><option value="normal">Normal Package</option><option value="bargain">Bargain Special</option></select></label><label>Arrival date<input type="date" min={programmeBuilder.startDate} max={programmeBuilder.endDate} value={school.arrivalDate} onChange={(event) => updateBuilderSchool(school.id, { arrivalDate: event.target.value })}/></label><label>Departure date<input type="date" min={school.arrivalDate || programmeBuilder.startDate} max={programmeBuilder.endDate} value={school.departureDate} onChange={(event) => updateBuilderSchool(school.id, { departureDate: event.target.value })}/></label></div>
+                    <label>Programme notes<textarea rows={3} value={school.notes} onChange={(event) => updateBuilderSchool(school.id, { notes: event.target.value })} placeholder="Notes for this school only…"/></label>
+                    <label>Number of groups<input type="number" min="1" max="30" value={school.groups} onChange={(event) => updateBuilderSchool(school.id, { groups: Math.max(1, Number(event.target.value) || 1) })}/></label>
+                    <div><strong>First-choice activities</strong><p className="builder-help">Select the activities requested by the school. There is no separate first-choice field.</p><div className="builder-activity-chips">{activities.filter((activity) => activity.code !== 'Z').map((activity) => { const active = school.requestedActivities.includes(activity.code); return <button type="button" key={activity.code} className={active ? 'chip active' : 'chip'} onClick={() => updateBuilderSchool(school.id, { requestedActivities: active ? school.requestedActivities.filter((code) => code !== activity.code) : [...school.requestedActivities, activity.code] })}>{activity.code}<small>{activity.name}</small></button> })}</div></div>
+                    <div className="builder-form-grid"><label>Backup option 1<select value={school.backupOption1} onChange={(event) => updateBuilderSchool(school.id, { backupOption1: event.target.value })}><option value="">No backup selected</option>{activities.filter((activity) => activity.code !== 'Z').map((activity) => <option key={activity.code} value={activity.code}>{activity.code} – {activity.name}</option>)}</select></label><label>Backup option 2<select value={school.backupOption2} onChange={(event) => updateBuilderSchool(school.id, { backupOption2: event.target.value })}><option value="">No backup selected</option>{activities.filter((activity) => activity.code !== 'Z').map((activity) => <option key={activity.code} value={activity.code}>{activity.code} – {activity.name}</option>)}</select></label></div>
+                    <button className="secondary-action" onClick={() => autoFillProgrammeBuilder(school.id)}><WandSparkles size={17}/>Auto Fill School</button>
+                    {programmeBuilder.schools.length > 1 && <button className="icon-button small" title="Remove school" onClick={() => removeBuilderSchool(school.id)}><Trash2 size={16}/></button>}
+                  </article>)}</div>
+                </section>
+
+                {programmeBuilder.schools.some((school) => school.purchaseType === 'bargain') && <section className="builder-section bargain-rules"><div className="builder-section-heading"><div><p className="eyebrow">Bargain Special rules</p><h3>Package limits</h3></div></div><label className="builder-limit-field">Maximum sessions per group<input type="number" min="1" max="35" value={programmeBuilder.bargainSessionLimit} onChange={(event) => updateProgrammeBuilder({ bargainSessionLimit: Math.max(1, Number(event.target.value) || 1) })}/></label><p>Select the activities included in this package. These can be updated when you provide the Bargain Special reference sheet.</p><div className="builder-activity-chips">{activities.map((activity) => { const active = programmeBuilder.bargainAllowedActivities.includes(activity.code); return <button key={activity.code} className={active ? 'chip active' : 'chip'} onClick={() => updateProgrammeBuilder({ bargainAllowedActivities: active ? programmeBuilder.bargainAllowedActivities.filter((code) => code !== activity.code) : [...programmeBuilder.bargainAllowedActivities, activity.code] })} title={activity.name}>{activity.code}<small>{activity.name}</small></button> })}</div></section>}
+
+                <section className="builder-section">
+                  <div className="builder-section-heading"><div><p className="eyebrow">Programme grid</p><h3>Assign activities</h3></div><span>{builderGroups.length} groups · {builderDays.length} days</span></div>
+                  <div className="builder-grid-wrap"><table className="builder-grid"><thead><tr><th>Day</th><th>Session</th>{builderGroups.map(({ group, school }) => <th key={group}>G{group}<small>{school.name || 'School'}</small></th>)}</tr></thead><tbody>{builderDays.flatMap((dayInfo) => BUILDER_SESSIONS.map((session) => <tr key={`${dayInfo.day}-${session}`}><th>{dayInfo.label}</th><th>S{session}</th>{builderGroups.map(({ group, school }) => { const state = builderSchoolSessionState(school, dayInfo.date, session); const value = programmeBuilder.assignments[builderAssignmentKey(dayInfo.day, session, group)] ?? ''; const options = school.purchaseType === 'bargain' ? activities.filter((activity) => programmeBuilder.bargainAllowedActivities.includes(activity.code)) : activities; return <td key={group} className={`builder-state-${state}`}>{state === 'arrival' ? <strong>{school.name || 'School'} – Arrival</strong> : state === 'departed' ? <span>Departed</span> : state === 'offsite' ? <span>Not on site</span> : <select value={value} onChange={(event) => setBuilderActivity(dayInfo.day, session, group, event.target.value)}><option value="">—</option>{options.map((activity) => <option key={activity.code} value={activity.code}>{activity.code} – {activity.name}</option>)}</select>}</td> })}</tr>))}</tbody></table></div>
+                </section>
+              </>
+            ) : (
+              <section className="builder-preview">
+                <header><div><p className="eyebrow">Multi-school programme</p><h3>{programmeBuilder.name || 'Untitled programme'}</h3><span>{friendlyProgrammeDateRange(programmeBuilder.startDate, programmeBuilder.endDate)} · {builderGroups.length} groups</span></div><button className="secondary-action" onClick={() => window.print()}><Printer size={18}/>Print preview</button></header>
+                {builderValidation().length > 0 && <div className="builder-validation"><CircleAlert size={20}/><div><strong>Check before publishing</strong>{builderValidation().map((issue) => <p key={issue}>{issue}</p>)}</div></div>}
+                <div className="builder-preview-days">{builderDays.map((dayInfo) => <article className="builder-preview-day" key={dayInfo.day}><h4>{dayInfo.label}</h4>{BUILDER_SESSIONS.map((session) => <section key={session}><strong>Session {session}</strong><div>{builderGroups.map(({ group, school }) => { const state = builderSchoolSessionState(school, dayInfo.date, session); const code = programmeBuilder.assignments[builderAssignmentKey(dayInfo.day, session, group)] ?? ''; const label = state === 'arrival' ? `${school.name || 'School'} – Arrival` : state === 'departed' ? 'Departed' : state === 'offsite' ? 'Not on site' : code ? `${code} — ${activityNameFromList(activities, code)}` : 'Not assigned'; return <button key={group} className={state === 'activity' && code ? 'filled' : 'empty'} onClick={() => setProgrammeBuilderView('build')}><span>G{group} · {school.name || 'School'}</span><b>{label}</b></button> })}</div></section>)}</article>)}</div>
+              </section>
+            )}
+          </Panel>
+        )}
+
         {page === 'admin' && (
           <Panel title="Admin" onBack={() => setPage('dashboard')}>
             <section className="admin-choice-grid">
+              {canManageStaff && <button className="admin-choice-card programme-builder-card" onClick={() => setPage('programmeBuilder')}>
+                <CalendarRange size={34} />
+                <div><h3>Programme Builder</h3><p>Design Bargain Special or Normal Purchase programmes, preview them and publish them.</p></div>
+              </button>}
               {canManageStaff && <button className="admin-choice-card" onClick={() => setPage('staff')}>
                 <Users size={34} />
                 <div><h3>Staff</h3><p>Manage staff accounts, roles and availability.</p></div>
               </button>}
-              <button className="admin-choice-card" onClick={() => setPage('holidays')}>
-                <CalendarRange size={25} />
-                <div><h3>Days Off</h3><p>Month calendar, weekly staffing grid and printable days-off sheets.</p></div>
-                <ChevronRight size={20} />
-              </button>
               <button className="admin-choice-card" onClick={() => setPage('signoffs')}>
                 <ShieldCheck size={34} />
                 <div><h3>Sign-off</h3><p>Search staff and manage activity sign-offs.</p></div>
@@ -4361,7 +4580,7 @@ function ManagerApp({
         {page === 'loanHistory' && canManageStaff && (<Panel title="Loan Staff History" onBack={() => setPage('admin')}><div className="history-list">{loanHistory.length === 0 ? <p>No completed loan staff records yet.</p> : loanHistory.map((record)=><article className="history-card" key={record.member.id}><div><h3>{record.member.name}</h3><p>{roleLabel(resolvedRole(record.member))} · {record.member.staffCode ?? 'Legacy record'}</p><p>{record.loanPeriods?.length ?? 1} loan period{(record.loanPeriods?.length ?? 1)===1?'':'s'}</p>{record.loanPeriods?.map((period,index)=><small key={index}>Loan {index+1}: {period.startDate} to {period.endDate}{period.notes?` — ${period.notes}`:''}</small>)}</div><div className="history-actions"><button className="secondary-action" onClick={()=>reactivateLoan(record)}>Reactivate as Loan Staff</button><button className="primary" onClick={()=>convertLoanToPermanent(record)}>Add to My Centre</button></div></article>)}</div></Panel>)}
 
         {page === 'holidays' && (
-          <Panel title="Days Off" onBack={() => setPage('admin')}>
+          <Panel title="Days Off & Sickness" onBack={() => setPage('staffing')}>
             <div className="days-off-toolbar no-print">
               <div className="staffing-view-toggle">
                 <button className={daysOffView === 'month' ? 'active' : ''} onClick={() => setDaysOffView('month')}>Month View</button>
@@ -4417,7 +4636,7 @@ function ManagerApp({
               <div className="weekly-sheet-heading"><div><p className="eyebrow">Daily Days Off</p><h2>{parseDateKey(daysOffDay).toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</h2></div><div className="week-nav no-print"><button onClick={()=>{const d=parseDateKey(daysOffDay);d.setDate(d.getDate()-1);setDaysOffDay(dateKey(d))}}>Previous</button><button onClick={()=>setDaysOffDay(dateKey(new Date()))}>Today</button><button onClick={()=>{const d=parseDateKey(daysOffDay);d.setDate(d.getDate()+1);setDaysOffDay(dateKey(d))}}>Next</button><input type="date" value={daysOffDay} onChange={e=>setDaysOffDay(e.target.value)}/></div></div>
               <div className="daily-days-off-grid">
                 <div className="daily-head">Staff</div><div className="daily-head">Status</div><div className="daily-head">Availability</div>
-                {sortedDaysOffStaff().map(member=>{const existing=daysOff.find(x=>x.staff_id===member.id&&x.day===daysOffDay);const availability=!existing?'Available all day':existing.status==='am_off'?'Unavailable Sessions 1 & 2':existing.status==='pm_off'?'Unavailable Session 5':'Unavailable all day';return <Fragment key={member.id}><div className="staff-name-cell"><span>{member.name}</span><small>{roleLabel(resolvedRole(member))}</small></div><div className={`day-off-cell ${existing?`status-${existing.status}`:''} ${existing?.note==='blank-red'?'blank-red-cell':''}`}><select className="no-print" value={existing?.status??'working'} disabled={!canManageHolidays&&accountRole!=='teamLeader'} onChange={e=>setSingleDayOff(member,daysOffDay,e.target.value as DayOffStatus|'working')}><option value="working">Working</option>{canManageHolidays&&<option value="off">OFF</option>}{canManageHolidays&&<option value="hol">HOL</option>}<option value="sick">SICK</option>{canManageHolidays&&<option value="am_off">AM OFF</option>}{canManageHolidays&&<option value="pm_off">PM OFF</option>}</select><strong className="print-only">{daysOffDisplayLabel(existing)}</strong></div><div className="daily-availability">{availability}</div></Fragment>})}
+                {sortedDaysOffStaff().map((member,rowIndex)=>{const existing=daysOff.find(x=>x.staff_id===member.id&&x.day===daysOffDay);const availability=!existing?'Available all day':existing.status==='am_off'?'Unavailable Sessions 1 & 2':existing.status==='pm_off'?'Unavailable Session 5':'Unavailable all day';const cellKey=`${member.id}-${daysOffDay}`;return <Fragment key={member.id}><div className="staff-name-cell"><span>{member.name}</span><small>{roleLabel(resolvedRole(member))}</small></div><div ref={node=>{if(node) dailyCellRefs.current.set(cellKey,node); else dailyCellRefs.current.delete(cellKey)}} tabIndex={0} role="gridcell" aria-label={`${member.name}, ${parseDateKey(daysOffDay).toLocaleDateString('en-GB')}`} className={`day-off-cell keyboard-cell ${selectedDaysOffCell===cellKey?'selected-cell':''} ${existing?`status-${existing.status}`:''} ${existing?.note==='blank-red'?'blank-red-cell':''}`} onFocus={()=>setSelectedDaysOffCell(cellKey)} onKeyDown={event=>handleDailyCellKeyDown(event,member,rowIndex)}><select tabIndex={-1} className="no-print" value={existing?.status??'working'} disabled={!canManageHolidays&&accountRole!=='teamLeader'} onChange={e=>setSingleDayOff(member,daysOffDay,e.target.value as DayOffStatus|'working')}><option value="working">Working</option>{canManageHolidays&&<option value="off">OFF</option>}{canManageHolidays&&<option value="hol">HOL</option>}<option value="sick">SICK</option>{canManageHolidays&&<option value="am_off">AM OFF</option>}{canManageHolidays&&<option value="pm_off">PM OFF</option>}</select><strong className="print-only">{daysOffDisplayLabel(existing)}</strong></div><div className="daily-availability">{availability}</div></Fragment>})}
               </div>
               <div className="days-off-legend"><span className="status-off">OFF</span><span className="status-hol">HOL</span><span className="status-sick">SICK</span><span className="status-am_off">AM OFF</span><span className="status-pm_off">PM OFF</span></div>
             </section>}

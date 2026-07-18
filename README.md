@@ -1,4 +1,4 @@
-# Adventure Centre Manager v0.51
+# Adventure Centre Manager v0.76
 
 This version adds the first cloud login and staff rota system.
 
@@ -347,3 +347,10 @@ Adds permanent and loan staff lifecycle management, Former Staff and Loan Staff 
 - Empty/unstaffed days remain blank and uncoloured.
 - Activity and absence colours are applied only from current app data.
 - The unused Plan B worksheet is removed from staffing downloads.
+
+
+## v0.76 – School-specific programme dates and packages
+- Each school now has its own programme name, purchase type, arrival date, departure date and notes.
+- Arrival day: Sessions 1–2 are off-site, Session 3 displays the school arrival, Sessions 4–5 are activities.
+- Departure day: Sessions 1–2 are activities and Sessions 3–5 are unavailable.
+- Daily Staffing shows the full selected programme date.

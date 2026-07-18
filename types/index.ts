@@ -25,6 +25,9 @@ export type ProgrammeImport = {
   rows: ProgrammeRow[]
   importedAt: string
   sourceFileName: string
+  startDate?: string
+  endDate?: string
+  schoolDetails?: { id: string; schoolName: string; programmeName: string; purchaseType: 'bargain' | 'normal'; arrivalDate: string; departureDate: string; notes: string }[]
 }
 
 export type StaffRole =
