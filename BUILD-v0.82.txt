@@ -1,0 +1,10 @@
+Adventure Centre Manager v0.82
+- Correct formatted Programme workbook opens first; _ACM_DATA remains hidden.
+- Manor Adventure logo and refreshed branding.
+- Design Programme / Upload Programme modes.
+- Auto Fill School and Auto Fill Whole Programme.
+- School locking respected during optimisation.
+- Activity capacity validation.
+- Campfire and Disco restricted to Session 5 and scheduled school-wide.
+- Backup Option 1/2 use notification.
+- Existing SICK, HOL, OFF, AM OFF and PM OFF rules retained across staffing and exports.

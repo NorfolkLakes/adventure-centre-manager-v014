@@ -1771,3 +1771,7 @@ button { cursor: pointer; }
 .centre-programme-table .programme-cell.code-{background:#fafafa;color:#9aa4a0}
 .centre-programme-table tr.programme-day-start th,.centre-programme-table tr.programme-day-start td{border-top:3px solid #93aaa3}
 @media(max-width:760px){.centre-programme-table .sticky-day{min-width:70px;width:70px}.centre-programme-table .sticky-session{left:70px}.programme-toolbar{align-items:flex-start}.programme-upload-actions{width:100%}.programme-upload-actions button{flex:1}}
+
+
+/* v0.82 Manor Adventure design and programme workflow */
+.brand-lockup{display:flex;align-items:center;gap:14px}.brand-lockup>img{width:92px;height:58px;object-fit:contain;background:#fff;border-radius:12px;padding:5px;box-shadow:0 6px 18px rgba(0,0,0,.18)}.brand-lockup small{color:#b8d8d1;font-weight:700;letter-spacing:.08em;text-transform:uppercase}.builder-mode-switch{display:flex;background:#e8f1ef;border-radius:12px;padding:4px;gap:4px}.builder-mode-switch button{border:0;background:transparent;padding:10px 14px;border-radius:9px;font-weight:800;color:#355d57}.builder-mode-switch button.active{background:#123d38;color:white;box-shadow:0 3px 10px rgba(18,61,56,.2)}.builder-heading-actions{display:flex;gap:10px;flex-wrap:wrap}.builder-school-card:has(.builder-lock input:checked){border:2px solid #1c7c68;background:linear-gradient(180deg,#f5fffb,#fff)}@media(max-width:760px){.brand-lockup>img{width:70px;height:46px}.builder-mode-switch{order:3;width:100%}.builder-mode-switch button{flex:1}}

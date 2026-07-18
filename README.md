@@ -1,4 +1,4 @@
-# Adventure Centre Manager v0.80
+# Adventure Centre Manager v0.82
 
 This version adds the first cloud login and staff rota system.
 

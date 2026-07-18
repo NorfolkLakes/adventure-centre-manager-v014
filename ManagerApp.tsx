@@ -203,7 +203,8 @@ type ProgrammeBuilderDraft = {
 
 type SavedProgramme = { id: string; title: string; startDate: string; endDate: string; updatedAt: string; draft: ProgrammeBuilderDraft }
 
-const DEFAULT_BARGAIN_CODES = ['ARCH', 'BT', 'VB', 'MO', 'OC', 'LR', 'AIR', 'CF']
+const DEFAULT_BARGAIN_CODES = ['CANOE', 'KAYAK', 'ARCH', 'BT', 'VB', 'MO', 'OC', 'LR', 'AIR', 'CF', 'DISCO']
+const ACTIVITY_CAPACITY: Record<string, number> = { CLIMB: 2, HR: 2, BT: 2, SAIL: 3, 'SAIL PB': 1, CANOE: 3, GCAN: 3, KAYAK: 3, SUP: 3, GSUP: 3, RAFT: 2, ARCH: 2, RIFLES: 2, CF: 30, DISCO: 30 }
 const BUILDER_SESSIONS = ['1', '2', '3', '4', '5']
 const BUILDER_DAY_NAMES = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']
 const WEEKDAY_ORDER: Record<string, number> = { MON: 1, MONDAY: 1, TUE: 2, TUES: 2, TUESDAY: 2, WED: 3, WEDNESDAY: 3, THU: 4, THUR: 4, THURS: 4, THURSDAY: 4, FRI: 5, FRIDAY: 5, SAT: 6, SATURDAY: 6, SUN: 7, SUNDAY: 7 }
@@ -701,6 +702,7 @@ function ManagerApp({
     }
   })
   const [programmeBuilderView, setProgrammeBuilderView] = useState<'build' | 'preview'>('build')
+  const [programmeBuilderMode, setProgrammeBuilderMode] = useState<'design' | 'upload'>('design')
   const [programmeBuilderScreen, setProgrammeBuilderScreen] = useState<'library' | 'editor'>('library')
   const [programmeBuilderMessage, setProgrammeBuilderMessage] = useState('')
   const [savedProgrammes, setSavedProgrammes] = useState<SavedProgramme[]>(() => readJson(PROGRAMME_LIBRARY_KEY, []))
@@ -1911,7 +1913,7 @@ function ManagerApp({
 
   function generateSchoolAssignments(schoolId: string, preserveManual: boolean, baseAssignments = programmeBuilder.assignments) {
     const school = programmeBuilder.schools.find((item) => item.id === schoolId)
-    if (!school) return baseAssignments
+    if (!school || (school.locked && preserveManual)) return baseAssignments
     const schoolGroups = builderGroups.filter((entry) => entry.school.id === schoolId)
     const requested = school.requestedActivities.length ? school.requestedActivities : activities.filter((item) => item.code !== 'Z').map((item) => item.code)
     const allowed = school.purchaseType === 'bargain' ? requested.filter((code) => programmeBuilder.bargainAllowedActivities.includes(code)) : requested
@@ -1922,8 +1924,11 @@ function ManagerApp({
       .filter((session) => builderSchoolSessionState(school, dayInfo.date, session) === 'activity')
       .map((session) => ({ ...dayInfo, session, priority: builderSlotPriority(school, dayInfo.date, session) })))
 
-    const isActivityAlreadyRunning = (day: string, session: string, code: string, ownKey: string) =>
-      Object.entries(next).some(([key, value]) => key !== ownKey && key.startsWith(`${day}|${session}|`) && value === code)
+    const activityAtCapacity = (day: string, session: string, code: string, ownKey: string) => {
+      const capacity = ACTIVITY_CAPACITY[code] ?? 1
+      const running = Object.entries(next).filter(([key, value]) => key !== ownKey && key.startsWith(`${day}|${session}|`) && value === code).length
+      return running >= capacity
+    }
 
     for (const { group } of schoolGroups) {
       const unlockedSlots = activitySlots.filter((slot) => {
@@ -1933,14 +1938,14 @@ function ManagerApp({
       for (const slot of unlockedSlots) next[builderAssignmentKey(slot.day, slot.session, group)] = ''
 
       const sortedSlots = [...unlockedSlots].sort((a, b) => a.priority - b.priority || a.date.localeCompare(b.date) || Number(a.session) - Number(b.session))
-      const queue = [...allowed]
+      const queue = [...allowed].filter((code) => code !== 'CF' && code !== 'DISCO')
       const campfireIndex = queue.indexOf('CF')
       if (campfireIndex >= 0) {
         queue.splice(campfireIndex, 1)
         const campfireSlot = [...sortedSlots].filter((slot) => slot.session === '5').sort((a, b) => b.date.localeCompare(a.date))[0]
         if (campfireSlot) {
           const key = builderAssignmentKey(campfireSlot.day, campfireSlot.session, group)
-          if (!isActivityAlreadyRunning(campfireSlot.day, campfireSlot.session, 'CF', key)) {
+          if (!activityAtCapacity(campfireSlot.day, campfireSlot.session, 'CF', key)) {
             next[key] = 'CF'
             sortedSlots.splice(sortedSlots.indexOf(campfireSlot), 1)
           } else queue.push('CF')
@@ -1955,7 +1960,7 @@ function ManagerApp({
           if (!second) return false
           const firstKey = builderAssignmentKey(slot.day, slot.session, group)
           const secondKey = builderAssignmentKey(second.day, second.session, group)
-          return !isActivityAlreadyRunning(slot.day, slot.session, 'CANOE', firstKey) && !isActivityAlreadyRunning(second.day, second.session, 'KAYAK', secondKey)
+          return !activityAtCapacity(slot.day, slot.session, 'CANOE', firstKey) && !activityAtCapacity(second.day, second.session, 'KAYAK', secondKey)
         })
         if (pairStart) {
           const second = sortedSlots.find((slot) => slot.day === pairStart.day && Number(slot.session) === Number(pairStart.session) + 1)!
@@ -1971,12 +1976,22 @@ function ManagerApp({
       for (const slot of sortedSlots) {
         if (!queue.length) break
         const key = builderAssignmentKey(slot.day, slot.session, group)
-        let chosenIndex = queue.findIndex((code) => code !== 'CF' && (!WATER_ACTIVITY_CODES.has(code) || slot.priority < 2) && !isActivityAlreadyRunning(slot.day, slot.session, code, key))
-        if (chosenIndex < 0) chosenIndex = queue.findIndex((code) => code !== 'CF' && !isActivityAlreadyRunning(slot.day, slot.session, code, key))
+        let chosenIndex = queue.findIndex((code) => code !== 'CF' && (!WATER_ACTIVITY_CODES.has(code) || slot.priority < 2) && !activityAtCapacity(slot.day, slot.session, code, key))
+        if (chosenIndex < 0) chosenIndex = queue.findIndex((code) => code !== 'CF' && !activityAtCapacity(slot.day, slot.session, code, key))
         if (chosenIndex < 0) continue
         const [code] = queue.splice(chosenIndex, 1)
         next[key] = code
         if (queue.length === 0 && school.purchaseType !== 'bargain') queue.push(...allowed.filter((item) => item !== 'CF'))
+      }
+    }
+    // Campfire and Disco are whole-school evening activities. Put them together in Session 5,
+    // as late in the stay as possible, without overwriting a manager's locked cell.
+    const selectedCollective = allowed.includes('CF') ? 'CF' : allowed.includes('DISCO') ? 'DISCO' : ''
+    if (selectedCollective) {
+      const collectiveSlot = [...activitySlots].filter((slot) => slot.session === '5').sort((a, b) => b.date.localeCompare(a.date))[0]
+      if (collectiveSlot) for (const { group } of schoolGroups) {
+        const key = builderAssignmentKey(collectiveSlot.day, collectiveSlot.session, group)
+        if (!(preserveManual && programmeBuilder.manualLocks[key])) next[key] = selectedCollective
       }
     }
     return next
@@ -1994,7 +2009,8 @@ function ManagerApp({
     let next = { ...programmeBuilder.assignments }
     for (const school of programmeBuilder.schools) next = generateSchoolAssignments(school.id, true, next)
     updateProgrammeBuilder({ assignments: next })
-    setProgrammeBuilderMessage('Programme updated. Your manual changes were kept and the remaining sessions were rearranged around them.')
+    const backupSchools = programmeBuilder.schools.filter((school) => [school.backupOption1, school.backupOption2].some((code) => code && Object.values(next).includes(code)))
+    setProgrammeBuilderMessage(backupSchools.length ? `Programme updated. Backup activities are in use for: ${backupSchools.map((school) => school.name || 'School').join(', ')}.` : 'Programme updated. Your manual changes were kept and the remaining sessions were rearranged around them.')
   }
 
   function resetProgrammeLocks() {
@@ -2035,11 +2051,14 @@ function ManagerApp({
       const [day, session] = key.split('|')
       const slot = `${day}|${session}`
       slotActivities[slot] = [...(slotActivities[slot] ?? []), code]
-      if (code === 'CF' && session !== '5') issues.push('Campfire must be scheduled in Session 5.')
+      if ((code === 'CF' || code === 'DISCO') && session !== '5') issues.push(`${code === 'CF' ? 'Campfire' : 'Disco'} must be scheduled in Session 5.`)
     })
     Object.entries(slotActivities).forEach(([slot, codes]) => {
-      const duplicate = codes.find((code, index) => codes.indexOf(code) !== index)
-      if (duplicate) issues.push(`${duplicate} is running more than once at ${slot.replace('|', ' Session ')}.`)
+      for (const code of new Set(codes)) {
+        const count = codes.filter((item) => item === code).length
+        const capacity = ACTIVITY_CAPACITY[code] ?? 1
+        if (count > capacity) issues.push(`${code} exceeds its capacity (${count}/${capacity}) at ${slot.replace('|', ' Session ')}.`)
+      }
     })
     return Array.from(new Set(issues))
   }
@@ -2237,8 +2256,9 @@ function ManagerApp({
     const appState = XLSX.utils.aoa_to_sheet([[JSON.stringify({ programme, draft: programmeBuilder, exportedAt: new Date().toISOString(), format: 'ACM_APP_PROGRAMME_V1' })]])
     appState['!cols'] = [{ hidden: true }]
     XLSX.utils.book_append_sheet(workbook, appState, '_ACM_DATA')
-    if (workbook.Workbook?.Sheets) workbook.Workbook.Sheets.push({ name: '_ACM_DATA', Hidden: 2 } as any)
-    else workbook.Workbook = { Views: [{ RTL: false }], Sheets: [{ name: '_ACM_DATA', Hidden: 2 } as any] }
+    workbook.Workbook = workbook.Workbook ?? {}
+    workbook.Workbook.Views = [{ activeTab: 0, firstSheet: 0, visibility: 'visible' } as any]
+    workbook.Workbook.Sheets = [{ name: 'Programme', Hidden: 0 } as any, { name: '_ACM_DATA', Hidden: 2 } as any]
     const safeName = title.replace(/[^a-z0-9 _-]+/gi, '').trim() || 'Programme'
     XLSX.writeFile(workbook, `${safeName}.xlsx`, { cellStyles: true })
     setImportMessage('Downloaded the latest edited programme as Excel.')
@@ -3941,7 +3961,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.81</span></div>
+          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.82</span></div><small>Norfolk Lakes</small></div></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -4157,7 +4177,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to accommodation, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v0.81</span>
+                  <span className="release-pill">v0.82</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
@@ -4651,6 +4671,7 @@ function ManagerApp({
             ) : (
               <>
             <div className="builder-topbar"><button className="secondary-action" onClick={() => setProgrammeBuilderScreen('library')}><ChevronLeft size={17}/>Programme library</button>
+              <div className="builder-mode-switch"><button className={programmeBuilderMode === 'design' ? 'active' : ''} onClick={() => setProgrammeBuilderMode('design')}>Design Programme</button><button className={programmeBuilderMode === 'upload' ? 'active' : ''} onClick={() => { setProgrammeBuilderMode('upload'); appProgrammeInputRef.current?.click() }}>Upload Programme</button></div>
               <div className="staffing-view-switch" role="group" aria-label="Programme builder view">
                 <button className={programmeBuilderView === 'build' ? 'active' : ''} onClick={() => setProgrammeBuilderView('build')}>Build View</button>
                 <button className={programmeBuilderView === 'preview' ? 'active' : ''} onClick={() => setProgrammeBuilderView('preview')}>Preview Calendar</button>
@@ -4673,7 +4694,7 @@ function ManagerApp({
                 </section>
 
                 <section className="builder-section">
-                  <div className="builder-section-heading"><div><p className="eyebrow">Schools and groups</p><h3>Who is attending?</h3></div><button className="secondary-action" onClick={addBuilderSchool}><Plus size={17}/>Add school</button></div>
+                  <div className="builder-section-heading"><div><p className="eyebrow">Schools and groups</p><h3>Who is attending?</h3></div><div className="builder-heading-actions"><button className="secondary-action" onClick={updateWholeProgramme}><WandSparkles size={17}/>Auto Fill Whole Programme</button><button className="secondary-action" onClick={addBuilderSchool}><Plus size={17}/>Add school</button></div></div>
                   <div className="builder-school-grid">{programmeBuilder.schools.map((school, index) => <article className="builder-school-card" key={school.id}>
                     <div className="builder-section-heading"><strong>School {index + 1}</strong><label className="builder-lock"><input type="checkbox" checked={school.locked} onChange={(event) => updateBuilderSchool(school.id, { locked: event.target.checked })}/>Lock programme</label></div>
                     <label>School name<input value={school.name} onChange={(event) => updateBuilderSchool(school.id, { name: event.target.value })} placeholder="School name"/></label>
