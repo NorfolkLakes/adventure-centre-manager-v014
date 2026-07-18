@@ -1,0 +1,10 @@
+Adventure Centre Manager v0.91
+
+Changes:
+- Canoe and Kayak are generated as an adjacent two-session paired rotation.
+- The first full day after arrival is preferred; arrival and departure days are fallback options.
+- Existing manually arranged Canoe/Kayak rotations are recognised as complete.
+- Update Programme no longer inserts an extra Canoe or Kayak session after a completed manual rotation.
+- Manual activity selection checks capacity across all schools in the same day/session.
+- Capacity warning names the affected schools and allows Cancel or explicit override.
+- Drag-and-drop programme edits use the same capacity check.

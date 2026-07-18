@@ -1964,19 +1964,40 @@ function ManagerApp({
       return running >= capacity
     }
 
-    // Canoeing and kayaking are run as a two-session paired rotation. Two groups
-    // swap activities in the following session so both groups complete both sessions.
+    // Canoeing and kayaking are one linked two-session rotation. Two groups
+    // swap activities in the immediately following session. Existing manual rotations
+    // are recognised as complete so Update Programme never adds an extra canoe/kayak.
     const pairedWaterGroups = new Set<number>()
     if (allowed.includes('CANOE') && allowed.includes('KAYAK')) {
       const availablePairs = [...activitySlots]
-        .sort((a, b) => a.date.localeCompare(b.date) || Number(a.session) - Number(b.session))
+        .sort((a, b) => a.priority - b.priority || a.date.localeCompare(b.date) || Number(a.session) - Number(b.session))
         .flatMap((first) => {
           const second = activitySlots.find((candidate) => candidate.day === first.day && Number(candidate.session) === Number(first.session) + 1)
           return second ? [{ first, second }] : []
         })
+
       for (let index = 0; index + 1 < schoolGroups.length; index += 2) {
         const firstGroup = schoolGroups[index].group
         const secondGroup = schoolGroups[index + 1].group
+
+        const completedManualPair = availablePairs.find(({ first, second }) => {
+          const values = [
+            next[builderAssignmentKey(first.day, first.session, firstGroup)],
+            next[builderAssignmentKey(first.day, first.session, secondGroup)],
+            next[builderAssignmentKey(second.day, second.session, firstGroup)],
+            next[builderAssignmentKey(second.day, second.session, secondGroup)],
+          ]
+          const forward = values[0] === 'KAYAK' && values[1] === 'CANOE' && values[2] === 'CANOE' && values[3] === 'KAYAK'
+          const reverse = values[0] === 'CANOE' && values[1] === 'KAYAK' && values[2] === 'KAYAK' && values[3] === 'CANOE'
+          return forward || reverse
+        })
+        if (completedManualPair) {
+          pairedWaterGroups.add(firstGroup)
+          pairedWaterGroups.add(secondGroup)
+          availablePairs.splice(availablePairs.indexOf(completedManualPair), 1)
+          continue
+        }
+
         const pair = availablePairs.find(({ first, second }) => {
           const keys = [
             builderAssignmentKey(first.day, first.session, firstGroup),
@@ -2070,7 +2091,28 @@ function ManagerApp({
     setProgrammeBuilderMessage('Manual locks cleared. The next update can rearrange every activity session.')
   }
 
+  function confirmBuilderCapacity(day: string, session: string, group: number, activityCode: string) {
+    if (!activityCode) return true
+    const key = builderAssignmentKey(day, session, group)
+    const capacity = activityCapacity(activityCode)
+    const clashes = Object.entries(programmeBuilder.assignments)
+      .filter(([assignmentKey, code]) => assignmentKey !== key && assignmentKey.startsWith(`${day}|${session}|`) && code === activityCode)
+      .map(([assignmentKey]) => Number(assignmentKey.split('|')[2]))
+    if (clashes.length + 1 <= capacity) return true
+
+    const affectedGroups = [...clashes, group]
+    const affectedSchools = Array.from(new Set(affectedGroups.map((groupNumber) => builderGroups.find((entry) => entry.group === groupNumber)?.school.name || `Group ${groupNumber}`)))
+    const activity = activities.find((item) => item.code === activityCode)
+    return window.confirm(
+      `${activity?.name || activityCode} capacity exceeded\n\n` +
+      `${affectedSchools.join(' and ')} have ${activity?.name || activityCode} in ${day}, Session ${session}.\n` +
+      `This would run ${clashes.length + 1} groups, but the maximum is ${capacity}.\n\n` +
+      `Press OK to override the limit, or Cancel to keep the current programme.`
+    )
+  }
+
   function setBuilderActivity(day: string, session: string, group: number, activityCode: string) {
+    if (!confirmBuilderCapacity(day, session, group, activityCode)) return
     const key = builderAssignmentKey(day, session, group)
     updateProgrammeBuilder({
       assignments: { ...programmeBuilder.assignments, [key]: activityCode },
@@ -2083,6 +2125,10 @@ function ManagerApp({
   function dropBuilderActivity(day: string, session: string, group: number, schoolId: string) {
     if (!draggedBuilderActivity || draggedBuilderActivity.schoolId !== schoolId) return
     const targetKey = builderAssignmentKey(day, session, group)
+    if (!confirmBuilderCapacity(day, session, group, draggedBuilderActivity.code)) {
+      setDraggedBuilderActivity(null)
+      return
+    }
     const sourceKey = draggedBuilderActivity.key
     const targetValue = programmeBuilder.assignments[targetKey] ?? ''
     const nextAssignments = { ...programmeBuilder.assignments, [targetKey]: draggedBuilderActivity.code }
@@ -4087,7 +4133,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.90</span></div><small>Norfolk Lakes</small></div></div>
+          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.91</span></div><small>Norfolk Lakes</small></div></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -4307,7 +4353,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to accommodation, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v0.90</span>
+                  <span className="release-pill">v0.91</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
