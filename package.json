@@ -1,7 +1,7 @@
 {
   "name": "adventure-centre-manager",
   "private": true,
-  "version": "0.74.0",
+  "version": "0.75.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,14 +9,14 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.57.4",
     "@vitejs/plugin-react": "^5.0.4",
     "lucide-react": "^0.468.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "typescript": "~5.9.3",
     "vite": "^8.1.4",
-    "xlsx": "^0.18.5",
-    "@supabase/supabase-js": "^2.57.4"
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/react": "^19.1.16",
