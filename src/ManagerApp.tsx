@@ -186,7 +186,7 @@ const STAFFING_ARCHIVES_KEY = 'acm-staffing-archives'
 const PROGRAMME_BUILDER_KEY = 'acm-programme-builder-draft'
 
 type ProgrammePurchaseType = 'bargain' | 'normal'
-type BuilderSchool = { id: string; name: string; groups: number }
+type BuilderSchool = { id: string; name: string; groups: number; firstChoices: string[]; option1: string; option2: string }
 type ProgrammeBuilderDraft = {
   name: string
   startDate: string
@@ -197,6 +197,7 @@ type ProgrammeBuilderDraft = {
   schools: BuilderSchool[]
   assignments: Record<string, string>
   notes: string
+  autoFillMessages: string[]
 }
 
 const DEFAULT_BARGAIN_CODES = ['ARCH', 'BT', 'VB', 'MO', 'OC', 'LR', 'AIR', 'CF']
@@ -213,8 +214,8 @@ function blankProgrammeBuilderDraft(): ProgrammeBuilderDraft {
   const iso = (date: Date) => date.toISOString().slice(0, 10)
   return {
     name: '', startDate: iso(monday), endDate: iso(friday), purchaseType: 'normal',
-    bargainSessionLimit: 15, bargainAllowedActivities: DEFAULT_BARGAIN_CODES,
-    schools: [{ id: `school-${Date.now()}`, name: '', groups: 1 }], assignments: {}, notes: '',
+    bargainSessionLimit: 9, bargainAllowedActivities: DEFAULT_BARGAIN_CODES,
+    schools: [{ id: `school-${Date.now()}`, name: '', groups: 1, firstChoices: [], option1: '', option2: '' }], assignments: {}, notes: '', autoFillMessages: [],
   }
 }
 
@@ -675,9 +676,20 @@ function ManagerApp({
   const [activities, setActivities] = useState<Activity[]>(() =>
     readJson(ACTIVITIES_KEY, startingActivities),
   )
-  const [programmeBuilder, setProgrammeBuilder] = useState<ProgrammeBuilderDraft>(() =>
-    readJson(PROGRAMME_BUILDER_KEY, blankProgrammeBuilderDraft()),
-  )
+  const [programmeBuilder, setProgrammeBuilder] = useState<ProgrammeBuilderDraft>(() => {
+    const loaded = readJson(PROGRAMME_BUILDER_KEY, blankProgrammeBuilderDraft()) as ProgrammeBuilderDraft
+    return {
+      ...blankProgrammeBuilderDraft(),
+      ...loaded,
+      autoFillMessages: loaded.autoFillMessages ?? [],
+      schools: (loaded.schools ?? []).map((school) => ({
+        ...school,
+        firstChoices: school.firstChoices ?? [],
+        option1: school.option1 ?? '',
+        option2: school.option2 ?? '',
+      })),
+    }
+  })
   const [programmeBuilderView, setProgrammeBuilderView] = useState<'build' | 'preview'>('build')
   const [programmeBuilderMessage, setProgrammeBuilderMessage] = useState('')
   const [assignments, setAssignments] = useState<StaffingAssignment>(() =>
@@ -1786,7 +1798,7 @@ function ManagerApp({
   }
 
   function addBuilderSchool() {
-    updateProgrammeBuilder({ schools: [...programmeBuilder.schools, { id: `school-${Date.now()}`, name: '', groups: 1 }] })
+    updateProgrammeBuilder({ schools: [...programmeBuilder.schools, { id: `school-${Date.now()}`, name: '', groups: 1, firstChoices: [], option1: '', option2: '' }] })
   }
 
   function updateBuilderSchool(id: string, patch: Partial<BuilderSchool>) {
@@ -1802,6 +1814,111 @@ function ManagerApp({
 
   function setBuilderActivity(day: string, session: string, group: number, activityCode: string) {
     updateProgrammeBuilder({ assignments: { ...programmeBuilder.assignments, [builderAssignmentKey(day, session, group)]: activityCode } })
+  }
+
+
+  const builderCapacityByActivity: Record<string, number> = { CLIMB: 3, BT: 2, SAIL: 2 }
+
+  function toggleBuilderFirstChoice(schoolId: string, code: string) {
+    const school = programmeBuilder.schools.find((item) => item.id === schoolId)
+    if (!school) return
+    const active = school.firstChoices.includes(code)
+    updateBuilderSchool(schoolId, { firstChoices: active ? school.firstChoices.filter((item) => item !== code) : [...school.firstChoices, code] })
+  }
+
+  function autoFillBuilder(targetSchoolId?: string) {
+    const nextAssignments = targetSchoolId ? { ...programmeBuilder.assignments } : {}
+    const messages: string[] = []
+    const slots = builderDays.flatMap((dayInfo) => BUILDER_SESSIONS.map((session) => ({ day: dayInfo.day, session })))
+    const schoolsToFill = targetSchoolId ? programmeBuilder.schools.filter((school) => school.id === targetSchoolId) : programmeBuilder.schools
+
+    if (!slots.length) {
+      setProgrammeBuilderMessage('Choose a valid programme date range before using Auto Fill.')
+      return
+    }
+
+    if (targetSchoolId) {
+      const schoolGroups = builderGroups.filter((entry) => entry.school.id === targetSchoolId)
+      for (const key of Object.keys(nextAssignments)) {
+        if (schoolGroups.some(({ group }) => key.endsWith(`|${group}`))) delete nextAssignments[key]
+      }
+    }
+
+    const occupancy = new Map<string, { code: string; schoolId: string; count: number }[]>()
+    for (const [key, code] of Object.entries(nextAssignments)) {
+      if (!code) continue
+      const [day, session, groupText] = key.split('|')
+      const group = Number(groupText)
+      const entry = builderGroups.find((item) => item.group === group)
+      if (!entry) continue
+      const slotKey = `${day}|${session}`
+      const rows = occupancy.get(slotKey) ?? []
+      const existing = rows.find((row) => row.code === code && row.schoolId === entry.school.id)
+      if (existing) existing.count += 1
+      else rows.push({ code, schoolId: entry.school.id, count: 1 })
+      occupancy.set(slotKey, rows)
+    }
+
+    const canPlaceBatch = (school: BuilderSchool, code: string, groups: number[], slot: { day: string; session: string }) => {
+      if (code === 'CF' && slot.session !== '5') return false
+      if (code !== 'CF' && groups.some((group) => nextAssignments[builderAssignmentKey(slot.day, slot.session, group)])) return false
+      if (code === 'CF' && groups.some((group) => nextAssignments[builderAssignmentKey(slot.day, slot.session, group)])) return false
+      const capacity = builderCapacityByActivity[code] ?? Number.POSITIVE_INFINITY
+      if (groups.length > capacity) return false
+      const slotRows = occupancy.get(`${slot.day}|${slot.session}`) ?? []
+      const sameActivityOtherSchool = slotRows.some((row) => row.code === code && row.schoolId !== school.id)
+      if (sameActivityOtherSchool) return false
+      const used = slotRows.filter((row) => row.code === code).reduce((sum, row) => sum + row.count, 0)
+      return used + groups.length <= capacity
+    }
+
+    const place = (school: BuilderSchool, requestedCode: string, actualCode: string) => {
+      const schoolGroups = builderGroups.filter((entry) => entry.school.id === school.id).map((entry) => entry.group)
+      const capacity = builderCapacityByActivity[actualCode] ?? schoolGroups.length
+      const batches = actualCode === 'CF' ? [schoolGroups] : Array.from({ length: Math.ceil(schoolGroups.length / capacity) }, (_, index) => schoolGroups.slice(index * capacity, (index + 1) * capacity))
+      const placed: { slotKey: string; assignmentKeys: string[]; count: number }[] = []
+      for (const batch of batches) {
+        const slot = slots.find((candidate) => canPlaceBatch(school, actualCode, batch, candidate))
+        if (!slot) {
+          for (const item of placed) {
+            item.assignmentKeys.forEach((key) => delete nextAssignments[key])
+            const rows = occupancy.get(item.slotKey) ?? []
+            const existing = rows.find((row) => row.code === actualCode && row.schoolId === school.id)
+            if (existing) existing.count -= item.count
+            occupancy.set(item.slotKey, rows.filter((row) => row.count > 0))
+          }
+          return false
+        }
+        const assignmentKeys = batch.map((group) => builderAssignmentKey(slot.day, slot.session, group))
+        assignmentKeys.forEach((key) => { nextAssignments[key] = actualCode })
+        const slotKey = `${slot.day}|${slot.session}`
+        const rows = occupancy.get(slotKey) ?? []
+        const existing = rows.find((row) => row.code === actualCode && row.schoolId === school.id)
+        if (existing) existing.count += batch.length
+        else rows.push({ code: actualCode, schoolId: school.id, count: batch.length })
+        occupancy.set(slotKey, rows)
+        placed.push({ slotKey, assignmentKeys, count: batch.length })
+      }
+      if (actualCode !== requestedCode) messages.push(`${school.name || 'School'}: ${activityNameFromList(activities, actualCode)} was used instead of ${activityNameFromList(activities, requestedCode)}.`)
+      return true
+    }
+
+    for (const school of schoolsToFill) {
+      if (!school.firstChoices.length) {
+        messages.push(`${school.name || 'School'}: no first-choice activities have been selected.`)
+        continue
+      }
+      for (const requestedCode of school.firstChoices) {
+        if (place(school, requestedCode, requestedCode)) continue
+        if (school.option1 && school.option1 !== requestedCode && place(school, requestedCode, school.option1)) continue
+        if (school.option2 && school.option2 !== requestedCode && school.option2 !== school.option1 && place(school, requestedCode, school.option2)) continue
+        messages.push(`${school.name || 'School'}: ${activityNameFromList(activities, requestedCode)} could not be placed and neither backup option was available.`)
+      }
+    }
+
+    const successCount = messages.filter((message) => message.includes('was used instead')).length
+    updateProgrammeBuilder({ assignments: nextAssignments, autoFillMessages: messages })
+    setProgrammeBuilderMessage(messages.length ? `Auto Fill completed with ${successCount} replacement${successCount === 1 ? '' : 's'}. Check the results below.` : 'Auto Fill completed using all first choices.')
   }
 
   function builderValidation() {
@@ -3587,7 +3704,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.73</span></div>
+          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.74</span></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -3799,7 +3916,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to accommodation, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v0.73</span>
+                  <span className="release-pill">v0.74</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
@@ -4310,13 +4427,13 @@ function ManagerApp({
 
                 <section className="builder-section">
                   <div className="builder-section-heading"><div><p className="eyebrow">Schools and groups</p><h3>Who is attending?</h3></div><button className="secondary-action" onClick={addBuilderSchool}><Plus size={17}/>Add school</button></div>
-                  <div className="builder-school-grid">{programmeBuilder.schools.map((school, index) => <article className="builder-school-card" key={school.id}><strong>School {index + 1}</strong><label>School name<input value={school.name} onChange={(event) => updateBuilderSchool(school.id, { name: event.target.value })} placeholder="School name"/></label><label>Number of groups<input type="number" min="1" max="30" value={school.groups} onChange={(event) => updateBuilderSchool(school.id, { groups: Math.max(1, Number(event.target.value) || 1) })}/></label>{programmeBuilder.schools.length > 1 && <button className="icon-button small" title="Remove school" onClick={() => removeBuilderSchool(school.id)}><Trash2 size={16}/></button>}</article>)}</div>
+                  <div className="builder-school-grid">{programmeBuilder.schools.map((school, index) => { const choiceOptions = programmeBuilder.purchaseType === 'bargain' ? activities.filter((activity) => programmeBuilder.bargainAllowedActivities.includes(activity.code)) : activities; return <article className="builder-school-card builder-school-choices" key={school.id}><div className="builder-school-title"><strong>School {index + 1}</strong>{programmeBuilder.schools.length > 1 && <button className="icon-button small" title="Remove school" onClick={() => removeBuilderSchool(school.id)}><Trash2 size={16}/></button>}</div><label>School name<input value={school.name} onChange={(event) => updateBuilderSchool(school.id, { name: event.target.value })} placeholder="School name"/></label><label>Number of groups<input type="number" min="1" max="30" value={school.groups} onChange={(event) => updateBuilderSchool(school.id, { groups: Math.max(1, Number(event.target.value) || 1) })}/></label><div className="school-choice-block"><span>First-choice activities</span><div className="builder-activity-chips compact">{choiceOptions.map((activity) => <button key={activity.code} type="button" className={school.firstChoices.includes(activity.code) ? 'chip active' : 'chip'} onClick={() => toggleBuilderFirstChoice(school.id, activity.code)} title={activity.name}>{activity.code}<small>{activity.name}</small></button>)}</div></div><div className="builder-backup-grid"><label>Option 1<select value={school.option1} onChange={(event) => updateBuilderSchool(school.id, { option1: event.target.value })}><option value="">No backup selected</option>{choiceOptions.map((activity) => <option key={activity.code} value={activity.code}>{activity.code} – {activity.name}</option>)}</select></label><label>Option 2<select value={school.option2} onChange={(event) => updateBuilderSchool(school.id, { option2: event.target.value })}><option value="">No backup selected</option>{choiceOptions.map((activity) => <option key={activity.code} value={activity.code}>{activity.code} – {activity.name}</option>)}</select></label></div><button className="secondary-action school-autofill" onClick={() => autoFillBuilder(school.id)}><WandSparkles size={17}/>Auto Fill School</button></article> })}</div>
                 </section>
 
                 {programmeBuilder.purchaseType === 'bargain' && <section className="builder-section bargain-rules"><div className="builder-section-heading"><div><p className="eyebrow">Bargain Special rules</p><h3>Package limits</h3></div></div><label className="builder-limit-field">Maximum sessions per group<input type="number" min="1" max="35" value={programmeBuilder.bargainSessionLimit} onChange={(event) => updateProgrammeBuilder({ bargainSessionLimit: Math.max(1, Number(event.target.value) || 1) })}/></label><p>Select the activities included in this package. These can be updated when you provide the Bargain Special reference sheet.</p><div className="builder-activity-chips">{activities.map((activity) => { const active = programmeBuilder.bargainAllowedActivities.includes(activity.code); return <button key={activity.code} className={active ? 'chip active' : 'chip'} onClick={() => updateProgrammeBuilder({ bargainAllowedActivities: active ? programmeBuilder.bargainAllowedActivities.filter((code) => code !== activity.code) : [...programmeBuilder.bargainAllowedActivities, activity.code] })} title={activity.name}>{activity.code}<small>{activity.name}</small></button> })}</div></section>}
 
                 <section className="builder-section">
-                  <div className="builder-section-heading"><div><p className="eyebrow">Programme grid</p><h3>Assign activities</h3></div><span>{builderGroups.length} groups · {builderDays.length} days</span></div>
+                  <div className="builder-section-heading"><div><p className="eyebrow">Programme grid</p><h3>Assign activities</h3></div><div className="builder-grid-actions"><span>{builderGroups.length} groups · {builderDays.length} days</span><button className="primary" onClick={() => autoFillBuilder()}><WandSparkles size={18}/>Auto Fill Whole Programme</button></div></div>{programmeBuilder.autoFillMessages.length > 0 && <div className="builder-autofill-results"><strong>Auto Fill results</strong>{programmeBuilder.autoFillMessages.map((message, index) => <p key={`${message}-${index}`}>{message}</p>)}</div>}
                   <div className="builder-grid-wrap"><table className="builder-grid"><thead><tr><th>Day</th><th>Session</th>{builderGroups.map(({ group, school }) => <th key={group}>G{group}<small>{school.name || 'School'}</small></th>)}</tr></thead><tbody>{builderDays.flatMap((dayInfo) => BUILDER_SESSIONS.map((session) => <tr key={`${dayInfo.day}-${session}`}><th>{dayInfo.label}</th><th>S{session}</th>{builderGroups.map(({ group }) => { const value = programmeBuilder.assignments[builderAssignmentKey(dayInfo.day, session, group)] ?? ''; const options = programmeBuilder.purchaseType === 'bargain' ? activities.filter((activity) => programmeBuilder.bargainAllowedActivities.includes(activity.code)) : activities; return <td key={group}><select value={value} onChange={(event) => setBuilderActivity(dayInfo.day, session, group, event.target.value)}><option value="">—</option>{options.map((activity) => <option key={activity.code} value={activity.code}>{activity.code} – {activity.name}</option>)}</select></td> })}</tr>))}</tbody></table></div>
                 </section>
               </>
