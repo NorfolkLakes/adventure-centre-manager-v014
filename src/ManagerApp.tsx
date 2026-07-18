@@ -705,6 +705,7 @@ function ManagerApp({
   const [selectedDaysOffCell, setSelectedDaysOffCell] = useState<string>('')
   const [showDaysOffHelp, setShowDaysOffHelp] = useState(false)
   const weeklyCellRefs = useRef(new Map<string, HTMLDivElement>())
+  const dailyCellRefs = useRef(new Map<string, HTMLDivElement>())
   const [publishedStaffDuties, setPublishedStaffDuties] = useState<{staff_email:string;staff_name:string;day:string;session:string;activity_name:string;duty_type:string}[]>([])
   const [lastSharedUpdate, setLastSharedUpdate] = useState<{updated_by_name:string;updated_by_email:string;updated_at:string;section:string} | null>(null)
   const [waterLeadLogs, setWaterLeadLogs] = useState<{id:string;created_at:string;programme_day:string;session:string;discipline:string;lead_staff_name:string;lead_staff_id:string;lead_group:number|null;overseen_groups:number[];confirmed_by_name:string;confirmed_by_email:string;permission_from:string}[]>([])
@@ -932,6 +933,28 @@ function ManagerApp({
     const shortcuts: Record<string, DayOffStatus> = { o: 'off', h: 'hol', s: 'sick', a: 'am_off', p: 'pm_off' }
     if (key === 'r') { event.preventDefault(); void setSingleDayOff(member, day, 'sick', true); return }
     if (shortcuts[key]) { event.preventDefault(); void setSingleDayOff(member, day, shortcuts[key]); }
+  }
+
+  function focusDailyCell(row: number) {
+    const members = sortedDaysOffStaff()
+    const nextRow = Math.max(0, Math.min(members.length - 1, row))
+    const key = `${members[nextRow]?.id}-${daysOffDay}`
+    setSelectedDaysOffCell(key)
+    requestAnimationFrame(() => dailyCellRefs.current.get(key)?.focus())
+  }
+
+  function handleDailyCellKeyDown(event: KeyboardEvent<HTMLDivElement>, member: StaffMember, row: number) {
+    const target = event.target as HTMLElement
+    if (['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName)) return
+    const key = event.key.toLowerCase()
+    if (event.key === 'ArrowUp') { event.preventDefault(); focusDailyCell(row - 1); return }
+    if (event.key === 'ArrowDown' || event.key === 'Enter') { event.preventDefault(); focusDailyCell(row + 1); return }
+    if (event.key === 'ArrowLeft') { event.preventDefault(); const d = parseDateKey(daysOffDay); d.setDate(d.getDate() - 1); setDaysOffDay(dateKey(d)); return }
+    if (event.key === 'ArrowRight' || event.key === 'Tab') { event.preventDefault(); const d = parseDateKey(daysOffDay); d.setDate(d.getDate() + 1); setDaysOffDay(dateKey(d)); return }
+    if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); void setSingleDayOff(member, daysOffDay, 'working'); return }
+    const shortcuts: Record<string, DayOffStatus> = { o: 'off', h: 'hol', s: 'sick', a: 'am_off', p: 'pm_off' }
+    if (key === 'r') { event.preventDefault(); void setSingleDayOff(member, daysOffDay, 'sick', true); return }
+    if (shortcuts[key]) { event.preventDefault(); void setSingleDayOff(member, daysOffDay, shortcuts[key]); }
   }
 
   function daysOffWeekDates() {
@@ -2229,22 +2252,12 @@ function ManagerApp({
   function autoFillStaffing(day: string) {
     if (!programme || !day) return
 
-    const sickIds = unavailableStaffIdsForSession(day, '3')
     const workingIds = new Set(
       workingByDay[day] ?? staff.map((member) => member.id),
     )
+    // Existing assignments are history and must never be erased when somebody
+    // is later marked sick or unavailable. Auto-fill only fills empty cells.
     const nextAssignments: StaffingAssignment = { ...assignments }
-
-    // Remove assignments for sick staff on this day before rebuilding gaps.
-    programme.rows
-      .filter((row) => row.day === day)
-      .forEach((row) =>
-        row.cells.forEach((cell) => {
-          const key = cellKey(row.id, cell.group)
-          const assignedId = nextAssignments[key]
-          if (assignedId && sickIds.has(assignedId)) delete nextAssignments[key]
-        }),
-      )
 
     const workload = new Map<string, number>()
     Object.entries(nextAssignments).forEach(([, staffId]) => {
@@ -2263,7 +2276,7 @@ function ManagerApp({
           .filter(
             (member) =>
               workingIds.has(member.id) &&
-              !sickIds.has(member.id) &&
+              !unavailableStaffIdsForSession(day, row.session).has(member.id) &&
               qualificationIsValid(member, cell.activityCode) &&
               !arrivalStaffForDaySession(day, row.session).has(member.id),
           )
@@ -2306,14 +2319,14 @@ function ManagerApp({
     for (const need of waterSupportNeedsForDay(day)) {
       const supportKey = waterSupportKey(day, need.session, need.discipline)
       const currentId = nextWaterSupport[supportKey]
-      const currentStillValid = currentId && staff.find((member) => member.id === currentId)?.qualifications.includes(leadQualificationCode(need.discipline)) && !sickIds.has(currentId) && workingIds.has(currentId) && !arrivalStaffForDaySession(day, need.session).has(currentId) && (!staffBusyInSession(currentId, day, need.session, nextAssignments) || disciplineAssignments(day, need.session, need.discipline, nextAssignments).some((item) => item.staffId === currentId))
+      const currentStillValid = currentId && staff.find((member) => member.id === currentId)?.qualifications.includes(leadQualificationCode(need.discipline)) && !unavailableStaffIdsForSession(day, need.session).has(currentId) && workingIds.has(currentId) && !arrivalStaffForDaySession(day, need.session).has(currentId) && (!staffBusyInSession(currentId, day, need.session, nextAssignments) || disciplineAssignments(day, need.session, need.discipline, nextAssignments).some((item) => item.staffId === currentId))
       if (currentStillValid) continue
       delete nextWaterSupport[supportKey]
       const qualificationCode = leadQualificationCode(need.discipline)
       const spareLead = staff.filter((member) =>
         member.qualifications.includes(qualificationCode) &&
         workingIds.has(member.id) &&
-        !sickIds.has(member.id) &&
+        !unavailableStaffIdsForSession(day, need.session).has(member.id) &&
         !staffBusyInSession(member.id, day, need.session, nextAssignments) &&
         !Object.entries(nextWaterSupport).some(([key, id]) => key.startsWith(`${day}::${need.session}::`) && id === member.id)
       ).sort((a,b) => rolePriority(resolvedRole(a))-rolePriority(resolvedRole(b)) || (workload.get(a.id)??0)-(workload.get(b.id)??0) || a.name.localeCompare(b.name))[0]
@@ -3630,7 +3643,7 @@ function ManagerApp({
                   <div className="staffing-view-switch" role="group" aria-label="Staffing view">
                     <button className={staffingView === 'activity' ? 'active' : ''} onClick={() => setStaffingView('activity')}>Activity View</button>
                     <button className={staffingView === 'calendar' ? 'active' : ''} onClick={() => setStaffingView('calendar')}>Calendar View</button>
-                    <button className={staffingView === 'availability' ? 'active' : ''} onClick={() => setStaffingView('availability')}>Days Off &amp; Sickness</button>
+                    <button onClick={() => setPage('holidays')}>Days Off &amp; Sickness</button>
                   </div>
                   <div className="staffing-zoom-controls" role="group" aria-label="Staffing zoom">
                     <button aria-label="Zoom out" disabled={staffingZoom <= 70} onClick={() => setStaffingZoom((current) => { const next = Math.max(70, current - 10); localStorage.setItem('acm-staffing-zoom', String(next)); return next })}>−</button>
@@ -3989,11 +4002,6 @@ function ManagerApp({
                 <Users size={34} />
                 <div><h3>Staff</h3><p>Manage staff accounts, roles and availability.</p></div>
               </button>}
-              <button className="admin-choice-card" onClick={() => setPage('holidays')}>
-                <CalendarRange size={25} />
-                <div><h3>Days Off</h3><p>Month calendar, weekly staffing grid and printable days-off sheets.</p></div>
-                <ChevronRight size={20} />
-              </button>
               <button className="admin-choice-card" onClick={() => setPage('signoffs')}>
                 <ShieldCheck size={34} />
                 <div><h3>Sign-off</h3><p>Search staff and manage activity sign-offs.</p></div>
@@ -4170,7 +4178,7 @@ function ManagerApp({
         {page === 'loanHistory' && canManageStaff && (<Panel title="Loan Staff History" onBack={() => setPage('admin')}><div className="history-list">{loanHistory.length === 0 ? <p>No completed loan staff records yet.</p> : loanHistory.map((record)=><article className="history-card" key={record.member.id}><div><h3>{record.member.name}</h3><p>{roleLabel(resolvedRole(record.member))} · {record.member.staffCode ?? 'Legacy record'}</p><p>{record.loanPeriods?.length ?? 1} loan period{(record.loanPeriods?.length ?? 1)===1?'':'s'}</p>{record.loanPeriods?.map((period,index)=><small key={index}>Loan {index+1}: {period.startDate} to {period.endDate}{period.notes?` — ${period.notes}`:''}</small>)}</div><div className="history-actions"><button className="secondary-action" onClick={()=>reactivateLoan(record)}>Reactivate as Loan Staff</button><button className="primary" onClick={()=>convertLoanToPermanent(record)}>Add to My Centre</button></div></article>)}</div></Panel>)}
 
         {page === 'holidays' && (
-          <Panel title="Days Off" onBack={() => setPage('admin')}>
+          <Panel title="Days Off & Sickness" onBack={() => setPage('staffing')}>
             <div className="days-off-toolbar no-print">
               <div className="staffing-view-toggle">
                 <button className={daysOffView === 'month' ? 'active' : ''} onClick={() => setDaysOffView('month')}>Month View</button>
@@ -4226,7 +4234,7 @@ function ManagerApp({
               <div className="weekly-sheet-heading"><div><p className="eyebrow">Daily Days Off</p><h2>{parseDateKey(daysOffDay).toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long',year:'numeric'})}</h2></div><div className="week-nav no-print"><button onClick={()=>{const d=parseDateKey(daysOffDay);d.setDate(d.getDate()-1);setDaysOffDay(dateKey(d))}}>Previous</button><button onClick={()=>setDaysOffDay(dateKey(new Date()))}>Today</button><button onClick={()=>{const d=parseDateKey(daysOffDay);d.setDate(d.getDate()+1);setDaysOffDay(dateKey(d))}}>Next</button><input type="date" value={daysOffDay} onChange={e=>setDaysOffDay(e.target.value)}/></div></div>
               <div className="daily-days-off-grid">
                 <div className="daily-head">Staff</div><div className="daily-head">Status</div><div className="daily-head">Availability</div>
-                {sortedDaysOffStaff().map(member=>{const existing=daysOff.find(x=>x.staff_id===member.id&&x.day===daysOffDay);const availability=!existing?'Available all day':existing.status==='am_off'?'Unavailable Sessions 1 & 2':existing.status==='pm_off'?'Unavailable Session 5':'Unavailable all day';return <Fragment key={member.id}><div className="staff-name-cell"><span>{member.name}</span><small>{roleLabel(resolvedRole(member))}</small></div><div className={`day-off-cell ${existing?`status-${existing.status}`:''} ${existing?.note==='blank-red'?'blank-red-cell':''}`}><select className="no-print" value={existing?.status??'working'} disabled={!canManageHolidays&&accountRole!=='teamLeader'} onChange={e=>setSingleDayOff(member,daysOffDay,e.target.value as DayOffStatus|'working')}><option value="working">Working</option>{canManageHolidays&&<option value="off">OFF</option>}{canManageHolidays&&<option value="hol">HOL</option>}<option value="sick">SICK</option>{canManageHolidays&&<option value="am_off">AM OFF</option>}{canManageHolidays&&<option value="pm_off">PM OFF</option>}</select><strong className="print-only">{daysOffDisplayLabel(existing)}</strong></div><div className="daily-availability">{availability}</div></Fragment>})}
+                {sortedDaysOffStaff().map((member,rowIndex)=>{const existing=daysOff.find(x=>x.staff_id===member.id&&x.day===daysOffDay);const availability=!existing?'Available all day':existing.status==='am_off'?'Unavailable Sessions 1 & 2':existing.status==='pm_off'?'Unavailable Session 5':'Unavailable all day';const cellKey=`${member.id}-${daysOffDay}`;return <Fragment key={member.id}><div className="staff-name-cell"><span>{member.name}</span><small>{roleLabel(resolvedRole(member))}</small></div><div ref={node=>{if(node) dailyCellRefs.current.set(cellKey,node); else dailyCellRefs.current.delete(cellKey)}} tabIndex={0} role="gridcell" aria-label={`${member.name}, ${parseDateKey(daysOffDay).toLocaleDateString('en-GB')}`} className={`day-off-cell keyboard-cell ${selectedDaysOffCell===cellKey?'selected-cell':''} ${existing?`status-${existing.status}`:''} ${existing?.note==='blank-red'?'blank-red-cell':''}`} onFocus={()=>setSelectedDaysOffCell(cellKey)} onKeyDown={event=>handleDailyCellKeyDown(event,member,rowIndex)}><select tabIndex={-1} className="no-print" value={existing?.status??'working'} disabled={!canManageHolidays&&accountRole!=='teamLeader'} onChange={e=>setSingleDayOff(member,daysOffDay,e.target.value as DayOffStatus|'working')}><option value="working">Working</option>{canManageHolidays&&<option value="off">OFF</option>}{canManageHolidays&&<option value="hol">HOL</option>}<option value="sick">SICK</option>{canManageHolidays&&<option value="am_off">AM OFF</option>}{canManageHolidays&&<option value="pm_off">PM OFF</option>}</select><strong className="print-only">{daysOffDisplayLabel(existing)}</strong></div><div className="daily-availability">{availability}</div></Fragment>})}
               </div>
               <div className="days-off-legend"><span className="status-off">OFF</span><span className="status-hol">HOL</span><span className="status-sick">SICK</span><span className="status-am_off">AM OFF</span><span className="status-pm_off">PM OFF</span></div>
             </section>}
