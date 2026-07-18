@@ -866,24 +866,48 @@ function ManagerApp({
     const rows = uniqueDatesInRange(daysOffStart, daysOffEnd).map((day) => ({
       staff_id: member.id, staff_email: member.email ?? '', staff_name: member.name, day, status: daysOffStatus, note: null,
     }))
+
+    // Update the screen immediately. Staffing selectors and summary cards read
+    // this same state, so there is no delay while Supabase sends the change back.
+    const previousDaysOff = daysOff
+    setDaysOff((current) => {
+      const affected = new Set(rows.map((row) => row.day))
+      return [
+        ...current.filter((entry) => !(entry.staff_id === member.id && affected.has(entry.day))),
+        ...rows.map((row) => ({ ...row, id: `pending-${member.id}-${row.day}` } as StaffDayOff)),
+      ]
+    })
+
     const { error } = await supabase.from('staff_days_off').upsert(rows, { onConflict: 'staff_id,day' })
-    if (error) setImportMessage(`Days Off could not be saved: ${error.message}`)
-    else { setImportMessage(`${member.name}'s days off were updated.`); loadDaysOff() }
+    if (error) {
+      setDaysOff(previousDaysOff)
+      setImportMessage(`Days Off could not be saved: ${error.message}`)
+    } else {
+      setImportMessage(`${member.name}'s days off were updated.`)
+      await loadDaysOff()
+    }
   }
 
   async function setSingleDayOff(member: StaffMember, day: string, status: DayOffStatus | 'working', blankRed = false) {
     if (!canManageHolidays && !(accountRole === 'teamLeader' && status === 'sick')) return
-    const result = status === 'working'
-      ? await supabase.from('staff_days_off').delete().eq('staff_id', member.id).eq('day', day)
-      : await supabase.from('staff_days_off').upsert({ staff_id: member.id, staff_email: member.email ?? '', staff_name: member.name, day, status, note: blankRed ? 'blank-red' : null }, { onConflict: 'staff_id,day' })
-    if (result.error) {
-      setImportMessage(`Availability could not be updated: ${result.error.message}`)
-      return
-    }
 
-    // Days Off & Sickness is the single source of truth for staffing. Clear
-    // legacy daily toggles so Auto-fill, the staffing views and Excel exports
-    // all use the same status immediately.
+    // Optimistic update: all staffing calculations, information boxes, Auto-fill
+    // and manual selection are blocked the instant the calendar value changes.
+    const previousDaysOff = daysOff
+    setDaysOff((current) => {
+      const withoutExisting = current.filter((entry) => !(entry.staff_id === member.id && entry.day === day))
+      if (status === 'working') return withoutExisting
+      return [...withoutExisting, {
+        id: `pending-${member.id}-${day}`,
+        staff_id: member.id,
+        staff_email: member.email ?? '',
+        staff_name: member.name,
+        day,
+        status,
+        note: blankRed ? 'blank-red' : null,
+      }]
+    })
+
     const currentWorking = workingByDay[day] ?? staff.map((item) => item.id)
     const nextWorking = { ...workingByDay, [day]: [...new Set([...currentWorking, member.id])] }
     const currentSickness = sicknessByDay[day] ?? []
@@ -897,6 +921,16 @@ function ManagerApp({
     setSicknessByDay(nextSickness)
     localStorage.setItem(WORKING_KEY, JSON.stringify(nextWorking))
     localStorage.setItem(SICKNESS_KEY, JSON.stringify(nextSickness))
+
+    const result = status === 'working'
+      ? await supabase.from('staff_days_off').delete().eq('staff_id', member.id).eq('day', day)
+      : await supabase.from('staff_days_off').upsert({ staff_id: member.id, staff_email: member.email ?? '', staff_name: member.name, day, status, note: blankRed ? 'blank-red' : null }, { onConflict: 'staff_id,day' })
+    if (result.error) {
+      setDaysOff(previousDaysOff)
+      setImportMessage(`Availability could not be updated: ${result.error.message}`)
+      return
+    }
+
     await loadDaysOff()
     setImportMessage(`${member.name} is now ${status === 'working' ? 'working' : dayOffLabel(status)} on ${day}.`)
   }
@@ -1449,17 +1483,27 @@ function ManagerApp({
     const ranked = [...activityCounts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     const mostRun = ranked[0] ?? null
     const leastRun = ranked.length ? [...ranked].sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]))[0] : null
-    const holidayDays = new Set(
+    const holidayDateSet = new Set(
       holidays
         .filter((holiday) =>
           (email && holiday.staff_email.trim().toLowerCase() === email) ||
           holiday.staff_name.trim().toLowerCase() === name,
         )
         .flatMap((holiday) => uniqueDatesInRange(holiday.start_date, holiday.end_date)),
-    ).size
-    const sickDays = Object.entries(sicknessByDay).filter(([, ids]) => ids.includes(holidaySummaryMember.id)).length
-    return { daysWorked, sessionsWorked, mostRun, leastRun, holidayDays, sickDays }
-  }, [holidaySummaryMember, publishedStaffDuties, holidays, sicknessByDay])
+    )
+    daysOff
+      .filter((entry) => memberIdForDayOff(entry) === holidaySummaryMember.id && entry.status === 'hol')
+      .forEach((entry) => holidayDateSet.add(entry.day))
+    const sickDateSet = new Set(
+      Object.entries(sicknessByDay)
+        .filter(([, ids]) => ids.includes(holidaySummaryMember.id))
+        .map(([day]) => day),
+    )
+    daysOff
+      .filter((entry) => memberIdForDayOff(entry) === holidaySummaryMember.id && entry.status === 'sick')
+      .forEach((entry) => sickDateSet.add(entry.day))
+    return { daysWorked, sessionsWorked, mostRun, leastRun, holidayDays: holidayDateSet.size, sickDays: sickDateSet.size }
+  }, [holidaySummaryMember, publishedStaffDuties, holidays, sicknessByDay, daysOff, staff])
 
   function holidayCalendarDays() {
     const first = new Date(holidayMonth.getFullYear(), holidayMonth.getMonth(), 1)
@@ -1480,6 +1524,16 @@ function ManagerApp({
     return new Date(year, month - 1, day)
   }
 
+  function memberIdForDayOff(entry: StaffDayOff): string | null {
+    if (staff.some((member) => member.id === entry.staff_id)) return entry.staff_id
+    const email = entry.staff_email.trim().toLowerCase()
+    const name = normaliseIdentity(entry.staff_name)
+    return staff.find((member) =>
+      (email && member.email?.trim().toLowerCase() === email) ||
+      normaliseIdentity(member.name) === name,
+    )?.id ?? null
+  }
+
   function unavailableStaffIdsForSession(day: string, session?: string): Set<string> {
     const ids = new Set<string>(sicknessByDay[day] ?? [])
     holidays
@@ -1491,15 +1545,23 @@ function ManagerApp({
         if (member) ids.add(member.id)
       })
     daysOff.filter((entry) => entry.day === day).forEach((entry) => {
+      const memberId = memberIdForDayOff(entry)
+      if (!memberId) return
       const wholeDay = ['off','hol','sick'].includes(entry.status)
       const amBlocked = entry.status === 'am_off' && ['1','2'].includes(session ?? '')
       const pmBlocked = entry.status === 'pm_off' && session === '5'
-      if (wholeDay || amBlocked || pmBlocked) ids.add(entry.staff_id)
+      if (wholeDay || amBlocked || pmBlocked) ids.add(memberId)
     })
     return ids
   }
 
-  function unavailableStaffIdsForDay(day: string): Set<string> { return unavailableStaffIdsForSession(day) }
+  function unavailableStaffIdsForDay(day: string): Set<string> {
+    const ids = new Set<string>()
+    for (const session of ['1','2','3','4','5']) {
+      unavailableStaffIdsForSession(day, session).forEach((id) => ids.add(id))
+    }
+    return ids
+  }
 
   function sessionDemandForDay(day: string) {
     if (!programme) return []
