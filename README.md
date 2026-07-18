@@ -1,4 +1,4 @@
-# Adventure Centre Manager v0.76
+# Adventure Centre Manager v0.77
 
 This version adds the first cloud login and staff rota system.
 
@@ -354,3 +354,12 @@ Adds permanent and loan staff lifecycle management, Former Staff and Loan Staff 
 - Arrival day: Sessions 1–2 are off-site, Session 3 displays the school arrival, Sessions 4–5 are activities.
 - Departure day: Sessions 1–2 are activities and Sessions 3–5 are unavailable.
 - Daily Staffing shows the full selected programme date.
+
+
+## v0.77 – Unified school cards and date-aware grid
+
+- Programme name, purchase type, arrival/departure dates and notes now sit inside each school card.
+- Each school can use its own package and dates during the same programme week.
+- Arrival day: Sessions 1–2 show Not on site, Session 3 shows the school arrival, Sessions 4–5 allow activities.
+- Departure day: Sessions 1–2 allow activities and Sessions 3–5 show Departed.
+- Programme publishing carries the same date-aware rules into Programme and Daily Staffing.

@@ -202,6 +202,8 @@ type ProgrammeBuilderDraft = {
 const DEFAULT_BARGAIN_CODES = ['ARCH', 'BT', 'VB', 'MO', 'OC', 'LR', 'AIR', 'CF']
 const BUILDER_SESSIONS = ['1', '2', '3', '4', '5']
 const BUILDER_DAY_NAMES = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']
+const WEEKDAY_ORDER: Record<string, number> = { MON: 1, MONDAY: 1, TUE: 2, TUES: 2, TUESDAY: 2, WED: 3, WEDNESDAY: 3, THU: 4, THUR: 4, THURS: 4, THURSDAY: 4, FRI: 5, FRIDAY: 5, SAT: 6, SATURDAY: 6, SUN: 7, SUNDAY: 7 }
+function weekdayRank(value: string) { return WEEKDAY_ORDER[value.trim().toUpperCase().replace(/[^A-Z]/g, '')] ?? 99 }
 
 function blankProgrammeBuilderDraft(): ProgrammeBuilderDraft {
   const today = new Date()
