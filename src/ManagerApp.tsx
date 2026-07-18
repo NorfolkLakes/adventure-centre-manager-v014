@@ -891,18 +891,24 @@ function ManagerApp({
   async function setSingleDayOff(member: StaffMember, day: string, status: DayOffStatus | 'working', blankRed = false) {
     if (!canManageHolidays && !(accountRole === 'teamLeader' && status === 'sick')) return
 
+    // Staffing tabs use programme labels such as FRI, while the Days Off calendar
+    // stores ISO dates. Always persist and compare the ISO date when available.
+    const availabilityDay = programme && !/^\d{4}-\d{2}-\d{2}$/.test(day)
+      ? dateForProgrammeDay(programme, day)
+      : day
+
     // Optimistic update: all staffing calculations, information boxes, Auto-fill
     // and manual selection are blocked the instant the calendar value changes.
     const previousDaysOff = daysOff
     setDaysOff((current) => {
-      const withoutExisting = current.filter((entry) => !(entry.staff_id === member.id && entry.day === day))
+      const withoutExisting = current.filter((entry) => !(entry.staff_id === member.id && entry.day === availabilityDay))
       if (status === 'working') return withoutExisting
       return [...withoutExisting, {
-        id: `pending-${member.id}-${day}`,
+        id: `pending-${member.id}-${availabilityDay}`,
         staff_id: member.id,
         staff_email: member.email ?? '',
         staff_name: member.name,
-        day,
+        day: availabilityDay,
         status,
         note: blankRed ? 'blank-red' : null,
       }]
@@ -923,8 +929,8 @@ function ManagerApp({
     localStorage.setItem(SICKNESS_KEY, JSON.stringify(nextSickness))
 
     const result = status === 'working'
-      ? await supabase.from('staff_days_off').delete().eq('staff_id', member.id).eq('day', day)
-      : await supabase.from('staff_days_off').upsert({ staff_id: member.id, staff_email: member.email ?? '', staff_name: member.name, day, status, note: blankRed ? 'blank-red' : null }, { onConflict: 'staff_id,day' })
+      ? await supabase.from('staff_days_off').delete().eq('staff_id', member.id).eq('day', availabilityDay)
+      : await supabase.from('staff_days_off').upsert({ staff_id: member.id, staff_email: member.email ?? '', staff_name: member.name, day: availabilityDay, status, note: blankRed ? 'blank-red' : null }, { onConflict: 'staff_id,day' })
     if (result.error) {
       setDaysOff(previousDaysOff)
       setImportMessage(`Availability could not be updated: ${result.error.message}`)
@@ -932,7 +938,7 @@ function ManagerApp({
     }
 
     await loadDaysOff()
-    setImportMessage(`${member.name} is now ${status === 'working' ? 'working' : dayOffLabel(status)} on ${day}.`)
+    setImportMessage(`${member.name} is now ${status === 'working' ? 'working' : dayOffLabel(status)} on ${availabilityDay}.`)
   }
 
   function sortedDaysOffStaff() {
@@ -1535,16 +1541,20 @@ function ManagerApp({
   }
 
   function unavailableStaffIdsForSession(day: string, session?: string): Set<string> {
-    const ids = new Set<string>(sicknessByDay[day] ?? [])
+    const availabilityDay = programme ? dateForProgrammeDay(programme, day) : day
+    const ids = new Set<string>([
+      ...(sicknessByDay[day] ?? []),
+      ...(sicknessByDay[availabilityDay] ?? []),
+    ])
     holidays
-      .filter((holiday) => holiday.start_date <= day && holiday.end_date >= day)
+      .filter((holiday) => holiday.start_date <= availabilityDay && holiday.end_date >= availabilityDay)
       .forEach((holiday) => {
         const email = holiday.staff_email.trim().toLowerCase()
         const name = normaliseIdentity(holiday.staff_name)
         const member = staff.find((item) => (email && item.email?.trim().toLowerCase() === email) || normaliseIdentity(item.name) === name)
         if (member) ids.add(member.id)
       })
-    daysOff.filter((entry) => entry.day === day).forEach((entry) => {
+    daysOff.filter((entry) => entry.day === availabilityDay).forEach((entry) => {
       const memberId = memberIdForDayOff(entry)
       if (!memberId) return
       const wholeDay = ['off','hol','sick'].includes(entry.status)
@@ -3046,14 +3056,34 @@ function ManagerApp({
   }
 
   function dateForProgrammeDay(sourceProgramme: ProgrammeImport, day: string) {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(day)) return day
     const source = `${sourceProgramme.title} ${sourceProgramme.sourceFileName}`
-    const match = source.match(/(\d{1,2})(?:st|nd|rd|th)?\s*[-–]\s*(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)(?:\s+(20\d{2}))?/i)
-    if (!match) return day
     const months = ['january','february','march','april','may','june','july','august','september','october','november','december']
-    const month = months.indexOf(match[3].toLowerCase())
+
+    // Supports both "29th June - 5th July 2026" and "29th - 5th July 2026".
+    const splitMonth = source.match(/(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)\s*[-–]\s*(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)(?:\s+(20\d{2}))?/i)
+    const sameMonth = source.match(/(\d{1,2})(?:st|nd|rd|th)?\s*[-–]\s*(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)(?:\s+(20\d{2}))?/i)
+
+    let firstDay: number
+    let firstMonthName: string
+    let explicitYear: string | undefined
+    if (splitMonth) {
+      firstDay = Number(splitMonth[1])
+      firstMonthName = splitMonth[2]
+      explicitYear = splitMonth[5]
+    } else if (sameMonth) {
+      firstDay = Number(sameMonth[1])
+      firstMonthName = sameMonth[3]
+      explicitYear = sameMonth[4]
+    } else {
+      return day
+    }
+
+    const month = months.indexOf(firstMonthName.toLowerCase())
     if (month < 0) return day
-    const year = Number(match[4] ?? new Date(sourceProgramme.importedAt).getFullYear())
-    const first = new Date(year, month, Number(match[1]))
+    const importedYear = new Date(sourceProgramme.importedAt).getFullYear()
+    const year = Number(explicitYear ?? (Number.isFinite(importedYear) ? importedYear : new Date().getFullYear()))
+    const first = new Date(year, month, firstDay)
     const wanted = ['SUN','MON','TUE','WED','THU','FRI','SAT'].findIndex((item) => day.toUpperCase().startsWith(item))
     if (wanted < 0) return day
     const date = new Date(first)
@@ -3739,8 +3769,20 @@ function ManagerApp({
                   <div className="staffing-availability-summary" aria-label="Staffing availability summary">
                     <article><span>Staff total</span><strong>{staff.length}</strong></article>
                     <article><span>In today</span><strong>{staff.length - unavailableStaffIdsForDay(activeStaffingDay).size}</strong></article>
-                    <article><span>OFF / HOL</span><strong>{daysOff.filter((entry) => entry.day === activeStaffingDay && entry.status !== 'sick').length}</strong></article>
-                    <article className="sick-summary"><span>Sick</span><strong>{new Set([...(sicknessByDay[activeStaffingDay] ?? []), ...daysOff.filter((entry) => entry.day === activeStaffingDay && entry.status === 'sick').map((entry) => entry.staff_id)]).size}</strong></article>
+                    <article><span>OFF / HOL</span><strong>{(() => {
+                      const availabilityDay = programme ? dateForProgrammeDay(programme, activeStaffingDay) : activeStaffingDay
+                      return new Set(daysOff
+                        .filter((entry) => entry.day === availabilityDay && entry.status !== 'sick')
+                        .map((entry) => memberIdForDayOff(entry) ?? entry.staff_id)).size
+                    })()}</strong></article>
+                    <article className="sick-summary"><span>Sick</span><strong>{(() => {
+                      const availabilityDay = programme ? dateForProgrammeDay(programme, activeStaffingDay) : activeStaffingDay
+                      return new Set([
+                        ...(sicknessByDay[activeStaffingDay] ?? []),
+                        ...(sicknessByDay[availabilityDay] ?? []),
+                        ...daysOff.filter((entry) => entry.day === availabilityDay && entry.status === 'sick').map((entry) => memberIdForDayOff(entry) ?? entry.staff_id),
+                      ]).size
+                    })()}</strong></article>
                     <button className="clear-staffing-button" onClick={() => clearDayStaffing(activeStaffingDay)}><X size={17}/>Clear day</button>
                     <button className="auto-fill-button" onClick={() => autoFillStaffing(activeStaffingDay)}><WandSparkles size={17}/>Auto-fill staff</button>
                   </div>
@@ -3883,8 +3925,9 @@ function ManagerApp({
                       <div className="availability-table-head">Role</div>
                       <div className="availability-table-head">Status</div>
                       {sortedDaysOffStaff().map((member) => {
-                        const existing = daysOff.find((entry) => entry.staff_id === member.id && entry.day === activeStaffingDay)
-                        const legacySick = (sicknessByDay[activeStaffingDay] ?? []).includes(member.id)
+                        const availabilityDay = programme ? dateForProgrammeDay(programme, activeStaffingDay) : activeStaffingDay
+                        const existing = daysOff.find((entry) => memberIdForDayOff(entry) === member.id && entry.day === availabilityDay)
+                        const legacySick = [...(sicknessByDay[activeStaffingDay] ?? []), ...(sicknessByDay[availabilityDay] ?? [])].includes(member.id)
                         const value: DayOffStatus | 'working' = existing?.status ?? (legacySick ? 'sick' : 'working')
                         return <Fragment key={`staffing-availability-${member.id}`}>
                           <div className="availability-staff-name"><strong>{member.name}</strong></div>
