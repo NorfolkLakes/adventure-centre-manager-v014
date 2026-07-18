@@ -1,0 +1,4 @@
+Adventure Centre Manager v0.87
+- Removed the Move Activities tray from Programme Builder.
+- Added one-click portrait A4 school programme printing per school.
+- Print layout includes Manor Adventure logo, Norfolk Lakes, dates, school name, group columns, day/session rows, colour-coded activities, arrival banner and departure note.

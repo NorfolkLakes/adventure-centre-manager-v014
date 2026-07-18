@@ -2102,6 +2102,51 @@ function ManagerApp({
     return Array.from(new Set(issues))
   }
 
+  function printSchoolProgramme(schoolId: string) {
+    const school = programmeBuilder.schools.find((item) => item.id === schoolId)
+    if (!school) return
+    const groups = builderGroups.filter((entry) => entry.school.id === schoolId).map((entry) => entry.group)
+    if (!groups.length) { setProgrammeBuilderMessage('Add at least one group before printing.'); return }
+
+    const escapeHtml = (value: string) => value.replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character] ?? character))
+    const activityFill = (code: string) => {
+      if (['CANOE', 'KAYAK', 'GCAN', 'SUP', 'GSUP', 'RAFT', 'SAIL', 'SAIL PB'].includes(code)) return '#27a9e1'
+      if (['CLIMB', 'HR', 'LR', 'BT', 'AERO', 'BOULD', 'CAVE'].includes(code)) return '#7350a3'
+      if (['ARCH', 'RIFLES', 'AXE'].includes(code)) return '#f1d21a'
+      if (['CF', 'DISCO', 'MO'].includes(code)) return '#ef9b9b'
+      if (['SURV', 'SCAV', 'ORIENT', 'LAKE WALK', 'BIVI', 'IES', 'VB', 'WG', 'TG', 'OC'].includes(code)) return '#b9d69b'
+      return '#ffffff'
+    }
+    const printDays = builderDays.filter((dayInfo) => dayInfo.date >= normaliseBuilderDate(school.arrivalDate) && dayInfo.date <= normaliseBuilderDate(school.departureDate))
+    const rows = printDays.map((dayInfo) => {
+      const activeSessions = BUILDER_SESSIONS.filter((session) => {
+        const state = builderSchoolSessionState(school, dayInfo.date, session)
+        return state === 'activity' || state === 'arrival'
+      })
+      return activeSessions.map((session, index) => {
+        const state = builderSchoolSessionState(school, dayInfo.date, session)
+        const dayCell = index === 0 ? `<th class="day" rowspan="${activeSessions.length}">${escapeHtml(dayInfo.day)}</th>` : ''
+        if (state === 'arrival') return `<tr>${dayCell}<th class="session">${session}</th><td class="arrival" colspan="${groups.length}">${escapeHtml((school.name || 'School').toUpperCase())}</td></tr>`
+        const groupCells = groups.map((group) => {
+          const code = programmeBuilder.assignments[builderAssignmentKey(dayInfo.day, session, group)] ?? ''
+          return `<td class="activity" style="background:${activityFill(code)}">${escapeHtml(code || '—')}</td>`
+        }).join('')
+        return `<tr>${dayCell}<th class="session">${session}</th>${groupCells}</tr>`
+      }).join('')
+    }).join('<tr class="divider"><td colspan="' + (groups.length + 2) + '"></td></tr>')
+
+    const logoUrl = new URL(`${import.meta.env.BASE_URL}manor-adventure-logo.png`, window.location.href).toString()
+    const dateRange = friendlyProgrammeDateRange(school.arrivalDate, school.departureDate)
+    const groupHeaders = groups.map((group) => `<th>G${group}</th>`).join('')
+    const popup = window.open('', '_blank', 'noopener,noreferrer,width=900,height=1100')
+    if (!popup) { setProgrammeBuilderMessage('Allow pop-ups to print the school programme.'); return }
+    popup.document.write(`<!doctype html><html><head><title>${escapeHtml(school.name || 'School')} programme</title><style>
+      @page{size:A4 portrait;margin:12mm}*{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;margin:0;color:#111}.sheet{width:100%;text-align:center}.logo{width:125px;height:88px;object-fit:contain}.centre{font-size:30px;margin:2px 0 4px}.dates{font-size:17px;font-weight:700;margin-bottom:16px}.school-name{font-size:18px;font-weight:800;margin:0 0 10px;text-transform:uppercase}table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:15px}th,td{border:2px solid #222;height:34px;padding:4px;text-align:center;font-weight:800}thead th{background:#f1f1f1}.day{width:62px;writing-mode:vertical-rl;transform:rotate(180deg);font-size:17px;background:#f5f5f5}.session{width:54px;background:#f7f7f7}.arrival{background:#d94755;color:#111;font-size:17px}.activity{font-size:16px}.divider td{height:11px;background:#46594e;padding:0;border-color:#222}.departure{background:#46594e;color:#fff;font-size:14px;height:30px}.footer{font-size:10px;margin-top:10px;color:#555}@media print{.no-print{display:none}}
+    </style></head><body><main class="sheet"><img class="logo" src="${logoUrl}" alt="Manor Adventure"><h1 class="centre">Norfolk Lakes</h1><div class="dates">${escapeHtml(dateRange)}</div><div class="school-name">${escapeHtml(school.name || school.programmeName || 'School Programme')}</div><table><thead><tr><th style="width:62px">DAY</th><th style="width:54px">SES</th>${groupHeaders}</tr></thead><tbody>${rows}<tr><td class="departure" colspan="${groups.length + 2}">Departure after lunch from 1pm–1.30pm</td></tr></tbody></table><div class="footer">Programme correct at time of printing. Activities may change due to weather or operational requirements.</div></main><script>window.addEventListener('load',()=>setTimeout(()=>window.print(),250));<\/script></body></html>`)
+    popup.document.close()
+    setProgrammeBuilderMessage(`${school.name || 'School'} portrait programme opened for printing.`)
+  }
+
   function publishProgrammeDraft(draft: ProgrammeBuilderDraft) {
     const days = builderDateRange(draft.startDate, draft.endDate)
     let nextGroup = 1
@@ -4000,7 +4045,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.86</span></div><small>Norfolk Lakes</small></div></div>
+          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.87</span></div><small>Norfolk Lakes</small></div></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -4220,7 +4265,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to accommodation, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v0.86</span>
+                  <span className="release-pill">v0.87</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
@@ -4755,7 +4800,7 @@ function ManagerApp({
                     <label>Number of groups<input type="number" min="1" max="30" value={school.groups} onChange={(event) => updateBuilderSchool(school.id, { groups: Math.max(1, Number(event.target.value) || 1) })}/></label>
                     <div><strong>First-choice activities</strong><p className="builder-help">Select the activities requested by the school. There is no separate first-choice field.</p><div className="builder-activity-chips">{activities.filter((activity) => activity.code !== 'Z').map((activity) => { const active = school.requestedActivities.includes(activity.code); return <button type="button" key={activity.code} className={active ? 'chip active' : 'chip'} onClick={() => updateBuilderSchool(school.id, { requestedActivities: active ? school.requestedActivities.filter((code) => code !== activity.code) : [...school.requestedActivities, activity.code] })}>{activity.code}<small>{activity.name}</small></button> })}</div></div>
                     <div className="builder-form-grid"><label>Backup option 1<select value={school.backupOption1} onChange={(event) => updateBuilderSchool(school.id, { backupOption1: event.target.value })}><option value="">No backup selected</option>{activities.filter((activity) => activity.code !== 'Z').map((activity) => <option key={activity.code} value={activity.code}>{activity.code} – {activity.name}</option>)}</select></label><label>Backup option 2<select value={school.backupOption2} onChange={(event) => updateBuilderSchool(school.id, { backupOption2: event.target.value })}><option value="">No backup selected</option>{activities.filter((activity) => activity.code !== 'Z').map((activity) => <option key={activity.code} value={activity.code}>{activity.code} – {activity.name}</option>)}</select></label></div>
-                    <button className="secondary-action" onClick={() => autoFillProgrammeBuilder(school.id)}><WandSparkles size={17}/>Auto Fill School</button>
+                    <div className="builder-school-actions"><button className="secondary-action" onClick={() => autoFillProgrammeBuilder(school.id)}><WandSparkles size={17}/>Auto Fill School</button><button className="secondary-action" onClick={() => printSchoolProgramme(school.id)}><Printer size={17}/>Print School Programme</button></div>
                     {programmeBuilder.schools.length > 1 && <button className="icon-button small" title="Remove school" onClick={() => removeBuilderSchool(school.id)}><Trash2 size={16}/></button>}
                   </article>)}</div>
                 </section>
@@ -4764,8 +4809,6 @@ function ManagerApp({
 
                 <section className="builder-section">
                   <div className="builder-section-heading"><div><p className="eyebrow">Programme grid</p><h3>Assign activities</h3></div><span>{builderGroups.length} groups · {builderDays.length} days</span></div>
-                  <div className="builder-drag-help"><strong>Move activities</strong><span>Drag an activity to another session. Activities swap places automatically, and only activities selected for that school can be used.</span></div>
-                  <div className="builder-school-trays">{programmeBuilder.schools.map((school) => <section key={school.id}><b>{school.name || 'School'}</b><div>{school.requestedActivities.map((code) => <button type="button" draggable key={code} onDragStart={() => setDraggedBuilderActivity({ code, schoolId: school.id })}>{code}</button>)}</div></section>)}</div>
                   <div className="builder-grid-wrap"><table className="builder-grid"><thead><tr><th>Day</th><th>Session</th>{builderGroups.map(({ group, school }) => <th key={group}>G{group}<small>{school.name || 'School'}</small></th>)}</tr></thead><tbody>{builderDays.flatMap((dayInfo) => BUILDER_SESSIONS.map((session) => <tr key={`${dayInfo.day}-${session}`}><th>{dayInfo.label}</th><th>S{session}</th>{builderGroups.map(({ group, school }) => { const state = builderSchoolSessionState(school, dayInfo.date, session); const value = programmeBuilder.assignments[builderAssignmentKey(dayInfo.day, session, group)] ?? ''; const options = school.purchaseType === 'bargain' ? activities.filter((activity) => programmeBuilder.bargainAllowedActivities.includes(activity.code)) : activities; return <td key={group} className={`builder-state-${state}`} onDragOver={state === 'activity' ? (event) => event.preventDefault() : undefined} onDrop={state === 'activity' ? () => dropBuilderActivity(dayInfo.day, session, group, school.id) : undefined}>{state === 'arrival' ? <strong>{school.name || 'School'} – Arrival</strong> : state === 'departed' ? <span>Departed</span> : state === 'offsite' ? <span>Not on site</span> : <div className="builder-draggable-cell" draggable={Boolean(value)} onDragStart={() => value && setDraggedBuilderActivity({ key: builderAssignmentKey(dayInfo.day, session, group), code: value, schoolId: school.id })}><select className={programmeBuilder.manualLocks[builderAssignmentKey(dayInfo.day, session, group)] ? 'manual-locked' : ''} title={programmeBuilder.manualLocks[builderAssignmentKey(dayInfo.day, session, group)] ? 'Manual change locked' : 'Automatic activity'} value={value} onChange={(event) => setBuilderActivity(dayInfo.day, session, group, event.target.value)}><option value="">—</option>{options.filter((activity) => school.requestedActivities.includes(activity.code) || activity.code === value).map((activity) => <option key={activity.code} value={activity.code}>{activity.code} – {activity.name}</option>)}</select></div>}</td> })}</tr>))}</tbody></table></div>
 
                   <div className="builder-update-actions"><div><strong>Manual changes are protected</strong><p>Any activity you change is locked. Update Programme rearranges only the remaining sessions.</p></div><div><button className="secondary-action" onClick={resetProgrammeLocks}>Reset Locks</button><button className="primary" onClick={updateWholeProgramme}><WandSparkles size={17}/>Update Programme</button></div></div>
