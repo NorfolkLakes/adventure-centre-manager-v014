@@ -1,0 +1,5 @@
+Adventure Centre Manager v0.81
+- Centre-wide weekly programme grid merged by Day + Session + Group
+- Dedicated Upload Excel programme and Upload app programme buttons
+- Downloaded Excel includes hidden editable ACM app data
+- Sticky day/session/group headers and compact activity colours

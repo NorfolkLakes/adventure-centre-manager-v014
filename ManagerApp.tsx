@@ -810,6 +810,7 @@ function ManagerApp({
   const myStaffLinkKey = `acm-my-staff-link-${accountEmail.trim().toLowerCase()}`
   const [myStaffId, setMyStaffId] = useState(() => localStorage.getItem(myStaffLinkKey) ?? '')
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const appProgrammeInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (!programme) return
@@ -2138,6 +2139,35 @@ function ManagerApp({
     }
   }
 
+
+  async function importAppProgramme(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    try {
+      setImportMessage('Opening app programme…')
+      const data = await file.arrayBuffer()
+      const workbook = XLSX.read(data, { type: 'array' })
+      const stateSheet = workbook.Sheets['_ACM_DATA']
+      if (!stateSheet) throw new Error('This is not an Adventure Centre Manager app programme. Use Upload Excel programme for ordinary spreadsheets.')
+      const raw = String(stateSheet.A1?.v ?? '')
+      const payload = JSON.parse(raw) as { programme?: ProgrammeImport; draft?: ProgrammeBuilderDraft }
+      if (!payload.programme?.rows?.length) throw new Error('The app programme data is incomplete.')
+      const restored = { ...payload.programme, importedAt: new Date().toISOString(), sourceFileName: file.name }
+      saveProgramme(restored, programme ?? undefined)
+      if (payload.draft) {
+        const normalised: ProgrammeBuilderDraft = { ...payload.draft, manualLocks: payload.draft.manualLocks ?? {}, schools: (payload.draft.schools ?? []).map((school) => ({ ...school, programmeName: school.programmeName ?? school.name ?? '', purchaseType: school.purchaseType ?? payload.draft!.purchaseType ?? 'normal', arrivalDate: school.arrivalDate ?? payload.draft!.startDate ?? '', departureDate: school.departureDate ?? payload.draft!.endDate ?? '', notes: school.notes ?? payload.draft!.notes ?? '', requestedActivities: school.requestedActivities ?? [], backupOption1: school.backupOption1 ?? '', backupOption2: school.backupOption2 ?? '', locked: school.locked ?? false })) }
+        setProgrammeBuilder(normalised)
+        localStorage.setItem(PROGRAMME_BUILDER_KEY, JSON.stringify(normalised))
+      }
+      ensureWorkingStaffForDays(Array.from(new Set(restored.rows.map((row) => row.day))))
+      setImportMessage(`Opened ${restored.title || file.name} with its editable app data.`)
+      setPage('programme')
+    } catch (error) {
+      setImportMessage(error instanceof Error ? error.message : 'The app programme could not be opened.')
+    }
+  }
+
   function restoreVersion(version: ProgrammeImport) {
     saveProgramme(
       {
@@ -2166,7 +2196,18 @@ function ManagerApp({
     const title = programme.title || programme.sourceFileName.replace(/\.xlsx$/i, '') || 'Programme'
     const header1 = ['PROGRAMME', '', ...programme.groupNumbers.map((group) => programmeGroupSchool(programme, group) || `Group ${group}`)]
     const header2 = ['DAY', 'SES', ...programme.groupNumbers.map((group) => `G${group}`)]
-    const data = programme.rows.map((row) => [row.day, row.session, ...programme.groupNumbers.map((group) => programmeCellDisplay(row, group))])
+    const mergedRows = Array.from(programme.rows.reduce((map, row) => {
+      const key = `${row.day}|${row.session}`
+      const current = map.get(key)
+      if (!current) map.set(key, { ...row, cells: row.cells.map((cell) => ({ ...cell })) })
+      else {
+        const cells = new Map(current.cells.map((cell) => [cell.group, cell]))
+        row.cells.forEach((cell) => { const existing = cells.get(cell.group); if (!existing?.activityCode || cell.activityCode) cells.set(cell.group, { ...cell }) })
+        map.set(key, { ...current, cells: Array.from(cells.values()) })
+      }
+      return map
+    }, new Map<string, ProgrammeRow>()).values()).sort((a, b) => weekdayRank(a.day) - weekdayRank(b.day) || Number(a.session) - Number(b.session))
+    const data = mergedRows.map((row) => [row.day, row.session, ...programme.groupNumbers.map((group) => programmeCellDisplay(row, group))])
     const worksheet = XLSX.utils.aoa_to_sheet([[title], [friendlyProgrammeDateRange(programme.startDate ?? '', programme.endDate ?? '')], header1, header2, ...data])
     worksheet['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: Math.max(1, programme.groupNumbers.length + 1) } }]
     worksheet['!freeze'] = { xSplit: 2, ySplit: 4, topLeftCell: 'C5', activePane: 'bottomRight', state: 'frozen' }
@@ -2193,7 +2234,11 @@ function ManagerApp({
     }
     const workbook = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Programme')
-    workbook.Workbook = { Views: [{ RTL: false }] }
+    const appState = XLSX.utils.aoa_to_sheet([[JSON.stringify({ programme, draft: programmeBuilder, exportedAt: new Date().toISOString(), format: 'ACM_APP_PROGRAMME_V1' })]])
+    appState['!cols'] = [{ hidden: true }]
+    XLSX.utils.book_append_sheet(workbook, appState, '_ACM_DATA')
+    if (workbook.Workbook?.Sheets) workbook.Workbook.Sheets.push({ name: '_ACM_DATA', Hidden: 2 } as any)
+    else workbook.Workbook = { Views: [{ RTL: false }], Sheets: [{ name: '_ACM_DATA', Hidden: 2 } as any] }
     const safeName = title.replace(/[^a-z0-9 _-]+/gi, '').trim() || 'Programme'
     XLSX.writeFile(workbook, `${safeName}.xlsx`, { cellStyles: true })
     setImportMessage('Downloaded the latest edited programme as Excel.')
@@ -3885,11 +3930,18 @@ function ManagerApp({
         accept=".xlsx,.xls"
         onChange={importExcel}
       />
+      <input
+        ref={appProgrammeInputRef}
+        className="hidden-input"
+        type="file"
+        accept=".xlsx"
+        onChange={importAppProgramme}
+      />
 
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.80</span></div>
+          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.81</span></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -4036,13 +4088,14 @@ function ManagerApp({
         {page === 'programme' && (
           <Panel title="Programme grid" onBack={() => setPage('dashboard')}>
             <div className="programme-toolbar">
-              <button
-                className="primary"
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <Upload size={18} />
-                {programme ? 'Upload changed programme' : 'Upload programme'}
-              </button>
+              <div className="programme-upload-actions">
+                <button className="primary" onClick={() => fileInputRef.current?.click()}>
+                  <Upload size={18} /> Upload Excel programme
+                </button>
+                <button className="secondary-action" onClick={() => appProgrammeInputRef.current?.click()}>
+                  <Upload size={18} /> Upload app programme
+                </button>
+              </div>
               {programme && (
                 <>
                   <div className="programme-details">
@@ -4104,7 +4157,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to accommodation, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v0.80</span>
+                  <span className="release-pill">v0.81</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
@@ -5213,47 +5266,66 @@ function ProgrammeGrid({
   activities: Activity[]
   onSelect: (row: ProgrammeRow, group: number) => void
 }) {
+  const rows = useMemo(() => {
+    const merged = new Map<string, ProgrammeRow>()
+    for (const row of programme.rows) {
+      const key = `${row.day}|${row.session}`
+      const current = merged.get(key)
+      if (!current) {
+        merged.set(key, { ...row, id: `centre-${row.day}-${row.session}`, cells: row.cells.map((cell) => ({ ...cell })) })
+        continue
+      }
+      const cells = new Map(current.cells.map((cell) => [cell.group, cell]))
+      row.cells.forEach((cell) => {
+        const existing = cells.get(cell.group)
+        if (!existing?.activityCode || cell.activityCode) cells.set(cell.group, { ...cell })
+      })
+      const labels = [current.schoolLabel, row.schoolLabel].filter(Boolean).flatMap((value) => String(value).split(/\s*\/\s*/)).filter((value, index, list) => list.indexOf(value) === index)
+      merged.set(key, { ...current, schoolLabel: labels.join(' / '), cells: Array.from(cells.values()).sort((a, b) => a.group - b.group) })
+    }
+    return Array.from(merged.values()).sort((a, b) => {
+      const dayDiff = weekdayRank(a.day) - weekdayRank(b.day)
+      return dayDiff || Number(a.session) - Number(b.session)
+    })
+  }, [programme])
+
   return (
-    <div className="programme-scroll">
-      <table className="programme-table">
+    <div className="programme-scroll centre-grid-scroll">
+      <table className="programme-table centre-programme-table">
         <thead>
           <tr>
             <th className="sticky-day">Day</th>
             <th className="sticky-session">Ses</th>
-            {programme.groupNumbers.map((group) => {
-              const school = programme.schoolDetails?.find((item) => item.groupNumbers?.includes(group))
-              return <th key={group}><span>G{group}</span>{school?.schoolName && <small>{school.schoolName}</small>}</th>
-            })}
+            {programme.groupNumbers.map((group) => (
+              <th key={group}><span>G{group}</span><small>{programme.schoolDetails?.find((school) => school.groupNumbers?.includes(group))?.schoolName ?? ''}</small></th>
+            ))}
           </tr>
         </thead>
         <tbody>
-          {programme.rows.map((row, index) => {
-            const previous = programme.rows[index - 1]
+          {rows.map((row, index) => {
+            const previous = rows[index - 1]
             const showDay = !previous || previous.day !== row.day
             return (
-              <tr key={row.id}>
-                <th className="sticky-day">
-                  {showDay ? row.day : ''}
-                  {arrivalSchoolName(row) && (
-                    <small>{arrivalSchoolName(row)}</small>
-                  )}
-                </th>
+              <tr key={row.id} className={showDay ? 'programme-day-start' : ''}>
+                <th className="sticky-day">{showDay ? row.day : ''}</th>
                 <th className="sticky-session">{row.session}</th>
                 {programme.groupNumbers.map((group) => {
-                  const cell = row.cells.find(
-                    (item) => item.group === group,
-                  )
+                  const cell = row.cells.find((item) => item.group === group)
                   const code = cell?.activityCode ?? ''
-                  const school = programme.schoolDetails?.find((item) => item.groupNumbers?.includes(group))
-                  const isArrival = Boolean(school && row.session === '3' && code.toLowerCase() === school.schoolName.toLowerCase())
+                  const schoolName = programme.schoolDetails?.find((school) => school.groupNumbers?.includes(group))?.schoolName ?? ''
+                  const isArrival = row.session === '3' && schoolName && code.toLowerCase() === schoolName.toLowerCase()
+                  const display = isArrival ? schoolName.toUpperCase() : code || '—'
                   return (
-                    <td key={group} className={isArrival ? 'programme-arrival-cell' : ''}>
+                    <td key={group}>
                       <button
-                        className={`programme-cell ${isArrival ? 'programme-arrival' : ''} code-${code.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}
-                        onClick={() => onSelect(row, group)}
-                        title={code ? activityNameFromList(activities, code) : 'Empty'}
+                        className={`programme-cell code-${code.toLowerCase().replace(/[^a-z0-9]+/g, '-')} ${isArrival ? 'arrival-cell' : ''}`}
+                        onClick={() => {
+                          const sourceRow = programme.rows.find((candidate) => candidate.day === row.day && candidate.session === row.session && candidate.cells.some((item) => item.group === group))
+                          onSelect(sourceRow ?? row, group)
+                        }}
+                        title={isArrival ? `${schoolName} arrival` : code ? activityNameFromList(activities, code) : 'Empty'}
                       >
-                        {code || '—'}
+                        {display}
                       </button>
                     </td>
                   )

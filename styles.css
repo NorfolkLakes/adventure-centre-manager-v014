@@ -1746,3 +1746,28 @@ button { cursor: pointer; }
 .programme-cell.code- { background:#f3f5f4; color:#8a9894; }
 .programme-arrival-cell .programme-cell,.programme-cell.programme-arrival { background:#dbeafe; color:#1e3a5f; font-size:11px; }
 @media (max-width:760px) { .programme-toolbar-actions { width:100%; margin-left:0; } .programme-toolbar-actions button { flex:1; } }
+
+
+/* v0.81 centre-wide programme grid and cleaner uploads */
+.programme-upload-actions,.programme-toolbar-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.centre-grid-scroll{max-height:72vh;border:1px solid #d8e3df;border-radius:16px;background:#fff}
+.centre-programme-table{border-collapse:separate;border-spacing:0;min-width:max-content;width:100%}
+.centre-programme-table th,.centre-programme-table td{padding:0;border-right:1px solid #cfdad6;border-bottom:1px solid #dce4e1}
+.centre-programme-table thead th{height:58px;min-width:92px;background:#103d38;color:#fff;position:sticky;top:0;z-index:8;text-align:center}
+.centre-programme-table thead th small{display:block;font-size:10px;line-height:1.1;opacity:.78;max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:2px 5px}
+.centre-programme-table .sticky-day{position:sticky;left:0;z-index:7;min-width:92px;width:92px;text-align:center;background:#edf3f1;font-weight:800}
+.centre-programme-table thead .sticky-day{z-index:11;background:#103d38}
+.centre-programme-table .sticky-session{position:sticky;left:92px;z-index:7;min-width:58px;width:58px;text-align:center;background:#f6f8f7;font-weight:800}
+.centre-programme-table thead .sticky-session{z-index:11;background:#103d38}
+.centre-programme-table td{min-width:92px;height:42px;background:#fff}
+.centre-programme-table .programme-cell{width:100%;height:42px;border:0;border-radius:0;padding:4px 6px;font-size:12px;font-weight:800;background:#eef3e4;color:#21312d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.centre-programme-table .programme-cell:hover{outline:2px solid #25a879;outline-offset:-2px}
+.centre-programme-table .programme-cell:where(.code-canoe,.code-gcan,.code-kayak,.code-sup,.code-gsup,.code-raft,.code-sail,.code-saila,.code-sail-pb){background:#d9edf4}
+.centre-programme-table .programme-cell:where(.code-climb,.code-hr,.code-lr,.code-aero,.code-bould){background:#e7dff0}
+.centre-programme-table .programme-cell:where(.code-arch,.code-fence,.code-rifles,.code-bt){background:#f3e6bf}
+.centre-programme-table .programme-cell:where(.code-surv,.code-scav,.code-cave,.code-oc){background:#deebd0}
+.centre-programme-table .programme-cell:where(.code-cf,.code-disco,.code-mo){background:#f0d9d4}
+.centre-programme-table .programme-cell.arrival-cell{background:#e9ecef;color:#27333a;font-size:11px}
+.centre-programme-table .programme-cell.code-{background:#fafafa;color:#9aa4a0}
+.centre-programme-table tr.programme-day-start th,.centre-programme-table tr.programme-day-start td{border-top:3px solid #93aaa3}
+@media(max-width:760px){.centre-programme-table .sticky-day{min-width:70px;width:70px}.centre-programme-table .sticky-session{left:70px}.programme-toolbar{align-items:flex-start}.programme-upload-actions{width:100%}.programme-upload-actions button{flex:1}}
