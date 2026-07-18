@@ -1,0 +1,10 @@
+Adventure Centre Manager v0.85
+
+Programme Builder date/session fix:
+- Before arrival: S1-S5 Not on site
+- Arrival day: S1-S2 Not on site, S3 Arrival, S4-S5 activities
+- Full days between arrival and departure: S1-S5 activities
+- Departure day: S1-S2 activities, S3-S5 Departed
+- After departure: S1-S5 Not on site
+- Week boundary changes update school dates still using the previous default boundaries.
+- Legacy DD/MM/YYYY dates are normalised before comparison.

@@ -1884,14 +1884,34 @@ function ManagerApp({
   function builderAssignmentKey(day: string, session: string, group: number) { return `${day}|${session}|${group}` }
 
 
+  function normaliseBuilderDate(value: string) {
+    const trimmed = value.trim()
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed
+    const match = trimmed.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/)
+    if (!match) return trimmed
+    const [, day, month, year] = match
+    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`
+  }
+
   function builderSchoolSessionState(school: BuilderSchool, date: string, session: string) {
-    if (!school.arrivalDate || !school.departureDate) return 'activity' as const
-    if (date < school.arrivalDate || date > school.departureDate) return 'offsite' as const
-    if (date === school.arrivalDate) {
-      if (session === '3') return 'arrival' as const
+    const currentDate = normaliseBuilderDate(date)
+    const arrivalDate = normaliseBuilderDate(school.arrivalDate)
+    const departureDate = normaliseBuilderDate(school.departureDate)
+
+    if (!arrivalDate || !departureDate) return 'activity' as const
+    if (currentDate < arrivalDate || currentDate > departureDate) return 'offsite' as const
+
+    if (currentDate === arrivalDate) {
       if (session === '1' || session === '2') return 'offsite' as const
+      if (session === '3') return 'arrival' as const
+      return 'activity' as const
     }
-    if (date === school.departureDate && ['3', '4', '5'].includes(session)) return 'departed' as const
+
+    if (currentDate === departureDate) {
+      if (session === '1' || session === '2') return 'activity' as const
+      return 'departed' as const
+    }
+
     return 'activity' as const
   }
 
@@ -3962,7 +3982,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.84</span></div><small>Norfolk Lakes</small></div></div>
+          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.85</span></div><small>Norfolk Lakes</small></div></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -4182,7 +4202,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to accommodation, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v0.84</span>
+                  <span className="release-pill">v0.85</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
@@ -4693,8 +4713,16 @@ function ManagerApp({
                 <section className="builder-settings-card">
                   <div className="builder-field-grid">
                     <label>Programme week name<input value={programmeBuilder.name} onChange={(event) => updateProgrammeBuilder({ name: event.target.value })} placeholder="e.g. 13–17 July 2026"/></label>
-                    <label>Week start<input type="date" value={programmeBuilder.startDate} onChange={(event) => updateProgrammeBuilder({ startDate: event.target.value })}/></label>
-                    <label>Week end<input type="date" value={programmeBuilder.endDate} onChange={(event) => updateProgrammeBuilder({ endDate: event.target.value })}/></label>
+                    <label>Week start<input type="date" value={programmeBuilder.startDate} onChange={(event) => {
+                      const startDate = event.target.value
+                      const schools = programmeBuilder.schools.map((school) => school.arrivalDate === programmeBuilder.startDate ? { ...school, arrivalDate: startDate } : school)
+                      updateProgrammeBuilder({ startDate, schools })
+                    }}/></label>
+                    <label>Week end<input type="date" min={programmeBuilder.startDate} value={programmeBuilder.endDate} onChange={(event) => {
+                      const endDate = event.target.value
+                      const schools = programmeBuilder.schools.map((school) => school.departureDate === programmeBuilder.endDate ? { ...school, departureDate: endDate } : school)
+                      updateProgrammeBuilder({ endDate, schools })
+                    }}/></label>
                   </div>
                 </section>
 
