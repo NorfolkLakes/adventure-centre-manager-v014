@@ -1542,10 +1542,10 @@ function ManagerApp({
 
   function unavailableStaffIdsForSession(day: string, session?: string): Set<string> {
     const availabilityDay = programme ? dateForProgrammeDay(programme, day) : day
-    const ids = new Set<string>([
-      ...(sicknessByDay[day] ?? []),
-      ...(sicknessByDay[availabilityDay] ?? []),
-    ])
+    // staff_days_off is the single live source of truth. Legacy local
+    // sickness maps are intentionally ignored so old cached values cannot
+    // keep somebody marked sick after the calendar is changed to Working.
+    const ids = new Set<string>()
     holidays
       .filter((holiday) => holiday.start_date <= availabilityDay && holiday.end_date >= availabilityDay)
       .forEach((holiday) => {
@@ -3091,8 +3091,7 @@ function ManagerApp({
     return dateKey(date)
   }
 
-  function staffingStatus(member: StaffMember, day: string, sourceProgramme: ProgrammeImport, sourceDaysOff: StaffDayOff[], sourceWorking: Record<string,string[]>, sourceSickness: Record<string,string[]>) {
-    if ((sourceSickness[day] ?? []).includes(member.id)) return 'sick' as DayOffStatus
+  function staffingStatus(member: StaffMember, day: string, sourceProgramme: ProgrammeImport, sourceDaysOff: StaffDayOff[], sourceWorking: Record<string,string[]>, _sourceSickness: Record<string,string[]>) {
     const isoDay = dateForProgrammeDay(sourceProgramme, day)
     const exact = sourceDaysOff.find((entry) => entry.staff_id === member.id && entry.day === isoDay)
     if (exact?.status) return exact.status
@@ -3124,7 +3123,11 @@ function ManagerApp({
 
     const sessions = ['1', '2', '3', '4', '5']
     const sessionTimes = ['9:10-10:30', '10:45-12:15', '14:00-15:30', '15:45-17:15', '19:00-20:30']
-    const blockWidth = 13
+    // The old template includes a redundant status column between the staff
+    // name and Session 1. Export A, B and D:M so Session 1 starts immediately
+    // after the name while preserving the existing timetable layout.
+    const sourceColumns = [1, 2, ...Array.from({ length: 10 }, (_, index) => index + 4)]
+    const blockWidth = sourceColumns.length
     const blockGap = 3
     const rowCount = 38
     const outputWorkbook = new ExcelJS.Workbook()
@@ -3142,13 +3145,13 @@ function ManagerApp({
     // This prevents hidden, duplicate and historic tables from entering exports.
     days.forEach((_, dayIndex) => {
       const destinationStart = dayIndex * (blockWidth + blockGap) + 1
-      for (let column = 1; column <= blockWidth; column += 1) {
-        const sourceColumn = template.getColumn(column)
-        const targetColumn = output.getColumn(destinationStart + column - 1)
+      sourceColumns.forEach((sourceColumnNumber, outputColumnIndex) => {
+        const sourceColumn = template.getColumn(sourceColumnNumber)
+        const targetColumn = output.getColumn(destinationStart + outputColumnIndex)
         targetColumn.width = sourceColumn.width
         targetColumn.hidden = false
         targetColumn.outlineLevel = sourceColumn.outlineLevel
-      }
+      })
       for (let row = 1; row <= rowCount; row += 1) {
         const sourceRow = template.getRow(row)
         const targetRow = output.getRow(row)
@@ -3157,29 +3160,39 @@ function ManagerApp({
           targetRow.hidden = false
           targetRow.outlineLevel = sourceRow.outlineLevel
         }
-        for (let column = 1; column <= blockWidth; column += 1) {
-          const sourceCell = sourceRow.getCell(column)
-          const targetCell = targetRow.getCell(destinationStart + column - 1)
+        sourceColumns.forEach((sourceColumnNumber, outputColumnIndex) => {
+          const sourceCell = sourceRow.getCell(sourceColumnNumber)
+          const targetCell = targetRow.getCell(destinationStart + outputColumnIndex)
           targetCell.value = clone(sourceCell.value)
           targetCell.style = clone(sourceCell.style)
           if (sourceCell.numFmt) targetCell.numFmt = sourceCell.numFmt
           if (sourceCell.note) targetCell.note = clone(sourceCell.note)
-        }
+        })
       }
     })
 
     const templateMerges: string[] = clone((template as any).model?.merges ?? [])
+    const mappedColumn = (zeroBasedSourceColumn: number) => {
+      const oneBased = zeroBasedSourceColumn + 1
+      if (oneBased <= 2) return oneBased - 1
+      if (oneBased === 3) return null
+      if (oneBased <= 13) return oneBased - 2
+      return null
+    }
     days.forEach((_, dayIndex) => {
       const offset = dayIndex * (blockWidth + blockGap)
       templateMerges.forEach((merge) => {
         const range = XLSX.utils.decode_range(merge)
-        if (range.s.r >= rowCount || range.e.r >= rowCount || range.s.c >= blockWidth || range.e.c >= blockWidth) return
-        output.mergeCells(
-          range.s.r + 1,
-          range.s.c + 1 + offset,
-          range.e.r + 1,
-          range.e.c + 1 + offset,
-        )
+        if (range.s.r >= rowCount || range.e.r >= rowCount || range.s.c >= 13 || range.e.c >= 13) return
+        let mappedStart = mappedColumn(range.s.c)
+        let mappedEnd = mappedColumn(range.e.c)
+        // A merge spanning the removed column remains a continuous merge after
+        // the remaining columns are shifted left. A merge only in column C is dropped.
+        if (mappedStart == null && mappedEnd == null) return
+        if (mappedStart == null) mappedStart = mappedEnd
+        if (mappedEnd == null) mappedEnd = mappedStart
+        if (mappedStart == null || mappedEnd == null) return
+        output.mergeCells(range.s.r + 1, mappedStart + 1 + offset, range.e.r + 1, mappedEnd + 1 + offset)
       })
     })
 
@@ -3208,7 +3221,7 @@ function ManagerApp({
     days.forEach((day, dayIndex) => {
       const start = dayIndex * (blockWidth + blockGap)
       setCell(0, start, `DAILY STAFFING: ${day}`)
-      sessionTimes.forEach((time, index) => setCell(1, start + 3 + index * 2, time))
+      sessionTimes.forEach((time, index) => setCell(1, start + 2 + index * 2, time))
 
       for (let row = 2; row < rowCount; row += 1) {
         for (let column = 0; column < blockWidth; column += 1) setCell(row, start + column, '')
@@ -3221,12 +3234,9 @@ function ManagerApp({
         const status = staffingStatus(member, day, sourceProgramme, sourceDaysOff, sourceWorking, sourceSickness)
         setCell(row, start, index + 1)
         setCell(row, start + 1, member.name)
-        setCell(row, start + 2, '')
 
         const statusLabel = status === 'hol' ? 'HOL' : status === 'sick' ? 'SICK' : status === 'am_off' ? 'AM OFF' : status === 'pm_off' ? 'PM OFF' : status === 'off' ? 'OFF' : ''
         const statusFill = status === 'hol' ? 'hol' : status === 'sick' ? 'sick' : status ? 'off' : null
-        if (status && statusFill) setCell(row, start + 2, statusLabel, statusFill)
-
         sessions.forEach((session, sessionIndex) => {
           const duties = dutyFor(member, day, session)
           const colours = duties.map((duty) => staffingColour(duty.code))
@@ -3241,11 +3251,11 @@ function ManagerApp({
           // Existing/completed assignments always stay visible in the export.
           // Availability status only fills an otherwise empty blocked session.
           if (duties.length > 0) {
-            setCell(row, start + 3 + sessionIndex * 2, duties.map((duty) => duty.code).join(' / '), activityFill)
-            setCell(row, start + 4 + sessionIndex * 2, duties.map((duty) => `G${duty.group}`).join(', '), activityFill)
+            setCell(row, start + 2 + sessionIndex * 2, duties.map((duty) => duty.code).join(' / '), activityFill)
+            setCell(row, start + 3 + sessionIndex * 2, duties.map((duty) => `G${duty.group}`).join(', '), activityFill)
           } else {
-            setCell(row, start + 3 + sessionIndex * 2, unavailable ? statusLabel : '', unavailable && statusFill ? statusFill : null)
-            setCell(row, start + 4 + sessionIndex * 2, '', unavailable && statusFill ? statusFill : null)
+            setCell(row, start + 2 + sessionIndex * 2, unavailable ? statusLabel : '', unavailable && statusFill ? statusFill : null)
+            setCell(row, start + 3 + sessionIndex * 2, '', unavailable && statusFill ? statusFill : null)
           }
         })
       })
@@ -3410,7 +3420,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.61</span></div>
+          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.71</span></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -3622,7 +3632,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to accommodation, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v0.61</span>
+                  <span className="release-pill">v0.71</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
@@ -3777,11 +3787,11 @@ function ManagerApp({
                     })()}</strong></article>
                     <article className="sick-summary"><span>Sick</span><strong>{(() => {
                       const availabilityDay = programme ? dateForProgrammeDay(programme, activeStaffingDay) : activeStaffingDay
-                      return new Set([
-                        ...(sicknessByDay[activeStaffingDay] ?? []),
-                        ...(sicknessByDay[availabilityDay] ?? []),
-                        ...daysOff.filter((entry) => entry.day === availabilityDay && entry.status === 'sick').map((entry) => memberIdForDayOff(entry) ?? entry.staff_id),
-                      ]).size
+                      return new Set(
+                        daysOff
+                          .filter((entry) => entry.day === availabilityDay && entry.status === 'sick')
+                          .map((entry) => memberIdForDayOff(entry) ?? entry.staff_id),
+                      ).size
                     })()}</strong></article>
                     <button className="clear-staffing-button" onClick={() => clearDayStaffing(activeStaffingDay)}><X size={17}/>Clear day</button>
                     <button className="auto-fill-button" onClick={() => autoFillStaffing(activeStaffingDay)}><WandSparkles size={17}/>Auto-fill staff</button>
