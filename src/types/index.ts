@@ -1,8 +1,13 @@
-export type Page = 'dashboard' | 'programme' | 'arrivals' | 'staffing' | 'schoolNotes' | 'admin' | 'staff' | 'holidays' | 'signoffs' | 'logs' | 'formerStaff' | 'loanHistory' | 'staffingLogs' | 'programmeBuilder'
+export type Page = 'dashboard' | 'programme' | 'arrivals' | 'staffing' | 'schoolNotes' | 'admin' | 'staff' | 'holidays' | 'signoffs' | 'logs' | 'formerStaff' | 'loanHistory' | 'staffingLogs' | 'programmeBuilder' | 'activitiesEquipment'
 
 export type Activity = {
   code: string
   name: string
+  colour?: string
+  equipmentQuantity?: number
+  capacity?: number
+  enabled?: boolean
+  notes?: string
 }
 
 export type ProgrammeCell = {

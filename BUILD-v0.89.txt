@@ -1,0 +1,8 @@
+Adventure Centre Manager v0.89
+
+- Fixed blank Print School Programme window by writing the complete programme into the print window before printing.
+- Added professional A4 portrait accommodation programme design.
+- Print waits for Manor Adventure branding to load before opening the print dialogue.
+- School programmes include school name, dates, groups, days, sessions, colour-coded activities, arrival and departure information only.
+- Staff Room Display remains ordered Head of Centre, Activities Manager, Team Leaders, then instructors.
+- Upcoming panel now shows Holidays only for the next seven days; OFF, AM OFF, PM OFF and sick are excluded from that panel.

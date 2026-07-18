@@ -1,0 +1,11 @@
+Adventure Centre Manager v0.90
+
+- Added Admin > Activities & Equipment.
+- Add, edit, enable, disable and safely remove activities.
+- Record equipment quantity, activity colour, notes and maximum groups per session.
+- Programme Builder now reads editable capacity limits instead of fixed limits.
+- Disabled activities are excluded from new automatic programmes.
+- Programme validation uses the saved capacity for each activity.
+- Canoeing and kayaking are created as paired two-group rotations in consecutive sessions, with groups swapping activities.
+- Existing professional Excel programme export retained.
+- Existing professional portrait School Programme printing retained.

@@ -680,9 +680,21 @@ function ManagerApp({
     localStorage.setItem(STAFF_KEY, JSON.stringify(next))
     return next
   })
-  const [activities, setActivities] = useState<Activity[]>(() =>
-    readJson(ACTIVITIES_KEY, startingActivities),
-  )
+  const [activities, setActivities] = useState<Activity[]>(() => {
+    const saved = readJson<Activity[]>(ACTIVITIES_KEY, startingActivities)
+    return saved.map((activity) => ({
+      ...activity,
+      colour: activity.colour ?? '#dce8f5',
+      equipmentQuantity: activity.equipmentQuantity ?? 0,
+      capacity: Math.max(1, activity.capacity ?? ACTIVITY_CAPACITY[activity.code] ?? 1),
+      enabled: activity.enabled ?? true,
+      notes: activity.notes ?? '',
+    }))
+  })
+
+  const activityCapacity = (code: string) => Math.max(1, activities.find((activity) => activity.code === code)?.capacity ?? ACTIVITY_CAPACITY[code] ?? 1)
+  const enabledActivities = activities.filter((activity) => activity.enabled !== false && activity.code !== 'Z')
+
   const [programmeBuilder, setProgrammeBuilder] = useState<ProgrammeBuilderDraft>(() => {
     const saved = readJson(PROGRAMME_BUILDER_KEY, blankProgrammeBuilderDraft())
     return {
@@ -1937,7 +1949,7 @@ function ManagerApp({
     const school = programmeBuilder.schools.find((item) => item.id === schoolId)
     if (!school || (school.locked && preserveManual)) return baseAssignments
     const schoolGroups = builderGroups.filter((entry) => entry.school.id === schoolId)
-    const requested = school.requestedActivities.length ? school.requestedActivities : activities.filter((item) => item.code !== 'Z').map((item) => item.code)
+    const requested = school.requestedActivities.length ? school.requestedActivities : enabledActivities.map((item) => item.code)
     const allowed = school.purchaseType === 'bargain' ? requested.filter((code) => programmeBuilder.bargainAllowedActivities.includes(code)) : requested
     if (!allowed.length) return baseAssignments
 
@@ -1947,9 +1959,46 @@ function ManagerApp({
       .map((session) => ({ ...dayInfo, session, priority: builderSlotPriority(school, dayInfo.date, session) })))
 
     const activityAtCapacity = (day: string, session: string, code: string, ownKey: string) => {
-      const capacity = ACTIVITY_CAPACITY[code] ?? 1
+      const capacity = activityCapacity(code)
       const running = Object.entries(next).filter(([key, value]) => key !== ownKey && key.startsWith(`${day}|${session}|`) && value === code).length
       return running >= capacity
+    }
+
+    // Canoeing and kayaking are run as a two-session paired rotation. Two groups
+    // swap activities in the following session so both groups complete both sessions.
+    const pairedWaterGroups = new Set<number>()
+    if (allowed.includes('CANOE') && allowed.includes('KAYAK')) {
+      const availablePairs = [...activitySlots]
+        .sort((a, b) => a.date.localeCompare(b.date) || Number(a.session) - Number(b.session))
+        .flatMap((first) => {
+          const second = activitySlots.find((candidate) => candidate.day === first.day && Number(candidate.session) === Number(first.session) + 1)
+          return second ? [{ first, second }] : []
+        })
+      for (let index = 0; index + 1 < schoolGroups.length; index += 2) {
+        const firstGroup = schoolGroups[index].group
+        const secondGroup = schoolGroups[index + 1].group
+        const pair = availablePairs.find(({ first, second }) => {
+          const keys = [
+            builderAssignmentKey(first.day, first.session, firstGroup),
+            builderAssignmentKey(first.day, first.session, secondGroup),
+            builderAssignmentKey(second.day, second.session, firstGroup),
+            builderAssignmentKey(second.day, second.session, secondGroup),
+          ]
+          if (preserveManual && keys.some((key) => programmeBuilder.manualLocks[key])) return false
+          return !activityAtCapacity(first.day, first.session, 'KAYAK', keys[0])
+            && !activityAtCapacity(first.day, first.session, 'CANOE', keys[1])
+            && !activityAtCapacity(second.day, second.session, 'CANOE', keys[2])
+            && !activityAtCapacity(second.day, second.session, 'KAYAK', keys[3])
+        })
+        if (!pair) continue
+        next[builderAssignmentKey(pair.first.day, pair.first.session, firstGroup)] = 'KAYAK'
+        next[builderAssignmentKey(pair.first.day, pair.first.session, secondGroup)] = 'CANOE'
+        next[builderAssignmentKey(pair.second.day, pair.second.session, firstGroup)] = 'CANOE'
+        next[builderAssignmentKey(pair.second.day, pair.second.session, secondGroup)] = 'KAYAK'
+        pairedWaterGroups.add(firstGroup)
+        pairedWaterGroups.add(secondGroup)
+        availablePairs.splice(availablePairs.indexOf(pair), 1)
+      }
     }
 
     for (const { group } of schoolGroups) {
@@ -1960,7 +2009,7 @@ function ManagerApp({
       for (const slot of unlockedSlots) next[builderAssignmentKey(slot.day, slot.session, group)] = ''
 
       const sortedSlots = [...unlockedSlots].sort((a, b) => a.priority - b.priority || a.date.localeCompare(b.date) || Number(a.session) - Number(b.session))
-      const queue = [...allowed].filter((code) => code !== 'CF' && code !== 'DISCO')
+      const queue = [...allowed].filter((code) => code !== 'CF' && code !== 'DISCO' && !(pairedWaterGroups.has(group) && (code === 'CANOE' || code === 'KAYAK')))
       const campfireIndex = queue.indexOf('CF')
       if (campfireIndex >= 0) {
         queue.splice(campfireIndex, 1)
@@ -1974,26 +2023,7 @@ function ManagerApp({
         }
       }
 
-      const hasCanoe = queue.includes('CANOE')
-      const hasKayak = queue.includes('KAYAK')
-      if (school.purchaseType === 'bargain' && hasCanoe && hasKayak) {
-        const pairStart = sortedSlots.find((slot) => {
-          const second = sortedSlots.find((candidate) => candidate.day === slot.day && Number(candidate.session) === Number(slot.session) + 1)
-          if (!second) return false
-          const firstKey = builderAssignmentKey(slot.day, slot.session, group)
-          const secondKey = builderAssignmentKey(second.day, second.session, group)
-          return !activityAtCapacity(slot.day, slot.session, 'CANOE', firstKey) && !activityAtCapacity(second.day, second.session, 'KAYAK', secondKey)
-        })
-        if (pairStart) {
-          const second = sortedSlots.find((slot) => slot.day === pairStart.day && Number(slot.session) === Number(pairStart.session) + 1)!
-          next[builderAssignmentKey(pairStart.day, pairStart.session, group)] = 'CANOE'
-          next[builderAssignmentKey(second.day, second.session, group)] = 'KAYAK'
-          sortedSlots.splice(sortedSlots.indexOf(second), 1)
-          sortedSlots.splice(sortedSlots.indexOf(pairStart), 1)
-          queue.splice(queue.indexOf('CANOE'), 1)
-          queue.splice(queue.indexOf('KAYAK'), 1)
-        }
-      }
+
 
       for (const slot of sortedSlots) {
         if (!queue.length) break
@@ -2095,7 +2125,7 @@ function ManagerApp({
     Object.entries(slotActivities).forEach(([slot, codes]) => {
       for (const code of new Set(codes)) {
         const count = codes.filter((item) => item === code).length
-        const capacity = ACTIVITY_CAPACITY[code] ?? 1
+        const capacity = activityCapacity(code)
         if (count > capacity) issues.push(`${code} exceeds its capacity (${count}/${capacity}) at ${slot.replace('|', ' Session ')}.`)
       }
     })
@@ -2110,11 +2140,11 @@ function ManagerApp({
 
     const escapeHtml = (value: string) => value.replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character] ?? character))
     const activityFill = (code: string) => {
-      if (['CANOE', 'KAYAK', 'GCAN', 'SUP', 'GSUP', 'RAFT', 'SAIL', 'SAIL PB'].includes(code)) return '#27a9e1'
-      if (['CLIMB', 'HR', 'LR', 'BT', 'AERO', 'BOULD', 'CAVE'].includes(code)) return '#7350a3'
-      if (['ARCH', 'RIFLES', 'AXE'].includes(code)) return '#f1d21a'
-      if (['CF', 'DISCO', 'MO'].includes(code)) return '#ef9b9b'
-      if (['SURV', 'SCAV', 'ORIENT', 'LAKE WALK', 'BIVI', 'IES', 'VB', 'WG', 'TG', 'OC'].includes(code)) return '#b9d69b'
+      if (['CANOE', 'KAYAK', 'GCAN', 'SUP', 'GSUP', 'RAFT', 'SAIL', 'SAIL PB'].includes(code)) return '#6ec8ef'
+      if (['CLIMB', 'HR', 'LR', 'BT', 'AERO', 'BOULD', 'CAVE'].includes(code)) return '#a88bd4'
+      if (['ARCH', 'RIFLES', 'AXE'].includes(code)) return '#f4dc4f'
+      if (['CF', 'DISCO', 'MO'].includes(code)) return '#f2aaaa'
+      if (['SURV', 'SCAV', 'ORIENT', 'LAKE WALK', 'BIVI', 'IES', 'VB', 'WG', 'TG', 'OC'].includes(code)) return '#bcdca5'
       return '#ffffff'
     }
     const printDays = builderDays.filter((dayInfo) => dayInfo.date >= normaliseBuilderDate(school.arrivalDate) && dayInfo.date <= normaliseBuilderDate(school.departureDate))
@@ -2125,26 +2155,32 @@ function ManagerApp({
       })
       return activeSessions.map((session, index) => {
         const state = builderSchoolSessionState(school, dayInfo.date, session)
-        const dayCell = index === 0 ? `<th class="day" rowspan="${activeSessions.length}">${escapeHtml(dayInfo.day)}</th>` : ''
-        if (state === 'arrival') return `<tr>${dayCell}<th class="session">${session}</th><td class="arrival" colspan="${groups.length}">${escapeHtml((school.name || 'School').toUpperCase())}</td></tr>`
+        const dayCell = index === 0 ? `<th class="day" rowspan="${activeSessions.length}"><span>${escapeHtml(dayInfo.day)}</span></th>` : ''
+        if (state === 'arrival') return `<tr>${dayCell}<th class="session">${session}</th><td class="arrival" colspan="${groups.length}">ARRIVAL</td></tr>`
         const groupCells = groups.map((group) => {
           const code = programmeBuilder.assignments[builderAssignmentKey(dayInfo.day, session, group)] ?? ''
-          return `<td class="activity" style="background:${activityFill(code)}">${escapeHtml(code || '—')}</td>`
+          const label = code ? (activities.find((item) => item.code === code)?.name || code) : '—'
+          return `<td class="activity" style="background:${activityFill(code)}"><span>${escapeHtml(label)}</span></td>`
         }).join('')
         return `<tr>${dayCell}<th class="session">${session}</th>${groupCells}</tr>`
       }).join('')
     }).join('<tr class="divider"><td colspan="' + (groups.length + 2) + '"></td></tr>')
 
+    if (!rows.trim()) { setProgrammeBuilderMessage('Build or update this school programme before printing.'); return }
     const logoUrl = new URL(`${import.meta.env.BASE_URL}manor-adventure-logo.png`, window.location.href).toString()
     const dateRange = friendlyProgrammeDateRange(school.arrivalDate, school.departureDate)
     const groupHeaders = groups.map((group) => `<th>G${group}</th>`).join('')
-    const popup = window.open('', '_blank', 'noopener,noreferrer,width=900,height=1100')
+    const popup = window.open('', '_blank', 'width=900,height=1100')
     if (!popup) { setProgrammeBuilderMessage('Allow pop-ups to print the school programme.'); return }
-    popup.document.write(`<!doctype html><html><head><title>${escapeHtml(school.name || 'School')} programme</title><style>
-      @page{size:A4 portrait;margin:12mm}*{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;margin:0;color:#111}.sheet{width:100%;text-align:center}.logo{width:125px;height:88px;object-fit:contain}.centre{font-size:30px;margin:2px 0 4px}.dates{font-size:17px;font-weight:700;margin-bottom:16px}.school-name{font-size:18px;font-weight:800;margin:0 0 10px;text-transform:uppercase}table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:15px}th,td{border:2px solid #222;height:34px;padding:4px;text-align:center;font-weight:800}thead th{background:#f1f1f1}.day{width:62px;writing-mode:vertical-rl;transform:rotate(180deg);font-size:17px;background:#f5f5f5}.session{width:54px;background:#f7f7f7}.arrival{background:#d94755;color:#111;font-size:17px}.activity{font-size:16px}.divider td{height:11px;background:#46594e;padding:0;border-color:#222}.departure{background:#46594e;color:#fff;font-size:14px;height:30px}.footer{font-size:10px;margin-top:10px;color:#555}@media print{.no-print{display:none}}
-    </style></head><body><main class="sheet"><img class="logo" src="${logoUrl}" alt="Manor Adventure"><h1 class="centre">Norfolk Lakes</h1><div class="dates">${escapeHtml(dateRange)}</div><div class="school-name">${escapeHtml(school.name || school.programmeName || 'School Programme')}</div><table><thead><tr><th style="width:62px">DAY</th><th style="width:54px">SES</th>${groupHeaders}</tr></thead><tbody>${rows}<tr><td class="departure" colspan="${groups.length + 2}">Departure after lunch from 1pm–1.30pm</td></tr></tbody></table><div class="footer">Programme correct at time of printing. Activities may change due to weather or operational requirements.</div></main><script>window.addEventListener('load',()=>setTimeout(()=>window.print(),250));<\/script></body></html>`)
+    const documentHtml = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(school.name || 'School')} programme</title><style>
+      @page{size:A4 portrait;margin:9mm}*{box-sizing:border-box;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}html,body{margin:0;padding:0;background:#fff;color:#17211b;font-family:Arial,Helvetica,sans-serif}.sheet{width:100%;min-height:278mm;display:flex;flex-direction:column}.header{display:grid;grid-template-columns:92px 1fr 92px;align-items:center;border-bottom:3px solid #264e3b;padding:0 0 7mm;margin-bottom:5mm}.logo{width:84px;height:58px;object-fit:contain}.heading{text-align:center}.heading h1{font-size:27px;line-height:1;margin:0;color:#244d39;letter-spacing:.3px}.heading h2{font-size:18px;margin:5px 0 0;text-transform:uppercase;letter-spacing:1.1px;color:#111}.heading p{font-size:13px;font-weight:700;margin:5px 0 0;color:#4a5b51}.badge{justify-self:end;width:72px;height:72px;border:2px solid #264e3b;border-radius:50%;display:flex;align-items:center;justify-content:center;text-align:center;font-weight:800;font-size:10px;color:#264e3b;line-height:1.2}table{width:100%;border-collapse:separate;border-spacing:0;table-layout:fixed;font-size:${groups.length > 10 ? '9.5px' : groups.length > 7 ? '10.5px' : '12px'};border:2px solid #24372e;border-radius:5px;overflow:hidden}th,td{border-right:1px solid #334b40;border-bottom:1px solid #334b40;height:${groups.length > 10 ? '27px' : '31px'};padding:3px;text-align:center;font-weight:800;vertical-align:middle}tr:last-child td{border-bottom:0}th:last-child,td:last-child{border-right:0}thead th{background:#244d39;color:#fff;height:28px;font-size:11px;letter-spacing:.4px}.day{width:43px;background:#edf3ef;color:#244d39;padding:0}.day span{writing-mode:vertical-rl;transform:rotate(180deg);display:inline-block;font-size:12px;letter-spacing:.6px}.session{width:39px;background:#f4f6f5;color:#27372f;font-size:11px}.arrival{background:#d95361;color:#fff;font-size:13px;letter-spacing:1.2px}.activity span{display:block;line-height:1.08;overflow-wrap:anywhere}.divider td{height:5px;background:#244d39;padding:0;border-color:#244d39}.departure{background:#244d39;color:#fff;font-size:12px;height:29px;letter-spacing:.2px}.footer{margin-top:auto;padding-top:4mm;text-align:center;border-top:1px solid #aab6af;font-size:9px;color:#56665e}.print-error{margin:30px;text-align:center;font-size:18px}.no-print{position:fixed;top:10px;right:10px;border:0;background:#244d39;color:#fff;padding:10px 14px;border-radius:6px;font-weight:700;cursor:pointer}@media print{.no-print{display:none}.sheet{min-height:auto}}
+    </style></head><body><button class="no-print" onclick="window.print()">Print programme</button><main class="sheet"><header class="header"><img class="logo" src="${logoUrl}" alt="Manor Adventure"><div class="heading"><h1>Norfolk Lakes</h1><h2>${escapeHtml(school.name || school.programmeName || 'School Programme')}</h2><p>${escapeHtml(dateRange)}</p></div><div class="badge">SCHOOL<br>PROGRAMME</div></header><table aria-label="School activity programme"><thead><tr><th style="width:43px">DAY</th><th style="width:39px">SES</th>${groupHeaders}</tr></thead><tbody>${rows}<tr><td class="departure" colspan="${groups.length + 2}">Departure after lunch from 1:00–1:30 pm</td></tr></tbody></table><footer class="footer">Manor Adventure · Norfolk Lakes &nbsp;|&nbsp; Activities may change where required by weather or operational conditions.</footer></main><script>
+      (function(){let printed=false;function ready(){if(printed)return;printed=true;setTimeout(function(){window.focus();window.print()},350)};const images=Array.from(document.images);if(!images.length){ready();return}let remaining=images.length;images.forEach(function(img){if(img.complete){remaining-=1;if(remaining===0)ready()}else{img.addEventListener('load',function(){remaining-=1;if(remaining===0)ready()},{once:true});img.addEventListener('error',function(){remaining-=1;if(remaining===0)ready()},{once:true})}});setTimeout(ready,2500)})();
+    <\/script></body></html>`
+    popup.document.open()
+    popup.document.write(documentHtml)
     popup.document.close()
-    setProgrammeBuilderMessage(`${school.name || 'School'} portrait programme opened for printing.`)
+    setProgrammeBuilderMessage(`${school.name || 'School'} professional portrait programme opened for printing.`)
   }
 
   function publishProgrammeDraft(draft: ProgrammeBuilderDraft) {
@@ -3117,7 +3153,7 @@ function ManagerApp({
       setImportMessage(`${code} already exists.`)
       return
     }
-    const next = [...activities, { code, name }].sort((a, b) =>
+    const next = [...activities, { code, name, colour: '#dce8f5', equipmentQuantity: 0, capacity: 1, enabled: true, notes: '' }].sort((a, b) =>
       a.code.localeCompare(b.code),
     )
     setActivities(next)
@@ -3134,8 +3170,14 @@ function ManagerApp({
     localStorage.setItem(ACTIVITIES_KEY, JSON.stringify(next))
   }
 
+  function updateActivityDefinition(code: string, patch: Partial<Activity>) {
+    const next = activities.map((activity) => activity.code === code ? { ...activity, ...patch } : activity)
+    setActivities(next)
+    localStorage.setItem(ACTIVITIES_KEY, JSON.stringify(next))
+  }
+
   function deleteActivity(code: string) {
-    if (!window.confirm(`Delete ${code} from the activity list?`)) return
+    if (!window.confirm(`Remove ${code} from the activity list? Existing saved programmes may still contain this code. Disabling it is safer if you need to preserve old records.`)) return
     const next = activities.filter((activity) => activity.code !== code)
     setActivities(next)
     localStorage.setItem(ACTIVITIES_KEY, JSON.stringify(next))
@@ -4045,7 +4087,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.88</span></div><small>Norfolk Lakes</small></div></div>
+          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.90</span></div><small>Norfolk Lakes</small></div></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -4265,7 +4307,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to accommodation, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v0.88</span>
+                  <span className="release-pill">v0.90</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
@@ -4835,6 +4877,10 @@ function ManagerApp({
                 <CalendarRange size={34} />
                 <div><h3>Programme Builder</h3><p>Design Bargain Special or Normal Purchase programmes, preview them and publish them.</p></div>
               </button>}
+              {canManageStaff && <button className="admin-choice-card" onClick={() => setPage('activitiesEquipment')}>
+                <ClipboardList size={34} />
+                <div><h3>Activities &amp; Equipment</h3><p>Add, edit or remove activities and set the maximum groups that can run each session.</p></div>
+              </button>}
               {canManageStaff && <button className="admin-choice-card" onClick={() => setPage('staff')}>
                 <Users size={34} />
                 <div><h3>Staff</h3><p>Manage staff accounts, roles and availability.</p></div>
@@ -4851,6 +4897,38 @@ function ManagerApp({
               {canManageStaff && <button className="admin-choice-card" onClick={() => setPage('formerStaff')}><History size={34}/><div><h3>Former Staff</h3><p>Employment start and leaving records.</p></div></button>}
               {canManageStaff && <button className="admin-choice-card" onClick={() => setPage('loanHistory')}><Users size={34}/><div><h3>Loan Staff History</h3><p>Reactivate loan staff or add them permanently.</p></div></button>}
             </section>
+          </Panel>
+        )}
+
+        {page === 'activitiesEquipment' && canManageStaff && (
+          <Panel title="Activities & Equipment" onBack={() => setPage('admin')}>
+            <section className="activity-equipment-intro">
+              <div><p className="eyebrow">Programme limits</p><h3>Equipment and simultaneous group capacity</h3><p>The programme builder uses <strong>maximum groups per session</strong>. Equipment quantity is recorded separately so you can see how much kit the centre owns.</p></div>
+              <div className="capacity-example"><strong>Example</strong><span>12 boats</span><span>Maximum 2 groups per session</span></div>
+            </section>
+            <section className="add-activity-strip">
+              <input value={newActivityCode} onChange={(event) => setNewActivityCode(event.target.value.toUpperCase())} placeholder="Code, e.g. RAFT" />
+              <input value={newActivityName} onChange={(event) => setNewActivityName(event.target.value)} placeholder="Activity name" />
+              <button className="primary" onClick={addActivity}><Plus size={17}/>Add activity</button>
+            </section>
+            <div className="activity-equipment-list">
+              {activities.filter((activity) => activity.code !== 'Z').map((activity) => (
+                <article className={`activity-equipment-card ${activity.enabled === false ? 'disabled' : ''}`} key={activity.code}>
+                  <div className="activity-equipment-title">
+                    <span className="activity-colour-dot" style={{ background: activity.colour ?? '#dce8f5' }} />
+                    <div><strong>{activity.code}</strong><input value={activity.name} onChange={(event) => updateActivityDefinition(activity.code, { name: event.target.value })}/></div>
+                    <label className="activity-enabled"><input type="checkbox" checked={activity.enabled !== false} onChange={(event) => updateActivityDefinition(activity.code, { enabled: event.target.checked })}/>Enabled</label>
+                  </div>
+                  <div className="activity-equipment-fields">
+                    <label>Activity colour<input type="color" value={activity.colour ?? '#dce8f5'} onChange={(event) => updateActivityDefinition(activity.code, { colour: event.target.value })}/></label>
+                    <label>Equipment quantity<input type="number" min="0" value={activity.equipmentQuantity ?? 0} onChange={(event) => updateActivityDefinition(activity.code, { equipmentQuantity: Math.max(0, Number(event.target.value) || 0) })}/></label>
+                    <label>Maximum groups per session<input type="number" min="1" value={activity.capacity ?? 1} onChange={(event) => updateActivityDefinition(activity.code, { capacity: Math.max(1, Number(event.target.value) || 1) })}/></label>
+                    <label className="activity-notes">Notes<input value={activity.notes ?? ''} onChange={(event) => updateActivityDefinition(activity.code, { notes: event.target.value })} placeholder="Optional equipment note"/></label>
+                  </div>
+                  <div className="activity-equipment-footer"><span>{activity.equipmentQuantity ?? 0} item{(activity.equipmentQuantity ?? 0) === 1 ? '' : 's'} recorded · {activity.capacity ?? 1} group{(activity.capacity ?? 1) === 1 ? '' : 's'} at once</span><button className="remove-button" onClick={() => deleteActivity(activity.code)}><Trash2 size={16}/>Remove</button></div>
+                </article>
+              ))}
+            </div>
           </Panel>
         )}
 

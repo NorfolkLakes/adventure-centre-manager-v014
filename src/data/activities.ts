@@ -49,7 +49,7 @@ export const activityNames: Record<string, string> = {
 }
 
 export const startingActivities: Activity[] = Object.entries(activityNames).map(
-  ([code, name]) => ({ code, name }),
+  ([code, name]) => ({ code, name, colour: '#dce8f5', equipmentQuantity: 0, capacity: 1, enabled: true, notes: '' }),
 )
 
 export function activityNameFromList(
