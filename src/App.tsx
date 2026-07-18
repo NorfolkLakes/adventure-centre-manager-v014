@@ -3,6 +3,8 @@ import type { Session } from '@supabase/supabase-js'
 import { CalendarDays, LogOut, ShieldCheck } from 'lucide-react'
 import ManagerApp from './ManagerApp'
 import StaffRoomDisplay from './StaffRoomDisplay'
+import ReceptionDisplay from './ReceptionDisplay'
+import ProgrammeDisplay from './ProgrammeDisplay'
 import { supabase } from './lib/supabase'
 
 type Profile = {
@@ -71,7 +73,7 @@ type RotaDuty = {
 }
 
 function App() {
-  const [displayMode, setDisplayMode] = useState(() => new URLSearchParams(window.location.search).get('display') === 'staff-room')
+  const [displayMode, setDisplayMode] = useState(() => new URLSearchParams(window.location.search).get('display') ?? '')
   const [session, setSession] = useState<Session | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
@@ -133,9 +135,10 @@ function App() {
     return <LoginScreen />
   }
 
-  if (displayMode) {
-    return <StaffRoomDisplay onExit={() => { const url = new URL(window.location.href); url.searchParams.delete('display'); window.history.replaceState({}, '', url); setDisplayMode(false) }} />
-  }
+  const exitDisplay = () => { const url = new URL(window.location.href); url.searchParams.delete('display'); window.history.replaceState({}, '', url); setDisplayMode('') }
+  if (displayMode === 'staff-room') return <StaffRoomDisplay onExit={exitDisplay} />
+  if (displayMode === 'reception') return <ReceptionDisplay onExit={exitDisplay} />
+  if (displayMode === 'programme') return <ProgrammeDisplay onExit={exitDisplay} />
 
   if (profile?.role === 'manager' || profile?.role === 'centreManager' || profile?.role === 'activityManager' || profile?.role === 'teamLeader') {
     return (

@@ -1,0 +1,6 @@
+Adventure Centre Manager v0.84
+- Staff Room Display retained
+- Reception Display added: schools arriving today, groups, building, school leader, schools on site
+- Programme Display added: full live centre-wide programme grid
+- Display Manager added in Admin with Open and Copy Link controls
+- All displays are read-only, full-screen capable, Supabase live, and refresh every 30 seconds
