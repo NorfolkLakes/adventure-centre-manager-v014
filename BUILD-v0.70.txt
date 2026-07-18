@@ -1,0 +1,8 @@
+Adventure Centre Manager v0.70
+
+Fixes the Days Off & Sickness calendar connection to Daily Staffing.
+
+- Programme day labels such as FRI are now resolved to the calendar ISO date.
+- Cross-month programme titles such as 29th June - 5th July are supported.
+- Sick, OFF, HOL, AM OFF and PM OFF records now drive summary totals, manual selection and Auto Fill.
+- Daily Staffing counters now read the same staff_days_off records as the calendar.

@@ -1,0 +1,8 @@
+Adventure Centre Manager v0.61
+
+Staffing Excel export fix:
+- Download Day: one worksheet, one table, selected day only.
+- Download Full Week: one top table per weekday, no duplicate/historic tables.
+- Unstaffed days stay empty and uncoloured.
+- Blue water, pink ropes, green HOL, red SICK, yellow OFF/AM OFF/PM OFF.
+- Plan B sheet removed from exported staffing workbooks.

@@ -1,0 +1,11 @@
+Adventure Centre Manager v0.68
+
+Built from v0.66 Excel activity fix.
+
+Changes:
+- Days Off & Sickness controls manual staffing and Auto-fill per session.
+- HOL, OFF and SICK block the appropriate sessions.
+- AM OFF blocks Sessions 1 and 2.
+- PM OFF blocks Session 5 only.
+- Mid-day sickness preserves completed assignments and marks only current/future sessions SICK in the Daily Staffing Excel.
+- Existing completed rota assignments and history are not deleted.

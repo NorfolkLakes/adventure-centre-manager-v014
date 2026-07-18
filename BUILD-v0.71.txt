@@ -1,0 +1,7 @@
+Adventure Centre Manager v0.71
+
+- Days Off & Sickness is the sole live source for Daily Staffing availability.
+- Removed stale local sickness-cache values from Daily Staffing counters, manual selection, Auto Fill, and current Excel exports.
+- Changing a staff member back to Working now clears the live sick count correctly.
+- Removed the redundant blank/status column before Session 1 from Download day and Download full week Excel exports.
+- Updated visible release label to v0.71.

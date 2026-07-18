@@ -1,0 +1,27 @@
+Adventure Centre Manager v0.62 - Excel repair fix
+
+The previous exporter modified the XLSX ZIP/XML package directly. Excel detected that package as damaged and displayed a recovery warning.
+
+This version creates a fresh standards-compliant XLSX workbook using SheetJS while copying the template table styles.
+
+Daily export:
+- One worksheet named Staffing
+- One A:M staffing table only
+- Only the selected day
+- No Plan B sheet, old tables, hidden sheets, or duplicate tables
+
+Weekly export:
+- One worksheet named Staffing
+- One table for each selected programme day only
+- No tables below the main staffing strip
+
+Colours:
+- Water activities: blue
+- Ropes activities: pink
+- HOL: green
+- OFF / AM OFF / PM OFF: yellow
+- SICK: red
+- Other activities and groups: no fill
+
+TypeScript validation passed with: npx tsc --noEmit
+The full Vite build could not run in the build environment because the existing node_modules copy is missing the optional Rolldown Linux native binding. Build locally after npm ci.

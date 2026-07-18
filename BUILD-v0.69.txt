@@ -1,0 +1,8 @@
+Adventure Centre Manager v0.69
+
+Fixes:
+- Days Off & Sickness updates staffing immediately before the Supabase round trip completes.
+- SICK, HOL and OFF staff are removed from manual staffing choices and Auto-fill.
+- Availability information and staff absence totals update from the Days Off calendar.
+- Staff matching falls back to email/name when an older stored staff ID no longer matches.
+- AM OFF blocks Sessions 1 and 2; PM OFF blocks Session 5.

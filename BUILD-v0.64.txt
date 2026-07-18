@@ -1,0 +1,8 @@
+Adventure Centre Manager v0.64
+
+- Added Days Off & Sickness as a Staffing side tab.
+- Removed editable Staff in today and Sick staff panels from Daily Staffing.
+- Added information-only totals for staff in, off/holiday and sick.
+- Days Off & Sickness now drives Auto-fill, manual availability, warnings and Excel exports.
+- Excel staff order is Head of Centre, Activities Manager, Team Leaders, then staff.
+- Preserved v0.63 Excel activity and absence colours.

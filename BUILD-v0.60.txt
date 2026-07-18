@@ -1,0 +1,9 @@
+Adventure Centre Manager v0.60
+
+Build on macOS:
+
+rm -rf node_modules
+npm ci --no-audit --no-fund
+npm run build
+
+Then copy into your Git-connected project and commit the generated dist folder.

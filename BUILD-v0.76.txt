@@ -1,0 +1,13 @@
+Adventure Centre Manager v0.76
+
+Implemented:
+- School-specific programme name, purchase type, arrival date, departure date and notes.
+- Arrival day: Sessions 1-2 not on site, Session 3 arrival, Sessions 4-5 activities.
+- Departure day: Sessions 1-2 activities, Sessions 3-5 departed.
+- Other schools continue normally on the same day.
+- Daily Staffing shows the selected programme date in full.
+- Existing Programme Builder drafts are migrated automatically.
+
+Validation:
+- TypeScript validation passed with tsc -b.
+- Full Vite build could not be rerun in the Linux workspace because the uploaded Mac node_modules lacks the Linux Rolldown binding and the package mirror returned 404 for scheduler. Run npm ci and npm run build on the Mac before deployment.

@@ -1,0 +1,10 @@
+Adventure Centre Manager v0.72 test results
+
+PASS - TypeScript project validation (tsc -b)
+PASS - PM OFF blocks Session 5 only
+PASS - AM OFF remains Sessions 1 and 2 only
+PASS - Auto-fill removes assignments for staff blocked by the live calendar before filling
+PASS - Excel export writes status instead of activity for blocked sessions
+PASS - Excel availability matching supports staff ID, email, and name
+
+Production Vite bundle was not generated in this environment because the configured npm registry did not provide scheduler 0.28.0 and the available Vite installation lacked the Linux Rolldown native binding. Run npm ci and npm run build on the Mac before deployment.

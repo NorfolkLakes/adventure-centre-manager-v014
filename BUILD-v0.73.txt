@@ -1,0 +1,16 @@
+Adventure Centre Manager v0.73
+
+Added an Admin Programme Builder with:
+- Normal Purchase and Bargain Special package types
+- Configurable Bargain Special activities and session limit
+- Multiple schools and group counts
+- In-app programme activity grid
+- Auto-saved drafts
+- Preview Calendar with validation warnings
+- Print preview
+- Publish directly into Programme and Daily Staffing
+
+Added programme/date context cards to Daily Staffing.
+
+Validation: TypeScript no-emit validation passed.
+Production build: not regenerated in this environment because the required Linux Rolldown native binding was unavailable. Run npm ci and npm run build on the deployment Mac before publishing.

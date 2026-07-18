@@ -1,0 +1,16 @@
+Adventure Centre Manager v0.60 colour-rule fix
+
+Staffing Excel export now removes all inherited template fills from data cells.
+Only these colours are applied:
+- Blue: water activities
+- Pink: ropes activities
+- Green: HOL
+- Red: SICK
+- Yellow: OFF, AM OFF and PM OFF
+- White/no fill: every other duty, group number and blank cell
+
+The original template borders, bold session dividers, column widths, row heights,
+merged cells and print layout remain intact.
+
+The full build could not be run in the container because scheduler@0.28.0 is unavailable.
+Run npm ci and npm run build on the Mac.

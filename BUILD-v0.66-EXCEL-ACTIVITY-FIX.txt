@@ -1,0 +1,6 @@
+Adventure Centre Manager v0.66 Excel activity fix
+
+- Keeps the existing Excel layout unchanged.
+- Activity codes now remain visible beside exported group assignments.
+- Existing/completed assignments remain visible if the staff member is later marked sick or off.
+- Availability status only fills session cells that do not already contain an assignment.

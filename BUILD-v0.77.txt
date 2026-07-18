@@ -1,0 +1,9 @@
+Adventure Centre Manager v0.77
+
+Programme Builder fixes:
+- All school programme details are grouped inside the individual school card.
+- Different schools can have different purchase types, arrival dates, departure dates and notes.
+- Arrival-day rules are enforced in the activity grid: S1/S2 Not on site, S3 school arrival, S4/S5 activities.
+- Departure-day rules are enforced: S1/S2 activities, S3/S4/S5 Departed.
+- Publishing preserves the per-school date rules.
+- Source files used by Vite have been synchronised with the corrected root files.

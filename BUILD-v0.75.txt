@@ -1,0 +1,11 @@
+Adventure Centre Manager v0.75
+
+Programme Builder changes:
+- The activities selected in each school's First-choice activities list are now the only first choices used by Auto Fill.
+- Removed the need for a duplicate first-choice assignment field.
+- Added Backup option 1 and Backup option 2, selectable from the full centre activity list.
+- Added Auto Fill School and Auto Fill Whole Programme controls.
+- Auto Fill reports whenever a backup replaces a requested activity or an activity cannot be placed.
+- Campfire is restricted to Session 5.
+- Added a school programme lock so whole-programme Auto Fill leaves approved schools unchanged.
+- Existing v0.74 draft data is migrated automatically.

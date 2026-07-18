@@ -1,0 +1,11 @@
+Adventure Centre Manager v0.63
+
+Excel export colour repair:
+- Replaced SheetJS workbook writing with ExcelJS for staffing exports.
+- Water activities export with blue fills.
+- Ropes activities export with pink fills.
+- HOL exports green, SICK red, and OFF/AM OFF/PM OFF yellow.
+- Daily export contains one worksheet and one selected-day table only.
+- Weekly export contains one table per programme day only.
+- Template borders, fonts, alignment, row heights, column widths and print setup are retained.
+- No duplicate, hidden or historic tables are copied into exports.

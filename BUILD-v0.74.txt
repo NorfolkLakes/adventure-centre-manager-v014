@@ -1,0 +1,14 @@
+Adventure Centre Manager v0.74
+
+Programme Builder additions:
+- Auto Fill School and Auto Fill Whole Programme.
+- First-choice activities plus Option 1 and Option 2 backups for each school.
+- Auto Fill tries first choices before substitutions and reports every replacement or unresolved activity.
+- Campfire is restricted to Session 5 and every group from the school attends together.
+- Confirmed simultaneous capacity rules: Climbing 3, Blind Trail 2, Sailing 2.
+- The same activity cannot be shared in one session by different schools.
+- Bargain Special defaults to 9 sessions per group.
+
+Validation:
+- TypeScript compilation completed successfully.
+- Vite packaging could not run in the container because the platform-specific Rolldown Linux binding is unavailable.

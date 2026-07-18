@@ -1,0 +1,9 @@
+Adventure Centre Manager v0.66
+
+- Moved the existing Days Off page from Admin to Staffing as Days Off & Sickness.
+- Preserved Month, Week and Daily views, styling, editing and keyboard controls.
+- Added Daily View keyboard navigation and status shortcut keys.
+- Removed Days Off from Admin; Staffing Logs remains in Admin.
+- Days Off & Sickness remains the single source of truth for manual assignment, Auto-fill and exports.
+- Existing/completed rota assignments are preserved when a staff member is later marked sick.
+- Auto-fill skips staff who are unavailable for the relevant session.

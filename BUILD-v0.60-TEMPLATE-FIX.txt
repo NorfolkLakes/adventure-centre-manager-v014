@@ -1,0 +1,17 @@
+Adventure Centre Manager v0.60 - Staffing Excel template fix
+
+This build writes staffing data directly into the original uploaded XLSX package.
+It does not recreate the workbook with SheetJS, so the original:
+- colours and conditional formatting
+- thick borders
+- merged cells
+- row heights and column widths
+- print settings
+are preserved.
+
+TypeScript validation passed in the build environment.
+The Vite bundle could not be completed here because the Linux Rolldown native binding was unavailable. Build on macOS with:
+
+rm -rf node_modules
+npm ci --no-audit --no-fund
+npm run build

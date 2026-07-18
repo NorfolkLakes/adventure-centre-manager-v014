@@ -1,0 +1,9 @@
+Adventure Centre Manager v0.72
+
+Fixes:
+- SICK, HOL and OFF staff are removed from blocked session assignments before Auto-fill runs.
+- AM OFF blocks Sessions 1 and 2 only.
+- PM OFF blocks Session 5 only.
+- Daily and full-week Excel exports never show activities in blocked sessions.
+- Excel availability matching supports staff ID, email and name.
+- Updated visible release label to v0.72.
