@@ -3131,26 +3131,30 @@ function ManagerApp({
         setCell(row, start + 1, member.name)
         setCell(row, start + 2, '')
 
-        if (status) {
-          const label = status === 'hol' ? 'HOL' : status === 'sick' ? 'SICK' : status === 'am_off' ? 'AM OFF' : status === 'pm_off' ? 'PM OFF' : 'OFF'
-          const fill = status === 'hol' ? 'hol' : status === 'sick' ? 'sick' : 'off'
-          setCell(row, start + 2, label, fill)
-          sessions.forEach((_, sessionIndex) => {
-            const sessionNumber = sessionIndex + 1
-            const unavailable = status === 'hol' || status === 'sick' || status === 'off' ||
-              (status === 'am_off' && sessionNumber <= 2) || (status === 'pm_off' && sessionNumber === 5)
-            setCell(row, start + 3 + sessionIndex * 2, unavailable ? label : '', unavailable ? fill : null)
-            setCell(row, start + 4 + sessionIndex * 2, '', unavailable ? fill : null)
-          })
-          return
-        }
+        const statusLabel = status === 'hol' ? 'HOL' : status === 'sick' ? 'SICK' : status === 'am_off' ? 'AM OFF' : status === 'pm_off' ? 'PM OFF' : status === 'off' ? 'OFF' : ''
+        const statusFill = status === 'hol' ? 'hol' : status === 'sick' ? 'sick' : status ? 'off' : null
+        if (status && statusFill) setCell(row, start + 2, statusLabel, statusFill)
 
         sessions.forEach((session, sessionIndex) => {
           const duties = dutyFor(member, day, session)
           const colours = duties.map((duty) => staffingColour(duty.code))
-          const fill = colours.includes('water') ? 'water' : colours.includes('ropes') ? 'ropes' : null
-          setCell(row, start + 3 + sessionIndex * 2, duties.map((duty) => duty.code).join(' / '), fill)
-          setCell(row, start + 4 + sessionIndex * 2, duties.map((duty) => `G${duty.group}`).join(', '))
+          const activityFill = colours.includes('water') ? 'water' : colours.includes('ropes') ? 'ropes' : null
+          const sessionNumber = sessionIndex + 1
+          const unavailable = Boolean(status) && (
+            status === 'hol' || status === 'sick' || status === 'off' ||
+            (status === 'am_off' && sessionNumber <= 2) ||
+            (status === 'pm_off' && sessionNumber >= 3)
+          )
+
+          // Existing/completed assignments always stay visible in the export.
+          // Availability status only fills an otherwise empty blocked session.
+          if (duties.length > 0) {
+            setCell(row, start + 3 + sessionIndex * 2, duties.map((duty) => duty.code).join(' / '), activityFill)
+            setCell(row, start + 4 + sessionIndex * 2, duties.map((duty) => `G${duty.group}`).join(', '), activityFill)
+          } else {
+            setCell(row, start + 3 + sessionIndex * 2, unavailable ? statusLabel : '', unavailable && statusFill ? statusFill : null)
+            setCell(row, start + 4 + sessionIndex * 2, '', unavailable && statusFill ? statusFill : null)
+          }
         })
       })
     })
