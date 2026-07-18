@@ -1,0 +1,6 @@
+Adventure Centre Manager v0.86
+
+- Drag-and-drop programme editor
+- Selected activities only in each school grid
+- Compact no-touch staff-room display
+- Holiday today and upcoming holiday for the next seven days

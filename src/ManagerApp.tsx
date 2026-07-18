@@ -706,6 +706,7 @@ function ManagerApp({
   const [programmeBuilderMode, setProgrammeBuilderMode] = useState<'design' | 'upload'>('design')
   const [programmeBuilderScreen, setProgrammeBuilderScreen] = useState<'library' | 'editor'>('library')
   const [programmeBuilderMessage, setProgrammeBuilderMessage] = useState('')
+  const [draggedBuilderActivity, setDraggedBuilderActivity] = useState<{ key?: string; code: string; schoolId: string } | null>(null)
   const [savedProgrammes, setSavedProgrammes] = useState<SavedProgramme[]>(() => readJson(PROGRAMME_LIBRARY_KEY, []))
   const [activeSavedProgrammeId, setActiveSavedProgrammeId] = useState<string | null>(null)
   const [programmeSearch, setProgrammeSearch] = useState('')
@@ -2046,6 +2047,23 @@ function ManagerApp({
       manualLocks: { ...programmeBuilder.manualLocks, [key]: true },
     })
     setProgrammeBuilderMessage('Manual change saved and locked. Update Programme will keep it in place.')
+  }
+
+
+  function dropBuilderActivity(day: string, session: string, group: number, schoolId: string) {
+    if (!draggedBuilderActivity || draggedBuilderActivity.schoolId !== schoolId) return
+    const targetKey = builderAssignmentKey(day, session, group)
+    const sourceKey = draggedBuilderActivity.key
+    const targetValue = programmeBuilder.assignments[targetKey] ?? ''
+    const nextAssignments = { ...programmeBuilder.assignments, [targetKey]: draggedBuilderActivity.code }
+    const nextLocks = { ...programmeBuilder.manualLocks, [targetKey]: true }
+    if (sourceKey && sourceKey !== targetKey) {
+      nextAssignments[sourceKey] = targetValue
+      nextLocks[sourceKey] = true
+    }
+    updateProgrammeBuilder({ assignments: nextAssignments, manualLocks: nextLocks })
+    setDraggedBuilderActivity(null)
+    setProgrammeBuilderMessage(sourceKey ? 'Activities moved. Both sessions are locked and the rest of the programme remains unchanged.' : 'Selected activity placed and locked. Press Update Programme to rebalance the remaining unlocked sessions.')
   }
 
   function builderValidation() {
@@ -3982,7 +4000,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.85</span></div><small>Norfolk Lakes</small></div></div>
+          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.86</span></div><small>Norfolk Lakes</small></div></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -4202,7 +4220,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to accommodation, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v0.85</span>
+                  <span className="release-pill">v0.86</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
@@ -4746,7 +4764,9 @@ function ManagerApp({
 
                 <section className="builder-section">
                   <div className="builder-section-heading"><div><p className="eyebrow">Programme grid</p><h3>Assign activities</h3></div><span>{builderGroups.length} groups · {builderDays.length} days</span></div>
-                  <div className="builder-grid-wrap"><table className="builder-grid"><thead><tr><th>Day</th><th>Session</th>{builderGroups.map(({ group, school }) => <th key={group}>G{group}<small>{school.name || 'School'}</small></th>)}</tr></thead><tbody>{builderDays.flatMap((dayInfo) => BUILDER_SESSIONS.map((session) => <tr key={`${dayInfo.day}-${session}`}><th>{dayInfo.label}</th><th>S{session}</th>{builderGroups.map(({ group, school }) => { const state = builderSchoolSessionState(school, dayInfo.date, session); const value = programmeBuilder.assignments[builderAssignmentKey(dayInfo.day, session, group)] ?? ''; const options = school.purchaseType === 'bargain' ? activities.filter((activity) => programmeBuilder.bargainAllowedActivities.includes(activity.code)) : activities; return <td key={group} className={`builder-state-${state}`}>{state === 'arrival' ? <strong>{school.name || 'School'} – Arrival</strong> : state === 'departed' ? <span>Departed</span> : state === 'offsite' ? <span>Not on site</span> : <select className={programmeBuilder.manualLocks[builderAssignmentKey(dayInfo.day, session, group)] ? 'manual-locked' : ''} title={programmeBuilder.manualLocks[builderAssignmentKey(dayInfo.day, session, group)] ? 'Manual change locked' : 'Automatic activity'} value={value} onChange={(event) => setBuilderActivity(dayInfo.day, session, group, event.target.value)}><option value="">—</option>{options.map((activity) => <option key={activity.code} value={activity.code}>{activity.code} – {activity.name}</option>)}</select>}</td> })}</tr>))}</tbody></table></div>
+                  <div className="builder-drag-help"><strong>Move activities</strong><span>Drag an activity to another session. Activities swap places automatically, and only activities selected for that school can be used.</span></div>
+                  <div className="builder-school-trays">{programmeBuilder.schools.map((school) => <section key={school.id}><b>{school.name || 'School'}</b><div>{school.requestedActivities.map((code) => <button type="button" draggable key={code} onDragStart={() => setDraggedBuilderActivity({ code, schoolId: school.id })}>{code}</button>)}</div></section>)}</div>
+                  <div className="builder-grid-wrap"><table className="builder-grid"><thead><tr><th>Day</th><th>Session</th>{builderGroups.map(({ group, school }) => <th key={group}>G{group}<small>{school.name || 'School'}</small></th>)}</tr></thead><tbody>{builderDays.flatMap((dayInfo) => BUILDER_SESSIONS.map((session) => <tr key={`${dayInfo.day}-${session}`}><th>{dayInfo.label}</th><th>S{session}</th>{builderGroups.map(({ group, school }) => { const state = builderSchoolSessionState(school, dayInfo.date, session); const value = programmeBuilder.assignments[builderAssignmentKey(dayInfo.day, session, group)] ?? ''; const options = school.purchaseType === 'bargain' ? activities.filter((activity) => programmeBuilder.bargainAllowedActivities.includes(activity.code)) : activities; return <td key={group} className={`builder-state-${state}`} onDragOver={state === 'activity' ? (event) => event.preventDefault() : undefined} onDrop={state === 'activity' ? () => dropBuilderActivity(dayInfo.day, session, group, school.id) : undefined}>{state === 'arrival' ? <strong>{school.name || 'School'} – Arrival</strong> : state === 'departed' ? <span>Departed</span> : state === 'offsite' ? <span>Not on site</span> : <div className="builder-draggable-cell" draggable={Boolean(value)} onDragStart={() => value && setDraggedBuilderActivity({ key: builderAssignmentKey(dayInfo.day, session, group), code: value, schoolId: school.id })}><select className={programmeBuilder.manualLocks[builderAssignmentKey(dayInfo.day, session, group)] ? 'manual-locked' : ''} title={programmeBuilder.manualLocks[builderAssignmentKey(dayInfo.day, session, group)] ? 'Manual change locked' : 'Automatic activity'} value={value} onChange={(event) => setBuilderActivity(dayInfo.day, session, group, event.target.value)}><option value="">—</option>{options.filter((activity) => school.requestedActivities.includes(activity.code) || activity.code === value).map((activity) => <option key={activity.code} value={activity.code}>{activity.code} – {activity.name}</option>)}</select></div>}</td> })}</tr>))}</tbody></table></div>
 
                   <div className="builder-update-actions"><div><strong>Manual changes are protected</strong><p>Any activity you change is locked. Update Programme rearranges only the remaining sessions.</p></div><div><button className="secondary-action" onClick={resetProgrammeLocks}>Reset Locks</button><button className="primary" onClick={updateWholeProgramme}><WandSparkles size={17}/>Update Programme</button></div></div>
                 </section>
