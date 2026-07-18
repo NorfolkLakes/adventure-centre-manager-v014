@@ -1,0 +1,6 @@
+Adventure Centre Manager v0.98
+
+- Correctly restores the original green app theme by removing the v0.95 light-theme CSS override.
+- Keeps the clean read-only Manager Display.
+- Keeps accommodation/building/flats fix.
+- Keeps School and Centre PDF/Excel exports.

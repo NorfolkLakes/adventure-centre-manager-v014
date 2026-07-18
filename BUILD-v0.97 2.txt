@@ -1,0 +1,10 @@
+Adventure Centre Manager v0.97
+
+Changes:
+- Restored the original dark-green application colour scheme.
+- Kept the clean, bright read-only Manager Display.
+- Retained Manager Display building and flat allocation fixes.
+- Retained School Programme PDF and Excel exports.
+- Retained Centre Programme PDF and Excel exports.
+- Retained School Notes, weather, sick staff and loan staff display features.
+- No database, login, staffing, arrivals or programme logic was removed.
