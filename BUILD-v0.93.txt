@@ -1,0 +1,8 @@
+Adventure Centre Manager v0.93
+
+Staff Room Display colour update:
+- Clean white page and rota background.
+- Activity duties use the exact saved colour from Admin > Activities & Equipment.
+- Automatic black/white text contrast for readability.
+- Multiple duties remain individually colour-coded within one session cell.
+- OFF, Holiday, Sick, AM OFF and PM OFF status styling remains distinct.

@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { CalendarDays, Clock3, Maximize2, RefreshCw, Users } from 'lucide-react'
 import { supabase } from './lib/supabase'
-import type { ProgrammeImport, StaffMember, StaffingAssignment } from './types'
+import type { Activity, ProgrammeImport, StaffMember, StaffingAssignment } from './types'
 
 type DayOffStatus = 'off' | 'hol' | 'sick' | 'am_off' | 'pm_off'
 type StaffDayOff = { id:string; staff_id:string; staff_email:string; staff_name:string; day:string; status:DayOffStatus; note:string|null }
-type LiveState = { programme: ProgrammeImport | null; staff: StaffMember[]; activities: {code:string;name:string}[]; assignments: StaffingAssignment }
+type LiveState = { programme: ProgrammeImport | null; staff: StaffMember[]; activities: Activity[]; assignments: StaffingAssignment }
 
 const sessionOrder = ['1','2','3','4','5']
 const weekdayNames = ['SUN','MON','TUE','WED','THU','FRI','SAT']
@@ -32,6 +32,15 @@ function dateForProgrammeDay(programme: ProgrammeImport, day: string) {
 }
 function statusLabel(status: DayOffStatus) {
   return ({off:'OFF',hol:'HOLIDAY',sick:'SICK',am_off:'AM OFF',pm_off:'PM OFF'} as Record<DayOffStatus,string>)[status]
+}
+
+function readableTextColour(background?: string) {
+  const fallback = '#e9efec'
+  const value = /^#[0-9a-f]{6}$/i.test(background ?? '') ? background! : fallback
+  const red = Number.parseInt(value.slice(1,3),16)
+  const green = Number.parseInt(value.slice(3,5),16)
+  const blue = Number.parseInt(value.slice(5,7),16)
+  return ((red * 299 + green * 587 + blue * 114) / 1000) >= 155 ? '#10211b' : '#ffffff'
 }
 
 export default function StaffRoomDisplay({ onExit }: { onExit: () => void }) {
@@ -62,7 +71,7 @@ export default function StaffRoomDisplay({ onExit }: { onExit: () => void }) {
 
   const todayIso = isoDate(now)
   const programmeDay = useMemo(() => state.programme?.rows.find(row => dateForProgrammeDay(state.programme!, row.day) === todayIso)?.day ?? '', [state.programme, todayIso])
-  const activityMap = useMemo(() => new Map(state.activities.map(item => [item.code,item.name])), [state.activities])
+  const activityMap = useMemo(() => new Map(state.activities.map(item => [item.code,item])), [state.activities])
   const duties = useMemo(() => {
     const result = new Map<string, Record<string,string[]>>()
     if (!state.programme || !programmeDay) return result
@@ -102,7 +111,7 @@ export default function StaffRoomDisplay({ onExit }: { onExit: () => void }) {
     {!state.programme || !programmeDay ? <section className="staff-display-empty"><Users size={42}/><h2>No programme is live for today</h2><p>The display will update automatically when a programme and staffing are published.</p></section> : <>
       <section className="staff-display-summary"><article><span>Programme</span><strong>{state.programme.title}</strong></article><article><span>Staff shown</span><strong>{visibleStaff.length}</strong></article><article><span>Off today</span><strong>{todayDaysOff.length}</strong></article><article><span>Last updated</span><strong>{updatedAt ? new Date(updatedAt).toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit'}) : '—'}</strong></article></section>
       <div className="staff-display-layout">
-        <section className="staff-display-rota"><table><thead><tr><th>Staff member</th>{sessionOrder.map(s => <th key={s}>Session {s}</th>)}</tr></thead><tbody>{visibleStaff.map(member => { const off = offByStaff.get(member.id); return <tr key={member.id} className={off ? `display-off display-${off.status}` : ''}><th>{member.name}<small>{off ? statusLabel(off.status) : member.role === 'centreManager' ? 'Head of Centre' : member.role === 'activityManager' ? 'Activities Manager' : member.role === 'teamLeader' ? 'Team Leader' : 'Instructor'}</small></th>{sessionOrder.map(session => { const partialOff = off?.status === 'am_off' && ['1','2'].includes(session) || off?.status === 'pm_off' && ['3','4','5'].includes(session); const fullOff = off && ['off','hol','sick'].includes(off.status); const values = duties.get(member.id)?.[session] ?? []; return <td key={session} className={fullOff || partialOff ? 'status-cell' : values.length ? 'duty-cell' : 'empty-cell'}>{fullOff || partialOff ? statusLabel(off!.status) : values.length ? values.map(value => <span key={value} title={activityMap.get(value.split(' ')[0])}>{value}</span>) : '—'}</td>})}</tr>})}</tbody></table></section>
+        <section className="staff-display-rota"><table><thead><tr><th>Staff member</th>{sessionOrder.map(s => <th key={s}>Session {s}</th>)}</tr></thead><tbody>{visibleStaff.map(member => { const off = offByStaff.get(member.id); return <tr key={member.id} className={off ? `display-off display-${off.status}` : ''}><th>{member.name}<small>{off ? statusLabel(off.status) : member.role === 'centreManager' ? 'Head of Centre' : member.role === 'activityManager' ? 'Activities Manager' : member.role === 'teamLeader' ? 'Team Leader' : 'Instructor'}</small></th>{sessionOrder.map(session => { const partialOff = off?.status === 'am_off' && ['1','2'].includes(session) || off?.status === 'pm_off' && ['3','4','5'].includes(session); const fullOff = off && ['off','hol','sick'].includes(off.status); const values = duties.get(member.id)?.[session] ?? []; return <td key={session} className={fullOff || partialOff ? 'status-cell' : values.length ? 'duty-cell' : 'empty-cell'}>{fullOff || partialOff ? statusLabel(off!.status) : values.length ? values.map(value => { const code = value.split(' ')[0]; const activity = activityMap.get(code); const background = activity?.colour || '#e9efec'; return <span key={value} className="activity-duty" title={activity?.name ?? code} style={{ backgroundColor: background, color: readableTextColour(background) }}>{value}</span> }) : '—'}</td>})}</tr>})}</tbody></table></section>
         <aside className="staff-display-off-panel"><h2>Days off</h2>{(['hol','sick','off','am_off','pm_off'] as DayOffStatus[]).map(status => <section key={status} className={`off-list off-${status}`}><h3>{status === 'hol' ? 'HOLIDAY TODAY' : statusLabel(status)}</h3>{offGroups[status]?.length ? offGroups[status].map(item => <div key={item.id}><strong>{item.staff_name}</strong>{item.note && <small>{item.note}</small>}</div>) : <p>None</p>}</section>)}<section className="off-list upcoming-holiday"><h3>UPCOMING HOLIDAYS · NEXT 7 DAYS</h3>{upcomingHolidays.length ? upcomingHolidays.map(item => <div key={`${item.id}-${item.day}`}><strong>{new Date(`${item.day}T12:00:00`).toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short'})} — {item.staff_name}</strong>{item.note && <small>{item.note}</small>}</div>) : <p>None</p>}</section></aside>
       </div>
     </>}
