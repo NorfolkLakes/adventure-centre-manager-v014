@@ -2185,13 +2185,13 @@ function ManagerApp({
     if (!groups.length) { setProgrammeBuilderMessage('Add at least one group before printing.'); return }
 
     const escapeHtml = (value: string) => value.replace(/[&<>'"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character] ?? character))
-    const activityFill = (code: string) => {
-      if (['CANOE', 'KAYAK', 'GCAN', 'SUP', 'GSUP', 'RAFT', 'SAIL', 'SAIL PB'].includes(code)) return '#6ec8ef'
-      if (['CLIMB', 'HR', 'LR', 'BT', 'AERO', 'BOULD', 'CAVE'].includes(code)) return '#a88bd4'
-      if (['ARCH', 'RIFLES', 'AXE'].includes(code)) return '#f4dc4f'
-      if (['CF', 'DISCO', 'MO'].includes(code)) return '#f2aaaa'
-      if (['SURV', 'SCAV', 'ORIENT', 'LAKE WALK', 'BIVI', 'IES', 'VB', 'WG', 'TG', 'OC'].includes(code)) return '#bcdca5'
-      return '#ffffff'
+    const activityFill = (code: string) => activities.find((activity) => activity.code.toUpperCase() === code.toUpperCase())?.colour ?? '#f2f4f3'
+    const activityTextColour = (code: string) => {
+      const hex = activityFill(code).replace('#', '').padEnd(6, '0').slice(0, 6)
+      const r = parseInt(hex.slice(0, 2), 16)
+      const g = parseInt(hex.slice(2, 4), 16)
+      const b = parseInt(hex.slice(4, 6), 16)
+      return (r * 299 + g * 587 + b * 114) / 1000 < 145 ? '#ffffff' : '#17211b'
     }
     const printDays = builderDays.filter((dayInfo) => dayInfo.date >= normaliseBuilderDate(school.arrivalDate) && dayInfo.date <= normaliseBuilderDate(school.departureDate))
     const rows = printDays.map((dayInfo) => {
@@ -2206,7 +2206,7 @@ function ManagerApp({
         const groupCells = groups.map((group) => {
           const code = programmeBuilder.assignments[builderAssignmentKey(dayInfo.day, session, group)] ?? ''
           const label = code ? (activities.find((item) => item.code === code)?.name || code) : '—'
-          return `<td class="activity" style="background:${activityFill(code)}"><span>${escapeHtml(label)}</span></td>`
+          return `<td class="activity" style="background:${activityFill(code)};color:${activityTextColour(code)}"><span>${escapeHtml(label)}</span></td>`
         }).join('')
         return `<tr>${dayCell}<th class="session">${session}</th>${groupCells}</tr>`
       }).join('')
@@ -2376,58 +2376,276 @@ function ManagerApp({
     return value
   }
 
-  function downloadPublishedProgrammeExcel() {
+  async function downloadPublishedProgrammeExcel() {
     if (!programme) return
-    const title = programme.title || programme.sourceFileName.replace(/\.xlsx$/i, '') || 'Programme'
-    const header1 = ['PROGRAMME', '', ...programme.groupNumbers.map((group) => programmeGroupSchool(programme, group) || `Group ${group}`)]
-    const header2 = ['DAY', 'SES', ...programme.groupNumbers.map((group) => `G${group}`)]
+    const ExcelJS = (window as Window & { ExcelJS?: any }).ExcelJS
+    if (!ExcelJS) {
+      setImportMessage('The Excel export library did not load. Refresh the page and try again.')
+      return
+    }
+
+    const title = programme.title || programme.sourceFileName.replace(/\.xlsx$/i, '') || 'Centre Programme'
     const mergedRows = Array.from(programme.rows.reduce((map, row) => {
       const key = `${row.day}|${row.session}`
       const current = map.get(key)
       if (!current) map.set(key, { ...row, cells: row.cells.map((cell) => ({ ...cell })) })
       else {
         const cells = new Map(current.cells.map((cell) => [cell.group, cell]))
-        row.cells.forEach((cell) => { const existing = cells.get(cell.group); if (!existing?.activityCode || cell.activityCode) cells.set(cell.group, { ...cell }) })
+        row.cells.forEach((cell) => {
+          const existing = cells.get(cell.group)
+          if (!existing?.activityCode || cell.activityCode) cells.set(cell.group, { ...cell })
+        })
         map.set(key, { ...current, cells: Array.from(cells.values()) })
       }
       return map
     }, new Map<string, ProgrammeRow>()).values()).sort((a, b) => weekdayRank(a.day) - weekdayRank(b.day) || Number(a.session) - Number(b.session))
-    const data = mergedRows.map((row) => [row.day, row.session, ...programme.groupNumbers.map((group) => programmeCellDisplay(row, group))])
-    const worksheet = XLSX.utils.aoa_to_sheet([[title], [friendlyProgrammeDateRange(programme.startDate ?? '', programme.endDate ?? '')], header1, header2, ...data])
-    worksheet['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: Math.max(1, programme.groupNumbers.length + 1) } }]
-    worksheet['!freeze'] = { xSplit: 2, ySplit: 4, topLeftCell: 'C5', activePane: 'bottomRight', state: 'frozen' }
-    worksheet['!cols'] = [{ wch: 10 }, { wch: 7 }, ...programme.groupNumbers.map(() => ({ wch: 15 }))]
-    worksheet['!rows'] = [{ hpt: 28 }, { hpt: 20 }, { hpt: 28 }, { hpt: 24 }, ...data.map(() => ({ hpt: 23 }))]
 
-    const range = XLSX.utils.decode_range(worksheet['!ref'] ?? 'A1:A1')
-    for (let r = range.s.r; r <= range.e.r; r += 1) {
-      for (let c = range.s.c; c <= range.e.c; c += 1) {
-        const address = XLSX.utils.encode_cell({ r, c })
-        const cell = worksheet[address]
-        if (!cell) continue
-        const base = { font: { name: 'Arial', sz: 10, bold: r <= 3 }, alignment: { horizontal: 'center', vertical: 'center', wrapText: true }, border: { top: { style: 'thin', color: { rgb: '9CA3AF' } }, bottom: { style: 'thin', color: { rgb: '9CA3AF' } }, left: { style: 'thin', color: { rgb: '9CA3AF' } }, right: { style: 'thin', color: { rgb: '9CA3AF' } } } } as any
-        if (r === 0) cell.s = { ...base, font: { name: 'Arial', sz: 16, bold: true, color: { rgb: 'FFFFFF' } }, fill: { patternType: 'solid', fgColor: { rgb: '123D38' } } }
-        else if (r === 2) cell.s = { ...base, fill: { patternType: 'solid', fgColor: { rgb: 'DDEFEA' } }, font: { name: 'Arial', sz: 9, bold: true, color: { rgb: '164E45' } } }
-        else if (r === 3) cell.s = { ...base, fill: { patternType: 'solid', fgColor: { rgb: '123D38' } }, font: { name: 'Arial', sz: 10, bold: true, color: { rgb: 'FFFFFF' } } }
-        else if (r >= 4 && c < 2) cell.s = { ...base, fill: { patternType: 'solid', fgColor: { rgb: 'E8F1EF' } }, font: { name: 'Arial', sz: 10, bold: true } }
-        else if (r >= 4) {
-          const value = String(cell.v ?? '').toUpperCase()
-          const fill = value === '—' ? 'F3F4F6' : value.includes('ARRIVAL') || (programme.schoolDetails ?? []).some((school) => value === school.schoolName.toUpperCase()) ? 'DCEBFA' : value === 'CF' ? 'F7D7BE' : ['CANOE','GCAN','KAYAK','SUP','GSUP','RAFT','SAIL','SAILA','SAIL PB'].includes(value) ? 'D8EEF7' : 'E9F2D7'
-          cell.s = { ...base, fill: { patternType: 'solid', fgColor: { rgb: fill } }, font: { name: 'Arial', sz: 10, bold: true } }
+    const workbook = new ExcelJS.Workbook()
+    workbook.creator = 'Adventure Centre Manager'
+    workbook.company = 'Manor Adventure – Norfolk Lakes'
+    workbook.title = title
+    workbook.subject = 'Centre Programme'
+    workbook.created = new Date()
+
+    const sheet = workbook.addWorksheet('Centre Programme', {
+      views: [{ state: 'frozen', xSplit: 2, ySplit: 6, topLeftCell: 'C7', activeCell: 'C7' }],
+      properties: { defaultRowHeight: 20, showGridLines: false },
+      pageSetup: {
+        paperSize: 9,
+        orientation: 'landscape',
+        fitToPage: true,
+        fitToWidth: 1,
+        fitToHeight: 0,
+        horizontalCentered: true,
+        verticalCentered: false,
+        margins: { left: 0.25, right: 0.25, top: 0.35, bottom: 0.35, header: 0.15, footer: 0.15 },
+      },
+      headerFooter: {
+        oddFooter: '&LManor Adventure · Norfolk Lakes&CPage &P of &N&RGenerated &D',
+      },
+    })
+
+    const totalColumns = Math.max(3, programme.groupNumbers.length + 2)
+    const lastColumn = sheet.getColumn(totalColumns).letter
+    const darkGreen = '173F37'
+    const midGreen = '2D6657'
+    const paleGreen = 'E7F0EC'
+    const borderDark = '334B43'
+    const schoolPalette = ['DCEFE8', 'E7E1F3', 'F8E2D8', 'DCE8F7', 'F5E8BA', 'E1ECD2']
+
+    sheet.mergeCells(`A1:${lastColumn}1`)
+    const titleCell = sheet.getCell('A1')
+    titleCell.value = 'NORFOLK LAKES — CENTRE PROGRAMME'
+    titleCell.font = { name: 'Aptos Display', size: 20, bold: true, color: { argb: 'FFFFFFFF' } }
+    titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${darkGreen}` } }
+    titleCell.alignment = { horizontal: 'center', vertical: 'middle' }
+    sheet.getRow(1).height = 32
+
+    sheet.mergeCells(`A2:${lastColumn}2`)
+    const programmeTitleCell = sheet.getCell('A2')
+    programmeTitleCell.value = title.toUpperCase()
+    programmeTitleCell.font = { name: 'Aptos', size: 14, bold: true, color: { argb: `FF${darkGreen}` } }
+    programmeTitleCell.alignment = { horizontal: 'center', vertical: 'middle' }
+    sheet.getRow(2).height = 23
+
+    sheet.mergeCells(`A3:${lastColumn}3`)
+    const dateCell = sheet.getCell('A3')
+    dateCell.value = friendlyProgrammeDateRange(programme.startDate ?? '', programme.endDate ?? '')
+    dateCell.font = { name: 'Aptos', size: 10, bold: true, color: { argb: 'FF53645D' } }
+    dateCell.alignment = { horizontal: 'center', vertical: 'middle' }
+    sheet.getRow(3).height = 18
+    sheet.getRow(4).height = 7
+
+    sheet.mergeCells('A5:A6')
+    sheet.mergeCells('B5:B6')
+    sheet.getCell('A5').value = 'DAY'
+    sheet.getCell('B5').value = 'SES'
+
+    const schoolBlocks: Array<{ name: string; start: number; end: number; colour: string }> = []
+    let blockStart = 3
+    let previousSchool = ''
+    programme.groupNumbers.forEach((group, index) => {
+      const school = programmeGroupSchool(programme, group) || 'Unassigned'
+      const column = index + 3
+      if (school !== previousSchool) {
+        if (schoolBlocks.length) schoolBlocks[schoolBlocks.length - 1].end = column - 1
+        schoolBlocks.push({ name: school, start: column, end: column, colour: schoolPalette[schoolBlocks.length % schoolPalette.length] })
+        blockStart = column
+        previousSchool = school
+      } else {
+        schoolBlocks[schoolBlocks.length - 1].end = column
+      }
+      sheet.getCell(6, column).value = `G${group}`
+    })
+    void blockStart
+
+    schoolBlocks.forEach((block) => {
+      if (block.end > block.start) sheet.mergeCells(5, block.start, 5, block.end)
+      const cell = sheet.getCell(5, block.start)
+      cell.value = block.name.toUpperCase()
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${block.colour}` } }
+      cell.font = { name: 'Aptos', size: 10, bold: true, color: { argb: `FF${darkGreen}` } }
+      cell.alignment = { horizontal: 'center', vertical: 'middle' }
+    })
+
+    for (let column = 1; column <= totalColumns; column += 1) {
+      const headerCell = sheet.getCell(6, column)
+      if (column <= 2) {
+        const mergedHeader = sheet.getCell(5, column)
+        mergedHeader.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${darkGreen}` } }
+        mergedHeader.font = { name: 'Aptos', size: 10, bold: true, color: { argb: 'FFFFFFFF' } }
+        mergedHeader.alignment = { horizontal: 'center', vertical: 'middle' }
+      } else {
+        headerCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${midGreen}` } }
+        headerCell.font = { name: 'Aptos', size: 9, bold: true, color: { argb: 'FFFFFFFF' } }
+        headerCell.alignment = { horizontal: 'center', vertical: 'middle' }
+      }
+    }
+    sheet.getRow(5).height = 23
+    sheet.getRow(6).height = 21
+
+    const colourForCode = (code: string) => {
+      const saved = activities.find((activity) => activity.code.toUpperCase() === code.toUpperCase())?.colour
+      return (saved || '#F2F4F3').replace('#', '').toUpperCase().padEnd(6, '0').slice(0, 6)
+    }
+    const readableText = (hex: string) => {
+      const r = parseInt(hex.slice(0, 2), 16)
+      const g = parseInt(hex.slice(2, 4), 16)
+      const b = parseInt(hex.slice(4, 6), 16)
+      return (r * 299 + g * 587 + b * 114) / 1000 < 145 ? 'FFFFFF' : '16211C'
+    }
+    const displayCode = (value: string) => {
+      const schoolName = (programme.schoolDetails ?? []).find((school) => school.schoolName.toLowerCase() === value.toLowerCase())?.schoolName
+      if (schoolName) return 'ARRIVAL'
+      return value === '—' ? '' : value
+    }
+
+    let outputRow = 7
+    let currentDay = ''
+    let dayStartRow = outputRow
+    const dayRanges: Array<{ start: number; end: number; day: string }> = []
+
+    mergedRows.forEach((row, index) => {
+      if (currentDay && row.day !== currentDay) {
+        dayRanges.push({ start: dayStartRow, end: outputRow - 1, day: currentDay })
+        dayStartRow = outputRow
+      }
+      currentDay = row.day
+      const excelRow = sheet.getRow(outputRow)
+      excelRow.height = 22
+      excelRow.getCell(1).value = row.day
+      excelRow.getCell(2).value = row.session
+
+      programme.groupNumbers.forEach((group, groupIndex) => {
+        const rawValue = programmeCellDisplay(row, group)
+        const value = displayCode(rawValue)
+        const cell = excelRow.getCell(groupIndex + 3)
+        cell.value = value
+        const isArrival = value === 'ARRIVAL'
+        const fill = isArrival ? 'D85261' : value ? colourForCode(value) : 'F4F6F5'
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${fill}` } }
+        cell.font = { name: 'Aptos Narrow', size: 9, bold: true, color: { argb: `FF${isArrival ? 'FFFFFF' : readableText(fill)}` } }
+        cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true, shrinkToFit: true }
+      })
+      outputRow += 1
+      if (index === mergedRows.length - 1 && currentDay) dayRanges.push({ start: dayStartRow, end: outputRow - 1, day: currentDay })
+    })
+
+    dayRanges.forEach(({ start, end, day }) => {
+      if (end > start) sheet.mergeCells(start, 1, end, 1)
+      const dayCell = sheet.getCell(start, 1)
+      dayCell.value = day.toUpperCase()
+      dayCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${paleGreen}` } }
+      dayCell.font = { name: 'Aptos', size: 9, bold: true, color: { argb: `FF${darkGreen}` } }
+      dayCell.alignment = { horizontal: 'center', vertical: 'middle', textRotation: 90 }
+      for (let column = 1; column <= totalColumns; column += 1) {
+        sheet.getCell(end, column).border = {
+          ...(sheet.getCell(end, column).border || {}),
+          bottom: { style: 'medium', color: { argb: `FF${darkGreen}` } },
+        }
+      }
+    })
+
+    for (let row = 5; row < outputRow; row += 1) {
+      for (let column = 1; column <= totalColumns; column += 1) {
+        const cell = sheet.getCell(row, column)
+        const schoolBoundary = schoolBlocks.some((block) => block.end === column)
+        cell.border = {
+          ...(cell.border || {}),
+          top: cell.border?.top || { style: 'thin', color: { argb: `FF${borderDark}` } },
+          bottom: cell.border?.bottom || { style: 'thin', color: { argb: `FF${borderDark}` } },
+          left: cell.border?.left || { style: 'thin', color: { argb: `FF${borderDark}` } },
+          right: { style: schoolBoundary ? 'medium' : 'thin', color: { argb: `FF${borderDark}` } },
         }
       }
     }
-    const workbook = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Programme')
-    const appState = XLSX.utils.aoa_to_sheet([[JSON.stringify({ programme, draft: programmeBuilder, exportedAt: new Date().toISOString(), format: 'ACM_APP_PROGRAMME_V1' })]])
-    appState['!cols'] = [{ hidden: true }]
-    XLSX.utils.book_append_sheet(workbook, appState, '_ACM_DATA')
-    workbook.Workbook = workbook.Workbook ?? {}
-    workbook.Workbook.Views = [{ activeTab: 0, firstSheet: 0, visibility: 'visible' } as any]
-    workbook.Workbook.Sheets = [{ name: 'Programme', Hidden: 0 } as any, { name: '_ACM_DATA', Hidden: 2 } as any]
-    const safeName = title.replace(/[^a-z0-9 _-]+/gi, '').trim() || 'Programme'
-    XLSX.writeFile(workbook, `${safeName}.xlsx`, { cellStyles: true })
-    setImportMessage('Downloaded the latest edited programme as Excel.')
+
+    for (let row = 7; row < outputRow; row += 1) {
+      const sessionCell = sheet.getCell(row, 2)
+      sessionCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF6F8F7' } }
+      sessionCell.font = { name: 'Aptos', size: 9, bold: true, color: { argb: `FF${darkGreen}` } }
+      sessionCell.alignment = { horizontal: 'center', vertical: 'middle' }
+    }
+
+    sheet.getColumn(1).width = 6
+    sheet.getColumn(2).width = 5
+    programme.groupNumbers.forEach((_, index) => { sheet.getColumn(index + 3).width = 10.5 })
+    sheet.autoFilter = { from: { row: 6, column: 1 }, to: { row: outputRow - 1, column: totalColumns } }
+    sheet.pageSetup.printArea = `A1:${lastColumn}${outputRow - 1}`
+    sheet.pageSetup.printTitlesRow = '1:6'
+
+    const legend = workbook.addWorksheet('Activity Legend', { properties: { showGridLines: false } })
+    legend.columns = [{ width: 15 }, { width: 32 }, { width: 18 }, { width: 20 }]
+    legend.mergeCells('A1:D1')
+    legend.getCell('A1').value = 'ACTIVITY COLOUR LEGEND'
+    legend.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${darkGreen}` } }
+    legend.getCell('A1').font = { name: 'Aptos Display', size: 16, bold: true, color: { argb: 'FFFFFFFF' } }
+    legend.getCell('A1').alignment = { horizontal: 'center', vertical: 'middle' }
+    legend.getRow(1).height = 28
+    ;['Code', 'Activity', 'Maximum groups at once', 'Equipment quantity'].forEach((label, index) => {
+      const cell = legend.getCell(3, index + 1)
+      cell.value = label
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${midGreen}` } }
+      cell.font = { name: 'Aptos', bold: true, color: { argb: 'FFFFFFFF' } }
+      cell.alignment = { horizontal: 'center', vertical: 'middle' }
+    })
+    enabledActivities.forEach((activity, index) => {
+      const row = legend.getRow(index + 4)
+      const fill = (activity.colour || '#F2F4F3').replace('#', '').toUpperCase()
+      row.values = [activity.code, activity.name, activity.capacity ?? 1, activity.equipmentQuantity ?? 0]
+      row.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: `FF${fill}` } }
+      row.getCell(1).font = { name: 'Aptos', bold: true, color: { argb: `FF${readableText(fill)}` } }
+      row.eachCell((cell: any) => {
+        cell.alignment = { horizontal: 'center', vertical: 'middle' }
+        cell.border = { top: { style: 'thin', color: { argb: 'FFB7C2BD' } }, bottom: { style: 'thin', color: { argb: 'FFB7C2BD' } }, left: { style: 'thin', color: { argb: 'FFB7C2BD' } }, right: { style: 'thin', color: { argb: 'FFB7C2BD' } } }
+      })
+    })
+
+    const appState = workbook.addWorksheet('_ACM_DATA', { state: 'veryHidden' })
+    appState.getCell('A1').value = JSON.stringify({ programme, draft: programmeBuilder, exportedAt: new Date().toISOString(), format: 'ACM_APP_PROGRAMME_V1' })
+
+    try {
+      const logoResponse = await fetch(`${import.meta.env.BASE_URL}manor-adventure-logo.png`)
+      if (logoResponse.ok) {
+        const logoBuffer = await logoResponse.arrayBuffer()
+        const logoId = workbook.addImage({ buffer: logoBuffer, extension: 'png' })
+        sheet.addImage(logoId, { tl: { col: 0.1, row: 0.1 }, ext: { width: 90, height: 42 } })
+      }
+    } catch {
+      // Branding text remains visible if the logo cannot be loaded.
+    }
+
+    const bytes = await workbook.xlsx.writeBuffer()
+    const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+    const link = document.createElement('a')
+    link.href = URL.createObjectURL(blob)
+    const safeName = title.replace(/[^a-z0-9 _-]+/gi, '').trim() || 'Centre Programme'
+    link.download = `${safeName}-professional.xlsx`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(link.href)
+    setImportMessage('Downloaded the professional centre programme workbook using your saved activity colours.')
   }
 
   function updateActivity(rowId: string, group: number, activityCode: string) {

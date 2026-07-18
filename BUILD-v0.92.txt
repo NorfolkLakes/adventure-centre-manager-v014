@@ -1,0 +1,9 @@
+Adventure Centre Manager v0.92
+
+- Professional Centre Programme Excel workbook.
+- Merged school headings and compact group grid.
+- Exact activity colours from Admin > Activities & Equipment.
+- Matching saved colours on portrait School Programme printouts.
+- Automatic black/white contrast text.
+- Frozen headings, print area, repeated print titles, day and school separators.
+- Activity colour and capacity legend sheet.
