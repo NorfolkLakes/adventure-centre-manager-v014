@@ -4435,7 +4435,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.97</span></div><small>Norfolk Lakes</small></div></div>
+          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.99</span></div><small>Norfolk Lakes</small></div></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -4655,7 +4655,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to accommodation, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v0.97</span>
+                  <span className="release-pill">v0.99</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
@@ -5196,11 +5196,6 @@ function ManagerApp({
                 </section>
 
                 {programmeBuilder.schools.some((school) => school.purchaseType === 'bargain') && <section className="builder-section bargain-rules"><div className="builder-section-heading"><div><p className="eyebrow">Bargain Special rules</p><h3>Package limits</h3></div></div><label className="builder-limit-field">Maximum sessions per group<input type="number" min="1" max="35" value={programmeBuilder.bargainSessionLimit} onChange={(event) => updateProgrammeBuilder({ bargainSessionLimit: Math.max(1, Number(event.target.value) || 1) })}/></label><p>Select the activities included in this package. These can be updated when you provide the Bargain Special reference sheet.</p><div className="builder-activity-chips">{activities.map((activity) => { const active = programmeBuilder.bargainAllowedActivities.includes(activity.code); return <button key={activity.code} className={active ? 'chip active' : 'chip'} onClick={() => updateProgrammeBuilder({ bargainAllowedActivities: active ? programmeBuilder.bargainAllowedActivities.filter((code) => code !== activity.code) : [...programmeBuilder.bargainAllowedActivities, activity.code] })} title={activity.name}>{activity.code}<small>{activity.name}</small></button> })}</div></section>}
-
-                <section className="programme-export-card">
-                  <div><p className="eyebrow">Professional exports</p><h3>Print and download the completed programme</h3><p>School files are designed for teachers and accommodation. Centre files show every school and group in one operational grid.</p></div>
-                  <div className="programme-export-actions"><button className="secondary-action" onClick={printCentreProgrammeBuilder}><Printer size={17}/>Centre PDF</button><button className="secondary-action" onClick={() => void downloadCentreProgrammeBuilderExcel()}><FileSpreadsheet size={17}/>Centre Excel</button></div>
-                </section>
 
                 <section className="builder-section">
                   <div className="builder-section-heading"><div><p className="eyebrow">Programme grid</p><h3>Assign activities</h3></div><span>{builderGroups.length} groups · {builderDays.length} days</span></div>

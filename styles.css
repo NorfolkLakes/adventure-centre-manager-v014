@@ -1822,56 +1822,177 @@ button { cursor: pointer; }
 .manager-display-schools{flex:1;min-height:0;display:flex;flex-direction:column;gap:12px}.manager-display-section-title{display:flex;align-items:center;gap:10px}.manager-display-section-title svg{color:#0672a9}.manager-display-section-title h2{margin:0;font-size:24px}.manager-school-grid{flex:1;min-height:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}.manager-school-grid.count-1{grid-template-columns:1fr}.manager-school-grid.count-2{grid-template-columns:repeat(2,minmax(0,1fr))}.manager-school-card{min-height:0;background:#fff;border:1px solid #dbe3ea;border-radius:20px;padding:18px;display:flex;flex-direction:column;gap:14px;box-shadow:0 8px 24px rgba(21,33,45,.07);overflow:hidden}.manager-school-card>header{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;border-bottom:3px solid #0672a9;padding-bottom:10px}.manager-school-card h3{margin:0;font-size:23px;line-height:1.12}.manager-school-card>header span{background:#e8f4fa;color:#05618e;padding:5px 9px;border-radius:999px;font-size:12px;font-weight:900;white-space:nowrap}.manager-school-details{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.manager-school-details div{background:#f6f8fa;border-radius:12px;padding:10px}.manager-school-details span,.manager-school-notes span{display:block;font-size:11px;font-weight:900;color:#657483;text-transform:uppercase;letter-spacing:.07em;margin-bottom:3px}.manager-school-details strong{display:block;font-size:15px;line-height:1.28}.manager-school-notes{margin-top:auto;background:#fff8df;border-left:5px solid #e8ad16;border-radius:12px;padding:11px 13px;overflow:hidden}.manager-school-notes p{margin:0;font-size:15px;line-height:1.35;font-weight:650;white-space:pre-wrap}.manager-display-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;background:#fff;border:1px dashed #cbd5de;border-radius:20px;color:#667481}.manager-display-empty svg{width:50px;height:50px}.manager-display-shell>footer{text-align:center;color:#75828e;font-size:12px}
 @media(max-width:1200px){.manager-display-metrics{grid-template-columns:repeat(3,minmax(0,1fr))}.manager-school-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.manager-display-shell{overflow:auto}}
 
-/* v0.95 light operations theme — matches the Manager Display */
+
+/* v0.99 polished original green theme
+   Keeps the established layout while improving consistency, contrast and readability. */
 :root {
-  --app-bg: #f4f6f8;
-  --surface: #ffffff;
-  --surface-soft: #f8fafb;
-  --ink: #17212b;
-  --ink-soft: #5f6d79;
-  --line: #dfe5ea;
-  --blue: #2f6f9f;
-  --blue-dark: #17324d;
-  --blue-soft: #eaf3f9;
-  --shadow: 0 8px 24px rgba(33, 52, 68, .07);
+  --brand-950:#092f31;
+  --brand-900:#0d3b3b;
+  --brand-800:#124b48;
+  --brand-700:#176257;
+  --brand-600:#1f7968;
+  --brand-100:#e2f0eb;
+  --brand-050:#f3f8f6;
+  --ink:#17282b;
+  --muted:#62736f;
+  --line:#d7e2de;
+  --surface:#ffffff;
+  --page:#edf3f0;
+  color:var(--ink);
+  background:var(--page);
 }
-html, body, #root { background: var(--app-bg); color: var(--ink); }
-body { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-.app-shell, .manager-app, main { background: var(--app-bg); }
-nav, .top-nav, .app-nav, .manager-nav { background: #fff !important; color: var(--ink) !important; border-bottom: 1px solid var(--line) !important; box-shadow: 0 4px 18px rgba(33,52,68,.05) !important; }
-nav a, nav button, .top-nav button, .app-nav button, .manager-nav button { color: var(--ink) !important; }
-nav .active, .top-nav .active, .app-nav .active, .manager-nav .active { color: var(--blue-dark) !important; background: var(--blue-soft) !important; }
-.panel, .card, .dashboard-card, .builder-section, .builder-settings-card, .builder-school-card, .admin-choice-card, .display-manager-card, .programme-export-card {
-  background: var(--surface) !important;
-  border: 1px solid var(--line) !important;
-  box-shadow: var(--shadow) !important;
-  border-radius: 16px !important;
+
+body{
+  color:var(--ink);
+  background:
+    radial-gradient(circle at 92% 0,rgba(53,143,112,.11),transparent 28rem),
+    linear-gradient(180deg,#f7faf8 0,var(--page) 32rem);
 }
-h1, h2, h3, h4 { color: var(--blue-dark); }
-.eyebrow { color: var(--blue) !important; letter-spacing: .12em; }
-button.primary, .primary, button.secondary-action, .secondary-action {
-  border-radius: 9px !important;
-  min-height: 40px;
-  font-weight: 750;
+
+/* Dark surfaces always use high-contrast text. */
+.topbar,.hero,.top-nav,.staff-display-header,
+.arrivals-summary-banner,.arrival-school-banner,
+.programme-table thead th,.centre-programme-table thead th,
+.programme-table thead .sticky-day,.programme-table thead .sticky-session,
+.centre-programme-table thead .sticky-day,.centre-programme-table thead .sticky-session{
+  color:#fff;
 }
-button.primary, .primary { background: var(--blue-dark) !important; border-color: var(--blue-dark) !important; color: #fff !important; }
-button.secondary-action, .secondary-action { background: #fff !important; border: 1px solid #b9c8d3 !important; color: var(--blue-dark) !important; }
-button.secondary-action:hover, .secondary-action:hover { background: var(--blue-soft) !important; }
-input, select, textarea { background: #fff !important; color: var(--ink) !important; border: 1px solid #cfd9e0 !important; border-radius: 8px !important; }
-input:focus, select:focus, textarea:focus { outline: 2px solid rgba(47,111,159,.18) !important; border-color: var(--blue) !important; }
-.builder-grid-wrap, .table-wrap { border: 1px solid var(--line); border-radius: 12px; background: #fff; }
-.builder-grid thead th, table thead th { background: var(--blue-dark) !important; color: #fff !important; }
-.builder-grid tbody th { background: #edf3f7 !important; color: var(--blue-dark) !important; }
-.builder-section-heading { border-bottom-color: var(--line) !important; }
-.builder-school-card { position: relative; }
-.builder-school-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.programme-export-card { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 20px; margin: 18px 0; border-left: 4px solid var(--blue) !important; }
-.programme-export-card h3 { margin: 2px 0 6px; }
-.programme-export-card p { margin: 0; color: var(--ink-soft); }
-.programme-export-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
-.manager-display-shell { background: #f6f8fa !important; color: var(--ink) !important; }
-.manager-display-header, .manager-display-metrics article, .manager-school-card { background: #fff !important; border-color: var(--line) !important; box-shadow: var(--shadow) !important; }
-.manager-display-header h1, .manager-display-section-title h2, .manager-school-card h3 { color: var(--ink) !important; }
-.manager-school-card header { border-bottom-color: var(--blue) !important; }
-.manager-display-metrics svg, .manager-display-section-title svg { color: var(--blue) !important; }
-@media (max-width: 900px) { .programme-export-card { align-items: flex-start; flex-direction: column; } .programme-export-actions { justify-content: flex-start; } }
+.topbar h1,.topbar h2,.topbar h3,.topbar p,.topbar small,.topbar strong,.topbar span,
+.hero h1,.hero h2,.hero h3,.hero p,.hero small,.hero strong,.hero span,
+.arrivals-summary-banner h1,.arrivals-summary-banner h2,.arrivals-summary-banner h3,.arrivals-summary-banner p,.arrivals-summary-banner small,.arrivals-summary-banner strong,.arrivals-summary-banner span,
+.arrival-school-banner h1,.arrival-school-banner h2,.arrival-school-banner h3,.arrival-school-banner p,.arrival-school-banner small,.arrival-school-banner strong,.arrival-school-banner span{
+  color:inherit !important;
+}
+.topbar .eyebrow,.hero .eyebrow,.arrivals-summary-banner .eyebrow,.arrival-school-banner .eyebrow{
+  color:#a9e8d3 !important;
+}
+
+.topbar{
+  padding:20px clamp(18px,3vw,38px);
+  background:linear-gradient(120deg,var(--brand-950),var(--brand-800));
+  border-bottom:1px solid rgba(255,255,255,.14);
+  box-shadow:0 12px 34px rgba(6,35,34,.22);
+}
+.brand-lockup img{background:#fff;border-radius:14px;padding:7px;box-shadow:0 6px 18px rgba(0,0,0,.16)}
+.brand-title-row h1{letter-spacing:-.025em}
+.release-pill{background:rgba(255,255,255,.13)!important;border:1px solid rgba(255,255,255,.28)!important;color:#fff!important;box-shadow:none!important}
+
+.top-nav{
+  padding:9px clamp(10px,2vw,24px);
+  background:rgba(10,48,48,.985);
+  border-bottom:1px solid rgba(255,255,255,.13);
+  box-shadow:0 8px 22px rgba(7,39,38,.18);
+}
+.top-nav button{min-height:56px;color:rgba(255,255,255,.8);transition:background .16s ease,color .16s ease,transform .16s ease}
+.top-nav button:hover{background:rgba(255,255,255,.09);color:#fff;transform:translateY(-1px)}
+.top-nav button.active{background:#fff;color:var(--brand-900);box-shadow:0 5px 16px rgba(0,0,0,.16)}
+
+.page-content{padding-top:26px;padding-bottom:40px}
+.panel,.builder-section,.builder-school-card,.programme-library-card,.activity-equipment-card{
+  border:1px solid var(--line);
+  box-shadow:0 10px 30px rgba(21,65,55,.075);
+}
+.panel{border-radius:22px;padding:clamp(17px,2.2vw,28px)}
+.panel h2,.panel h3,.builder-section h3,.builder-school-card h3{color:var(--ink)}
+
+.hero{
+  background:linear-gradient(125deg,var(--brand-900),var(--brand-600));
+  border:1px solid rgba(255,255,255,.12);
+  box-shadow:0 18px 42px rgba(12,61,54,.2);
+}
+.hero .primary,.hero-upload{box-shadow:0 5px 14px rgba(0,0,0,.13)}
+
+.primary,.hero-upload,.assignment-row button{
+  border-radius:11px;
+  transition:filter .15s ease,transform .15s ease,box-shadow .15s ease;
+}
+.primary{background:var(--brand-700);box-shadow:0 5px 13px rgba(18,98,87,.2)}
+.primary:hover,.hero-upload:hover,.assignment-row button:hover{filter:brightness(1.06);transform:translateY(-1px)}
+.secondary-action{
+  border:1px solid #b7ccc5!important;
+  background:#fff!important;
+  color:var(--brand-800)!important;
+  box-shadow:0 3px 9px rgba(22,70,59,.06);
+}
+.secondary-action:hover{border-color:#72a493!important;background:var(--brand-050)!important}
+
+.stat-card,.action-card{
+  border:1px solid var(--line);
+  box-shadow:0 8px 22px rgba(30,75,64,.07);
+}
+.stat-card{min-height:116px;padding:18px;border-radius:17px}
+.stat-card strong{font-size:1.85rem;letter-spacing:-.035em}
+.action-card{transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease}
+.action-card:hover{transform:translateY(-2px);border-color:#9bbeb2;box-shadow:0 12px 26px rgba(30,75,64,.11)}
+
+/* Cleaner forms and focus states. */
+input,select,textarea{
+  border-color:#c9d7d2!important;
+  color:var(--ink);
+  background:#fff;
+}
+input:focus,select:focus,textarea:focus,button:focus-visible{
+  outline:3px solid rgba(40,142,111,.25)!important;
+  outline-offset:2px;
+  border-color:#438f79!important;
+}
+label{color:#334943}
+
+/* Consistent tables and sticky headings. */
+.programme-scroll,.centre-grid-scroll,.builder-grid-wrap{
+  border-color:#c7d7d1;
+  box-shadow:0 8px 22px rgba(25,68,58,.075);
+}
+.programme-table thead th,.centre-programme-table thead th,.builder-grid thead th{
+  background:var(--brand-900)!important;
+  color:#fff!important;
+  border-color:rgba(255,255,255,.14)!important;
+}
+.programme-table tbody tr:nth-child(even) td:not(.sticky-day):not(.sticky-session),
+.centre-programme-table tbody tr:nth-child(even) td:not(.sticky-day):not(.sticky-session){
+  box-shadow:inset 0 0 0 999px rgba(15,70,61,.018);
+}
+.programme-table .sticky-day,.centre-programme-table .sticky-day{background:#e4efeb;color:#173f39}
+.programme-table .sticky-session,.centre-programme-table .sticky-session{background:#f2f6f4;color:#274e47}
+
+/* Arrivals: keep green identity, fix all dark-on-dark text. */
+.arrivals-summary-banner,.arrival-school-banner{
+  background:linear-gradient(120deg,var(--brand-950),var(--brand-800))!important;
+  border-color:rgba(255,255,255,.12)!important;
+  box-shadow:0 11px 26px rgba(7,48,44,.17);
+}
+.arrivals-summary-banner svg,.arrival-school-banner svg{color:#b7ead9!important}
+.arrivals-day-pill,.arrival-session-pill{box-shadow:0 5px 13px rgba(15,90,72,.16)}
+
+/* School/build cards use a subtle accent instead of heavy borders. */
+.builder-school-card{position:relative;overflow:hidden;border-radius:18px}
+.builder-school-card::before{content:"";position:absolute;inset:0 auto 0 0;width:5px;background:var(--brand-600)}
+.builder-section-heading{gap:14px}
+.builder-section-heading h3{margin-top:3px}
+.builder-school-actions{padding-top:4px}
+.builder-school-actions .secondary-action{min-height:42px}
+
+/* Activity chips and statuses stay meaningful but clearer. */
+.chip{border-color:#c8d7d2;background:#f8faf9;color:#526762}
+.chip:hover{border-color:#6fa894;background:#edf6f2;color:var(--brand-800)}
+.chip.active{border-color:var(--brand-700);background:var(--brand-700);color:#fff;box-shadow:0 4px 11px rgba(20,104,89,.18)}
+
+/* Modals and notices. */
+.modal{border:1px solid #d9e3df;box-shadow:0 24px 70px rgba(4,32,30,.3)}
+.import-message{border:1px solid #c9ded5;background:#eaf5f0;color:#155b4d}
+.builder-validation{border-radius:14px}
+
+/* Preserve the intentionally bright, separate Manager Display. */
+.manager-display-shell{color:#15212d;background:#f5f7fa}
+.manager-display-shell h1,.manager-display-shell h2,.manager-display-shell h3,
+.manager-display-shell p,.manager-display-shell span,.manager-display-shell strong,.manager-display-shell small{color:inherit}
+.manager-display-brand p,.manager-display-clock svg,.manager-display-clock span,
+.manager-display-metrics svg,.manager-display-section-title svg{color:#0672a9}
+.manager-display-metrics .metric-alert svg,.manager-display-metrics .metric-alert strong{color:#b42318}
+
+@media(max-width:760px){
+  .topbar{padding:15px}
+  .top-nav button{min-height:51px}
+  .panel{border-radius:17px}
+  .builder-school-actions .secondary-action{flex:1;justify-content:center}
+}

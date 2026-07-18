@@ -1,0 +1,9 @@
+Adventure Centre Manager v0.99
+
+- Removed the Centre PDF and Centre Excel buttons from Programme Builder.
+- Kept School PDF and School Excel on every school card.
+- Polished the established green design without changing the app workflow.
+- Corrected dark navy text appearing on dark green backgrounds.
+- Improved contrast, spacing, cards, buttons, forms, tables, navigation and focus states.
+- Kept the Manager Display bright and read-only.
+- Preserved all existing programme, staffing, arrivals, Supabase and account functionality.
