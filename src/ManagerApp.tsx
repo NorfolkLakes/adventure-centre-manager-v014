@@ -183,6 +183,63 @@ const LOAN_HISTORY_KEY = 'acm-loan-history'
 const STAFF_TIMELINE_KEY = 'acm-staff-timeline'
 const PAYROLL_SYNC_KEY = 'acm-payroll-sync'
 const STAFFING_ARCHIVES_KEY = 'acm-staffing-archives'
+const PROGRAMME_BUILDER_KEY = 'acm-programme-builder-draft'
+
+type ProgrammePurchaseType = 'bargain' | 'normal'
+type BuilderSchool = { id: string; name: string; groups: number }
+type ProgrammeBuilderDraft = {
+  name: string
+  startDate: string
+  endDate: string
+  purchaseType: ProgrammePurchaseType
+  bargainSessionLimit: number
+  bargainAllowedActivities: string[]
+  schools: BuilderSchool[]
+  assignments: Record<string, string>
+  notes: string
+}
+
+const DEFAULT_BARGAIN_CODES = ['ARCH', 'BT', 'VB', 'MO', 'OC', 'LR', 'AIR', 'CF']
+const BUILDER_SESSIONS = ['1', '2', '3', '4', '5']
+const BUILDER_DAY_NAMES = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']
+
+function blankProgrammeBuilderDraft(): ProgrammeBuilderDraft {
+  const today = new Date()
+  const monday = new Date(today)
+  const offset = (today.getDay() + 6) % 7
+  monday.setDate(today.getDate() - offset)
+  const friday = new Date(monday)
+  friday.setDate(monday.getDate() + 4)
+  const iso = (date: Date) => date.toISOString().slice(0, 10)
+  return {
+    name: '', startDate: iso(monday), endDate: iso(friday), purchaseType: 'normal',
+    bargainSessionLimit: 15, bargainAllowedActivities: DEFAULT_BARGAIN_CODES,
+    schools: [{ id: `school-${Date.now()}`, name: '', groups: 1 }], assignments: {}, notes: '',
+  }
+}
+
+function builderDateRange(startDate: string, endDate: string) {
+  if (!startDate || !endDate) return [] as { date: string; day: string; label: string }[]
+  const start = new Date(`${startDate}T12:00:00`)
+  const end = new Date(`${endDate}T12:00:00`)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) return []
+  const result: { date: string; day: string; label: string }[] = []
+  const cursor = new Date(start)
+  while (cursor <= end && result.length < 7) {
+    const day = BUILDER_DAY_NAMES[(cursor.getDay() + 6) % 7]
+    result.push({ date: cursor.toISOString().slice(0, 10), day, label: cursor.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) })
+    cursor.setDate(cursor.getDate() + 1)
+  }
+  return result
+}
+
+function friendlyProgrammeDateRange(startDate: string, endDate: string) {
+  if (!startDate || !endDate) return 'Dates not set'
+  const start = new Date(`${startDate}T12:00:00`)
+  const end = new Date(`${endDate}T12:00:00`)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return 'Dates not set'
+  return `${start.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} – ${end.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`
+}
 
 
 type MySessionDuty = {
@@ -618,6 +675,11 @@ function ManagerApp({
   const [activities, setActivities] = useState<Activity[]>(() =>
     readJson(ACTIVITIES_KEY, startingActivities),
   )
+  const [programmeBuilder, setProgrammeBuilder] = useState<ProgrammeBuilderDraft>(() =>
+    readJson(PROGRAMME_BUILDER_KEY, blankProgrammeBuilderDraft()),
+  )
+  const [programmeBuilderView, setProgrammeBuilderView] = useState<'build' | 'preview'>('build')
+  const [programmeBuilderMessage, setProgrammeBuilderMessage] = useState('')
   const [assignments, setAssignments] = useState<StaffingAssignment>(() =>
     readJson(ASSIGNMENT_KEY, {}),
   )
@@ -1700,6 +1762,92 @@ function ManagerApp({
 
       return changed ? next : current
     })
+  }
+
+  const builderDays = builderDateRange(programmeBuilder.startDate, programmeBuilder.endDate)
+  const builderGroups = useMemo(() => {
+    let nextGroup = 1
+    return programmeBuilder.schools.flatMap((school) =>
+      Array.from({ length: Math.max(1, school.groups) }, () => ({ school, group: nextGroup++ })),
+    )
+  }, [programmeBuilder.schools])
+
+  function saveProgrammeBuilderDraft(next = programmeBuilder, message = 'Draft saved.') {
+    setProgrammeBuilder(next)
+    localStorage.setItem(PROGRAMME_BUILDER_KEY, JSON.stringify(next))
+    setProgrammeBuilderMessage(message)
+  }
+
+  function updateProgrammeBuilder(patch: Partial<ProgrammeBuilderDraft>) {
+    const next = { ...programmeBuilder, ...patch }
+    setProgrammeBuilder(next)
+    localStorage.setItem(PROGRAMME_BUILDER_KEY, JSON.stringify(next))
+    setProgrammeBuilderMessage('Draft auto-saved.')
+  }
+
+  function addBuilderSchool() {
+    updateProgrammeBuilder({ schools: [...programmeBuilder.schools, { id: `school-${Date.now()}`, name: '', groups: 1 }] })
+  }
+
+  function updateBuilderSchool(id: string, patch: Partial<BuilderSchool>) {
+    updateProgrammeBuilder({ schools: programmeBuilder.schools.map((school) => school.id === id ? { ...school, ...patch } : school) })
+  }
+
+  function removeBuilderSchool(id: string) {
+    if (programmeBuilder.schools.length === 1) return
+    updateProgrammeBuilder({ schools: programmeBuilder.schools.filter((school) => school.id !== id) })
+  }
+
+  function builderAssignmentKey(day: string, session: string, group: number) { return `${day}|${session}|${group}` }
+
+  function setBuilderActivity(day: string, session: string, group: number, activityCode: string) {
+    updateProgrammeBuilder({ assignments: { ...programmeBuilder.assignments, [builderAssignmentKey(day, session, group)]: activityCode } })
+  }
+
+  function builderValidation() {
+    const issues: string[] = []
+    if (!programmeBuilder.name.trim()) issues.push('Add a programme name.')
+    if (!builderDays.length) issues.push('Choose a valid programme date range of up to seven days.')
+    if (programmeBuilder.schools.some((school) => !school.name.trim())) issues.push('Every school needs a name.')
+    if (!builderGroups.length) issues.push('Add at least one group.')
+    if (programmeBuilder.purchaseType === 'bargain') {
+      const used = Object.values(programmeBuilder.assignments).filter(Boolean)
+      const invalid = used.filter((code) => !programmeBuilder.bargainAllowedActivities.includes(code))
+      if (invalid.length) issues.push('The programme contains activities outside the Bargain Special package.')
+      for (const { group } of builderGroups) {
+        const count = Object.entries(programmeBuilder.assignments).filter(([key, value]) => key.endsWith(`|${group}`) && value).length
+        if (count > programmeBuilder.bargainSessionLimit) issues.push(`Group ${group} exceeds the ${programmeBuilder.bargainSessionLimit}-session Bargain Special limit.`)
+      }
+    }
+    return Array.from(new Set(issues))
+  }
+
+  function publishProgrammeBuilder() {
+    const issues = builderValidation()
+    if (issues.length) { setProgrammeBuilderMessage(`Cannot publish: ${issues[0]}`); return }
+    const rows: ProgrammeRow[] = []
+    for (const dayInfo of builderDays) {
+      for (const session of BUILDER_SESSIONS) {
+        for (const school of programmeBuilder.schools) {
+          const schoolGroups = builderGroups.filter((entry) => entry.school.id === school.id)
+          rows.push({
+            id: `builder-${dayInfo.day}-${session}-${school.id}`,
+            day: dayInfo.day, session, schoolLabel: school.name.trim(),
+            cells: schoolGroups.map(({ group }) => ({ group, activityCode: programmeBuilder.assignments[builderAssignmentKey(dayInfo.day, session, group)] ?? '' })),
+          })
+        }
+      }
+    }
+    const next: ProgrammeImport = {
+      title: programmeBuilder.name.trim(), sheetName: 'Programme Builder',
+      groupNumbers: builderGroups.map(({ group }) => group), rows, importedAt: new Date().toISOString(),
+      sourceFileName: `${programmeBuilder.name.trim().replace(/[^a-z0-9]+/gi, '-') || 'programme'}-built-in-app.xlsx`,
+    }
+    saveProgramme(next, programme ?? undefined)
+    ensureWorkingStaffForDays(builderDays.map((entry) => entry.day))
+    setProgrammeBuilderMessage('Programme published to Programme and Daily Staffing.')
+    setImportMessage(`Published ${programmeBuilder.name.trim()} from Programme Builder.`)
+    setPage('programme')
   }
 
   function saveProgramme(next: ProgrammeImport, previous?: ProgrammeImport) {
@@ -3439,7 +3587,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.72</span></div>
+          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.73</span></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -3651,7 +3799,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to accommodation, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v0.72</span>
+                  <span className="release-pill">v0.73</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
@@ -3760,6 +3908,7 @@ function ManagerApp({
 
         {page === 'staffing' && (
           <Panel title="Daily staffing" onBack={() => setPage('dashboard')}>
+            {programme && <div className="staffing-date-context"><article><span>Programme</span><strong>{programme.title}</strong><small>{programmeDays.length ? friendlyProgrammeDateRange(dateForProgrammeDay(programme, programmeDays[0]), dateForProgrammeDay(programme, programmeDays[programmeDays.length - 1])) : programme.title}</small></article><article className="today-card"><span>Today's date</span><strong>{new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</strong></article></div>}
             {!programme ? (
               <EmptyProgramme onUpload={() => fileInputRef.current?.click()} />
             ) : (
@@ -4133,9 +4282,61 @@ function ManagerApp({
           </section>
         )}
 
+        {page === 'programmeBuilder' && canManageStaff && (
+          <Panel title="Programme Builder" onBack={() => setPage('admin')}>
+            <div className="builder-topbar">
+              <div className="staffing-view-switch" role="group" aria-label="Programme builder view">
+                <button className={programmeBuilderView === 'build' ? 'active' : ''} onClick={() => setProgrammeBuilderView('build')}>Build View</button>
+                <button className={programmeBuilderView === 'preview' ? 'active' : ''} onClick={() => setProgrammeBuilderView('preview')}>Preview Calendar</button>
+              </div>
+              <div className="builder-actions">
+                <button className="secondary-action" onClick={() => saveProgrammeBuilderDraft()}><FileSpreadsheet size={18}/>Save draft</button>
+                <button className="primary" onClick={publishProgrammeBuilder}><CheckCircle2 size={18}/>Publish programme</button>
+              </div>
+            </div>
+            {programmeBuilderMessage && <p className="builder-message">{programmeBuilderMessage}</p>}
+
+            {programmeBuilderView === 'build' ? (
+              <>
+                <section className="builder-settings-card">
+                  <div className="builder-field-grid">
+                    <label>Programme name<input value={programmeBuilder.name} onChange={(event) => updateProgrammeBuilder({ name: event.target.value })} placeholder="e.g. Oakwood School – July"/></label>
+                    <label>Purchase type<select value={programmeBuilder.purchaseType} onChange={(event) => updateProgrammeBuilder({ purchaseType: event.target.value as ProgrammePurchaseType })}><option value="normal">Normal Purchase</option><option value="bargain">Bargain Special</option></select></label>
+                    <label>Arrival date<input type="date" value={programmeBuilder.startDate} onChange={(event) => updateProgrammeBuilder({ startDate: event.target.value })}/></label>
+                    <label>Departure date<input type="date" value={programmeBuilder.endDate} onChange={(event) => updateProgrammeBuilder({ endDate: event.target.value })}/></label>
+                  </div>
+                  <label>Programme notes<textarea rows={3} value={programmeBuilder.notes} onChange={(event) => updateProgrammeBuilder({ notes: event.target.value })} placeholder="Operational notes, school requests or package details…"/></label>
+                </section>
+
+                <section className="builder-section">
+                  <div className="builder-section-heading"><div><p className="eyebrow">Schools and groups</p><h3>Who is attending?</h3></div><button className="secondary-action" onClick={addBuilderSchool}><Plus size={17}/>Add school</button></div>
+                  <div className="builder-school-grid">{programmeBuilder.schools.map((school, index) => <article className="builder-school-card" key={school.id}><strong>School {index + 1}</strong><label>School name<input value={school.name} onChange={(event) => updateBuilderSchool(school.id, { name: event.target.value })} placeholder="School name"/></label><label>Number of groups<input type="number" min="1" max="30" value={school.groups} onChange={(event) => updateBuilderSchool(school.id, { groups: Math.max(1, Number(event.target.value) || 1) })}/></label>{programmeBuilder.schools.length > 1 && <button className="icon-button small" title="Remove school" onClick={() => removeBuilderSchool(school.id)}><Trash2 size={16}/></button>}</article>)}</div>
+                </section>
+
+                {programmeBuilder.purchaseType === 'bargain' && <section className="builder-section bargain-rules"><div className="builder-section-heading"><div><p className="eyebrow">Bargain Special rules</p><h3>Package limits</h3></div></div><label className="builder-limit-field">Maximum sessions per group<input type="number" min="1" max="35" value={programmeBuilder.bargainSessionLimit} onChange={(event) => updateProgrammeBuilder({ bargainSessionLimit: Math.max(1, Number(event.target.value) || 1) })}/></label><p>Select the activities included in this package. These can be updated when you provide the Bargain Special reference sheet.</p><div className="builder-activity-chips">{activities.map((activity) => { const active = programmeBuilder.bargainAllowedActivities.includes(activity.code); return <button key={activity.code} className={active ? 'chip active' : 'chip'} onClick={() => updateProgrammeBuilder({ bargainAllowedActivities: active ? programmeBuilder.bargainAllowedActivities.filter((code) => code !== activity.code) : [...programmeBuilder.bargainAllowedActivities, activity.code] })} title={activity.name}>{activity.code}<small>{activity.name}</small></button> })}</div></section>}
+
+                <section className="builder-section">
+                  <div className="builder-section-heading"><div><p className="eyebrow">Programme grid</p><h3>Assign activities</h3></div><span>{builderGroups.length} groups · {builderDays.length} days</span></div>
+                  <div className="builder-grid-wrap"><table className="builder-grid"><thead><tr><th>Day</th><th>Session</th>{builderGroups.map(({ group, school }) => <th key={group}>G{group}<small>{school.name || 'School'}</small></th>)}</tr></thead><tbody>{builderDays.flatMap((dayInfo) => BUILDER_SESSIONS.map((session) => <tr key={`${dayInfo.day}-${session}`}><th>{dayInfo.label}</th><th>S{session}</th>{builderGroups.map(({ group }) => { const value = programmeBuilder.assignments[builderAssignmentKey(dayInfo.day, session, group)] ?? ''; const options = programmeBuilder.purchaseType === 'bargain' ? activities.filter((activity) => programmeBuilder.bargainAllowedActivities.includes(activity.code)) : activities; return <td key={group}><select value={value} onChange={(event) => setBuilderActivity(dayInfo.day, session, group, event.target.value)}><option value="">—</option>{options.map((activity) => <option key={activity.code} value={activity.code}>{activity.code} – {activity.name}</option>)}</select></td> })}</tr>))}</tbody></table></div>
+                </section>
+              </>
+            ) : (
+              <section className="builder-preview">
+                <header><div><p className="eyebrow">{programmeBuilder.purchaseType === 'bargain' ? 'Bargain Special' : 'Normal Purchase'}</p><h3>{programmeBuilder.name || 'Untitled programme'}</h3><span>{friendlyProgrammeDateRange(programmeBuilder.startDate, programmeBuilder.endDate)} · {builderGroups.length} groups</span></div><button className="secondary-action" onClick={() => window.print()}><Printer size={18}/>Print preview</button></header>
+                {builderValidation().length > 0 && <div className="builder-validation"><CircleAlert size={20}/><div><strong>Check before publishing</strong>{builderValidation().map((issue) => <p key={issue}>{issue}</p>)}</div></div>}
+                <div className="builder-preview-days">{builderDays.map((dayInfo) => <article className="builder-preview-day" key={dayInfo.day}><h4>{dayInfo.label}</h4>{BUILDER_SESSIONS.map((session) => <section key={session}><strong>Session {session}</strong><div>{builderGroups.map(({ group, school }) => { const code = programmeBuilder.assignments[builderAssignmentKey(dayInfo.day, session, group)] ?? ''; return <button key={group} className={code ? 'filled' : 'empty'} onClick={() => setProgrammeBuilderView('build')}><span>G{group} · {school.name || 'School'}</span><b>{code ? `${code} — ${activityNameFromList(activities, code)}` : 'Not assigned'}</b></button> })}</div></section>)}</article>)}</div>
+              </section>
+            )}
+          </Panel>
+        )}
+
         {page === 'admin' && (
           <Panel title="Admin" onBack={() => setPage('dashboard')}>
             <section className="admin-choice-grid">
+              {canManageStaff && <button className="admin-choice-card programme-builder-card" onClick={() => setPage('programmeBuilder')}>
+                <CalendarRange size={34} />
+                <div><h3>Programme Builder</h3><p>Design Bargain Special or Normal Purchase programmes, preview them and publish them.</p></div>
+              </button>}
               {canManageStaff && <button className="admin-choice-card" onClick={() => setPage('staff')}>
                 <Users size={34} />
                 <div><h3>Staff</h3><p>Manage staff accounts, roles and availability.</p></div>
