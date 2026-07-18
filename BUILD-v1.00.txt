@@ -1,0 +1,10 @@
+Adventure Centre Manager v1.00
+
+- Added a live Lightning Safety Monitor to Home and the read-only Manager Display.
+- Uses a 7-mile cancellation zone and a 30-minute all-clear period.
+- Shows nearest strike distance, direction, last-strike age, update time and restart countdown.
+- Displays a prominent red SESSIONS CANCELLED warning when a strike is detected within 7 miles.
+- Fails safely: when live strike data is unavailable or unconfigured, it says unavailable rather than showing safe.
+- Polls live data every five minutes, matching the provider's published update interval.
+- Supports a protected proxy endpoint via VITE_LIGHTNING_PROXY_URL.
+- Also supports direct Weatherbit setup via VITE_WEATHERBIT_API_KEY for testing only.
