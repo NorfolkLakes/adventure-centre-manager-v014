@@ -1,0 +1,10 @@
+Adventure Centre Manager v0.83
+
+Added Staff Room Display Mode:
+- Read-only daily staffing screen
+- Today's Session 1-5 duties
+- OFF, HOLIDAY, SICK, AM OFF and PM OFF display
+- Supabase live updates and automatic 30-second refresh
+- Full-screen mode
+- Dedicated Staff Room Display button in the manager header
+- URL mode: ?display=staff-room

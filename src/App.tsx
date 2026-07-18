@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { CalendarDays, LogOut, ShieldCheck } from 'lucide-react'
 import ManagerApp from './ManagerApp'
+import StaffRoomDisplay from './StaffRoomDisplay'
 import { supabase } from './lib/supabase'
 
 type Profile = {
@@ -70,6 +71,7 @@ type RotaDuty = {
 }
 
 function App() {
+  const [displayMode, setDisplayMode] = useState(() => new URLSearchParams(window.location.search).get('display') === 'staff-room')
   const [session, setSession] = useState<Session | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
@@ -129,6 +131,10 @@ function App() {
 
   if (!session) {
     return <LoginScreen />
+  }
+
+  if (displayMode) {
+    return <StaffRoomDisplay onExit={() => { const url = new URL(window.location.href); url.searchParams.delete('display'); window.history.replaceState({}, '', url); setDisplayMode(false) }} />
   }
 
   if (profile?.role === 'manager' || profile?.role === 'centreManager' || profile?.role === 'activityManager' || profile?.role === 'teamLeader') {

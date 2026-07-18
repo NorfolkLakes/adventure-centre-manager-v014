@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { CalendarDays, LogOut, ShieldCheck } from 'lucide-react'
 import ManagerApp from './ManagerApp'
+import StaffRoomDisplay from './StaffRoomDisplay'
 import { supabase } from './lib/supabase'
 
 type Profile = {
@@ -70,6 +71,7 @@ type RotaDuty = {
 }
 
 function App() {
+  const [displayMode, setDisplayMode] = useState(() => new URLSearchParams(window.location.search).get('display') === 'staff-room')
   const [session, setSession] = useState<Session | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
@@ -129,6 +131,10 @@ function App() {
 
   if (!session) {
     return <LoginScreen />
+  }
+
+  if (displayMode) {
+    return <StaffRoomDisplay onExit={() => { const url = new URL(window.location.href); url.searchParams.delete('display'); window.history.replaceState({}, '', url); setDisplayMode(false) }} />
   }
 
   if (profile?.role === 'manager' || profile?.role === 'centreManager' || profile?.role === 'activityManager' || profile?.role === 'teamLeader') {
@@ -285,6 +291,7 @@ function StaffRota({
   const [message, setMessage] = useState('')
   const [selectedDay, setSelectedDay] = useState('')
   const [holidays, setHolidays] = useState<{ id: string; start_date: string; end_date: string; note: string | null }[]>([])
+  const [daysOff, setDaysOff] = useState<{ id:string; day:string; status:'off'|'hol'|'sick'|'am_off'|'pm_off'; note:string|null }[]>([])
   const [holidayMonth, setHolidayMonth] = useState(() => new Date())
 
   async function loadMyHolidays() {
@@ -300,6 +307,15 @@ function StaffRota({
       .order('start_date')
     if (error) setMessage(error.message)
     else setHolidays((data ?? []) as typeof holidays)
+  }
+
+  async function loadMyDaysOff() {
+    const monthStart = new Date(holidayMonth.getFullYear(), holidayMonth.getMonth(), 1)
+    const monthEnd = new Date(holidayMonth.getFullYear(), holidayMonth.getMonth() + 1, 0)
+    const key = (date: Date) => `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`
+    const { data, error } = await supabase.from('staff_days_off').select('id,day,status,note').eq('staff_email', accountEmail.toLowerCase()).gte('day', key(monthStart)).lte('day', key(monthEnd)).order('day')
+    if (error) setMessage(error.message)
+    else setDaysOff((data ?? []) as typeof daysOff)
   }
 
   async function loadDuties() {
@@ -351,14 +367,18 @@ function StaffRota({
       )
       .subscribe()
 
+    const daysOffChannel = supabase.channel(`my-days-off-${accountEmail}`).on('postgres_changes',{event:'*',schema:'public',table:'staff_days_off'},()=>loadMyDaysOff()).subscribe()
+
     return () => {
       supabase.removeChannel(channel)
       supabase.removeChannel(holidayChannel)
+      supabase.removeChannel(daysOffChannel)
     }
   }, [])
 
   useEffect(() => {
     loadMyHolidays()
+    loadMyDaysOff()
   }, [holidayMonth, accountEmail])
 
   const days = Array.from(new Set(duties.map((duty) => duty.day))).sort((a, b) => weekdayRank(a) - weekdayRank(b))
@@ -460,30 +480,14 @@ function StaffRota({
 
         <section className="my-holiday-panel">
           <div className="my-holiday-heading">
-            <div>
-              <p className="eyebrow">My holiday</p>
-              <h2>{holidayMonth.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })}</h2>
-            </div>
-            <div className="my-holiday-actions">
-              <button onClick={() => setHolidayMonth(new Date(holidayMonth.getFullYear(), holidayMonth.getMonth() - 1, 1))}>Previous</button>
-              <button onClick={() => setHolidayMonth(new Date())}>This month</button>
-              <button onClick={() => setHolidayMonth(new Date(holidayMonth.getFullYear(), holidayMonth.getMonth() + 1, 1))}>Next</button>
-            </div>
+            <div><p className="eyebrow">My Days Off</p><h2>{holidayMonth.toLocaleDateString('en-GB',{month:'long',year:'numeric'})}</h2></div>
+            <div className="my-holiday-actions"><button onClick={()=>setHolidayMonth(new Date(holidayMonth.getFullYear(),holidayMonth.getMonth()-1,1))}>Previous</button><button onClick={()=>setHolidayMonth(new Date())}>This month</button><button onClick={()=>setHolidayMonth(new Date(holidayMonth.getFullYear(),holidayMonth.getMonth()+1,1))}>Next</button></div>
           </div>
-          {holidays.length ? (
-            <div className="my-holiday-list">
-              {holidays.map((holiday) => (
-                <article key={holiday.id}>
-                  <strong>{new Date(`${holiday.start_date}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} – {new Date(`${holiday.end_date}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</strong>
-                  {holiday.note && <span>{holiday.note}</span>}
-                </article>
-              ))}
-            </div>
-          ) : (
-            <p className="my-holiday-empty">No holiday booked this month.</p>
-          )}
-        </section>
-      </main>
+          {(holidays.length || daysOff.length) ? <div className="my-holiday-list">
+            {holidays.map(h=><article key={`hol-${h.id}`}><strong>{new Date(`${h.start_date}T12:00:00`).toLocaleDateString('en-GB',{day:'numeric',month:'short'})} – {new Date(`${h.end_date}T12:00:00`).toLocaleDateString('en-GB',{day:'numeric',month:'short'})}</strong><span>HOL</span></article>)}
+            {daysOff.map(item=><article key={item.id}><strong>{new Date(`${item.day}T12:00:00`).toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short'})}</strong><span>{item.status==='am_off'?'AM OFF':item.status==='pm_off'?'PM OFF':item.status.toUpperCase()}</span></article>)}
+          </div> : <p className="my-holiday-empty">No days off recorded this month.</p>}
+        </section>      </main>
     </div>
   )
 }
