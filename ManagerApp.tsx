@@ -184,6 +184,7 @@ const STAFF_TIMELINE_KEY = 'acm-staff-timeline'
 const PAYROLL_SYNC_KEY = 'acm-payroll-sync'
 const STAFFING_ARCHIVES_KEY = 'acm-staffing-archives'
 const PROGRAMME_BUILDER_KEY = 'acm-programme-builder-draft'
+const PROGRAMME_LIBRARY_KEY = 'acm-programme-library'
 
 type ProgrammePurchaseType = 'bargain' | 'normal'
 type BuilderSchool = { id: string; name: string; programmeName: string; purchaseType: ProgrammePurchaseType; arrivalDate: string; departureDate: string; notes: string; groups: number; requestedActivities: string[]; backupOption1: string; backupOption2: string; locked: boolean }
@@ -199,6 +200,8 @@ type ProgrammeBuilderDraft = {
   manualLocks: Record<string, boolean>
   notes: string
 }
+
+type SavedProgramme = { id: string; title: string; startDate: string; endDate: string; updatedAt: string; draft: ProgrammeBuilderDraft }
 
 const DEFAULT_BARGAIN_CODES = ['ARCH', 'BT', 'VB', 'MO', 'OC', 'LR', 'AIR', 'CF']
 const BUILDER_SESSIONS = ['1', '2', '3', '4', '5']
@@ -698,7 +701,12 @@ function ManagerApp({
     }
   })
   const [programmeBuilderView, setProgrammeBuilderView] = useState<'build' | 'preview'>('build')
+  const [programmeBuilderScreen, setProgrammeBuilderScreen] = useState<'library' | 'editor'>('library')
   const [programmeBuilderMessage, setProgrammeBuilderMessage] = useState('')
+  const [savedProgrammes, setSavedProgrammes] = useState<SavedProgramme[]>(() => readJson(PROGRAMME_LIBRARY_KEY, []))
+  const [activeSavedProgrammeId, setActiveSavedProgrammeId] = useState<string | null>(null)
+  const [programmeSearch, setProgrammeSearch] = useState('')
+  const [programmeMonth, setProgrammeMonth] = useState('')
   const [assignments, setAssignments] = useState<StaffingAssignment>(() =>
     readJson(ASSIGNMENT_KEY, {}),
   )
@@ -1791,6 +1799,58 @@ function ManagerApp({
     )
   }, [programmeBuilder.schools])
 
+  function persistProgrammeLibrary(next: SavedProgramme[]) {
+    setSavedProgrammes(next)
+    localStorage.setItem(PROGRAMME_LIBRARY_KEY, JSON.stringify(next))
+  }
+
+  function createNewProgramme() {
+    const next = blankProgrammeBuilderDraft()
+    setProgrammeBuilder(next)
+    localStorage.setItem(PROGRAMME_BUILDER_KEY, JSON.stringify(next))
+    setActiveSavedProgrammeId(null)
+    setProgrammeBuilderView('build')
+    setProgrammeBuilderScreen('editor')
+    setProgrammeBuilderMessage('New programme ready.')
+  }
+
+  function saveProgrammeToLibrary() {
+    const title = programmeBuilder.name.trim() || programmeBuilder.schools.map((school) => school.programmeName || school.name).filter(Boolean).join(' / ') || 'Untitled programme'
+    const id = activeSavedProgrammeId ?? `programme-${Date.now()}`
+    const saved: SavedProgramme = { id, title, startDate: programmeBuilder.startDate, endDate: programmeBuilder.endDate, updatedAt: new Date().toISOString(), draft: programmeBuilder }
+    persistProgrammeLibrary([saved, ...savedProgrammes.filter((item) => item.id !== id)])
+    setActiveSavedProgrammeId(id)
+    saveProgrammeBuilderDraft(programmeBuilder, `${title} saved to the programme library.`)
+  }
+
+  function openSavedProgramme(saved: SavedProgramme) {
+    const draft = { ...saved.draft, manualLocks: saved.draft.manualLocks ?? {} }
+    setProgrammeBuilder(draft)
+    localStorage.setItem(PROGRAMME_BUILDER_KEY, JSON.stringify(draft))
+    setActiveSavedProgrammeId(saved.id)
+    setProgrammeBuilderView('build')
+    setProgrammeBuilderScreen('editor')
+    setProgrammeBuilderMessage(`${saved.title} opened. You can edit it or add another school.`)
+  }
+
+  function deleteSavedProgramme(id: string) {
+    persistProgrammeLibrary(savedProgrammes.filter((item) => item.id !== id))
+    if (activeSavedProgrammeId === id) setActiveSavedProgrammeId(null)
+  }
+
+  function loadSavedProgrammeIntoApp(saved: SavedProgramme) {
+    openSavedProgramme(saved)
+    publishProgrammeDraft(saved.draft)
+  }
+
+  const filteredSavedProgrammes = savedProgrammes.filter((saved) => {
+    const search = programmeSearch.trim().toLowerCase()
+    const schoolText = saved.draft.schools.map((school) => `${school.name} ${school.programmeName}`).join(' ').toLowerCase()
+    const matchesSearch = !search || saved.title.toLowerCase().includes(search) || schoolText.includes(search)
+    const matchesMonth = !programmeMonth || saved.startDate.startsWith(programmeMonth)
+    return matchesSearch && matchesMonth
+  })
+
   function saveProgrammeBuilderDraft(next = programmeBuilder, message = 'Draft saved.') {
     setProgrammeBuilder(next)
     localStorage.setItem(PROGRAMME_BUILDER_KEY, JSON.stringify(next))
@@ -1861,6 +1921,9 @@ function ManagerApp({
       .filter((session) => builderSchoolSessionState(school, dayInfo.date, session) === 'activity')
       .map((session) => ({ ...dayInfo, session, priority: builderSlotPriority(school, dayInfo.date, session) })))
 
+    const isActivityAlreadyRunning = (day: string, session: string, code: string, ownKey: string) =>
+      Object.entries(next).some(([key, value]) => key !== ownKey && key.startsWith(`${day}|${session}|`) && value === code)
+
     for (const { group } of schoolGroups) {
       const unlockedSlots = activitySlots.filter((slot) => {
         const key = builderAssignmentKey(slot.day, slot.session, group)
@@ -1870,40 +1933,49 @@ function ManagerApp({
 
       const sortedSlots = [...unlockedSlots].sort((a, b) => a.priority - b.priority || a.date.localeCompare(b.date) || Number(a.session) - Number(b.session))
       const queue = [...allowed]
-      const hasCanoe = queue.includes('CANOE')
-      const hasKayak = queue.includes('KAYAK')
-
-      if (school.purchaseType === 'bargain' && hasCanoe && hasKayak) {
-        const pairs = sortedSlots.filter((slot) => {
-          const nextSession = String(Number(slot.session) + 1)
-          return sortedSlots.some((candidate) => candidate.day === slot.day && candidate.session === nextSession && candidate.priority === slot.priority)
-        })
-        const pairStart = pairs[0]
-        if (pairStart) {
-          const second = sortedSlots.find((slot) => slot.day === pairStart.day && Number(slot.session) === Number(pairStart.session) + 1)
-          if (second) {
-            next[builderAssignmentKey(pairStart.day, pairStart.session, group)] = 'CANOE'
-            next[builderAssignmentKey(second.day, second.session, group)] = 'KAYAK'
-            sortedSlots.splice(sortedSlots.indexOf(second), 1)
-            sortedSlots.splice(sortedSlots.indexOf(pairStart), 1)
-            queue.splice(queue.indexOf('CANOE'), 1)
-            queue.splice(queue.indexOf('KAYAK'), 1)
-          }
+      const campfireIndex = queue.indexOf('CF')
+      if (campfireIndex >= 0) {
+        queue.splice(campfireIndex, 1)
+        const campfireSlot = [...sortedSlots].filter((slot) => slot.session === '5').sort((a, b) => b.date.localeCompare(a.date))[0]
+        if (campfireSlot) {
+          const key = builderAssignmentKey(campfireSlot.day, campfireSlot.session, group)
+          if (!isActivityAlreadyRunning(campfireSlot.day, campfireSlot.session, 'CF', key)) {
+            next[key] = 'CF'
+            sortedSlots.splice(sortedSlots.indexOf(campfireSlot), 1)
+          } else queue.push('CF')
         }
       }
 
-      let index = 0
+      const hasCanoe = queue.includes('CANOE')
+      const hasKayak = queue.includes('KAYAK')
+      if (school.purchaseType === 'bargain' && hasCanoe && hasKayak) {
+        const pairStart = sortedSlots.find((slot) => {
+          const second = sortedSlots.find((candidate) => candidate.day === slot.day && Number(candidate.session) === Number(slot.session) + 1)
+          if (!second) return false
+          const firstKey = builderAssignmentKey(slot.day, slot.session, group)
+          const secondKey = builderAssignmentKey(second.day, second.session, group)
+          return !isActivityAlreadyRunning(slot.day, slot.session, 'CANOE', firstKey) && !isActivityAlreadyRunning(second.day, second.session, 'KAYAK', secondKey)
+        })
+        if (pairStart) {
+          const second = sortedSlots.find((slot) => slot.day === pairStart.day && Number(slot.session) === Number(pairStart.session) + 1)!
+          next[builderAssignmentKey(pairStart.day, pairStart.session, group)] = 'CANOE'
+          next[builderAssignmentKey(second.day, second.session, group)] = 'KAYAK'
+          sortedSlots.splice(sortedSlots.indexOf(second), 1)
+          sortedSlots.splice(sortedSlots.indexOf(pairStart), 1)
+          queue.splice(queue.indexOf('CANOE'), 1)
+          queue.splice(queue.indexOf('KAYAK'), 1)
+        }
+      }
+
       for (const slot of sortedSlots) {
         if (!queue.length) break
-        const preferred = queue.findIndex((code) => {
-          if (!WATER_ACTIVITY_CODES.has(code)) return true
-          return slot.priority < 2
-        })
-        const chosenIndex = preferred >= 0 ? preferred : 0
+        const key = builderAssignmentKey(slot.day, slot.session, group)
+        let chosenIndex = queue.findIndex((code) => code !== 'CF' && (!WATER_ACTIVITY_CODES.has(code) || slot.priority < 2) && !isActivityAlreadyRunning(slot.day, slot.session, code, key))
+        if (chosenIndex < 0) chosenIndex = queue.findIndex((code) => code !== 'CF' && !isActivityAlreadyRunning(slot.day, slot.session, code, key))
+        if (chosenIndex < 0) continue
         const [code] = queue.splice(chosenIndex, 1)
-        next[builderAssignmentKey(slot.day, slot.session, group)] = code
-        if (queue.length === 0 && school.purchaseType !== 'bargain') queue.push(...allowed)
-        index += 1
+        next[key] = code
+        if (queue.length === 0 && school.purchaseType !== 'bargain') queue.push(...allowed.filter((item) => item !== 'CF'))
       }
     }
     return next
@@ -1956,37 +2028,56 @@ function ManagerApp({
         }
       }
     }
+    const slotActivities: Record<string, string[]> = {}
+    Object.entries(programmeBuilder.assignments).forEach(([key, code]) => {
+      if (!code) return
+      const [day, session] = key.split('|')
+      const slot = `${day}|${session}`
+      slotActivities[slot] = [...(slotActivities[slot] ?? []), code]
+      if (code === 'CF' && session !== '5') issues.push('Campfire must be scheduled in Session 5.')
+    })
+    Object.entries(slotActivities).forEach(([slot, codes]) => {
+      const duplicate = codes.find((code, index) => codes.indexOf(code) !== index)
+      if (duplicate) issues.push(`${duplicate} is running more than once at ${slot.replace('|', ' Session ')}.`)
+    })
     return Array.from(new Set(issues))
   }
 
-  function publishProgrammeBuilder() {
-    const issues = builderValidation()
-    if (issues.length) { setProgrammeBuilderMessage(`Cannot publish: ${issues[0]}`); return }
+  function publishProgrammeDraft(draft: ProgrammeBuilderDraft) {
+    const days = builderDateRange(draft.startDate, draft.endDate)
+    let nextGroup = 1
+    const groups = draft.schools.flatMap((school) => Array.from({ length: Math.max(1, school.groups) }, () => ({ school, group: nextGroup++ })))
     const rows: ProgrammeRow[] = []
-    for (const dayInfo of builderDays) {
+    for (const dayInfo of days) {
       for (const session of BUILDER_SESSIONS) {
-        for (const school of programmeBuilder.schools) {
-          const schoolGroups = builderGroups.filter((entry) => entry.school.id === school.id)
+        for (const school of draft.schools) {
+          const schoolGroups = groups.filter((entry) => entry.school.id === school.id)
           rows.push({
             id: `builder-${dayInfo.day}-${session}-${school.id}`,
             day: dayInfo.day, session, schoolLabel: school.name.trim(),
-            cells: schoolGroups.map(({ group }) => { const state = builderSchoolSessionState(school, dayInfo.date, session); return { group, activityCode: state === 'arrival' ? school.name.trim() : state === 'activity' ? (programmeBuilder.assignments[builderAssignmentKey(dayInfo.day, session, group)] ?? '') : '' } }),
+            cells: schoolGroups.map(({ group }) => { const state = builderSchoolSessionState(school, dayInfo.date, session); return { group, activityCode: state === 'arrival' ? school.name.trim() : state === 'activity' ? (draft.assignments[builderAssignmentKey(dayInfo.day, session, group)] ?? '') : '' } }),
           })
         }
       }
     }
     const next: ProgrammeImport = {
-      title: programmeBuilder.name.trim(), sheetName: 'Programme Builder',
-      groupNumbers: builderGroups.map(({ group }) => group), rows, importedAt: new Date().toISOString(),
-      sourceFileName: `${programmeBuilder.name.trim().replace(/[^a-z0-9]+/gi, '-') || 'programme'}-built-in-app.xlsx`,
-      startDate: programmeBuilder.startDate, endDate: programmeBuilder.endDate,
-      schoolDetails: programmeBuilder.schools.map((school) => ({ id: school.id, schoolName: school.name.trim(), programmeName: school.programmeName.trim(), purchaseType: school.purchaseType, arrivalDate: school.arrivalDate, departureDate: school.departureDate, notes: school.notes })),
+      title: draft.name.trim() || 'Saved programme', sheetName: 'Programme Builder',
+      groupNumbers: groups.map(({ group }) => group), rows, importedAt: new Date().toISOString(),
+      sourceFileName: `${draft.name.trim().replace(/[^a-z0-9]+/gi, '-') || 'programme'}-built-in-app.xlsx`,
+      startDate: draft.startDate, endDate: draft.endDate,
+      schoolDetails: draft.schools.map((school) => ({ id: school.id, schoolName: school.name.trim(), programmeName: school.programmeName.trim(), purchaseType: school.purchaseType, arrivalDate: school.arrivalDate, departureDate: school.departureDate, notes: school.notes })),
     }
     saveProgramme(next, programme ?? undefined)
-    ensureWorkingStaffForDays(builderDays.map((entry) => entry.day))
-    setProgrammeBuilderMessage('Programme published to Programme and Daily Staffing.')
-    setImportMessage(`Published ${programmeBuilder.name.trim()} from Programme Builder.`)
+    ensureWorkingStaffForDays(days.map((entry) => entry.day))
+    setProgrammeBuilderMessage('Programme loaded into Programme and Daily Staffing.')
+    setImportMessage(`Loaded ${next.title} from the saved programme library.`)
     setPage('programme')
+  }
+
+  function publishProgrammeBuilder() {
+    const issues = builderValidation()
+    if (issues.length) { setProgrammeBuilderMessage(`Cannot publish: ${issues[0]}`); return }
+    publishProgrammeDraft(programmeBuilder)
   }
 
   function saveProgramme(next: ProgrammeImport, previous?: ProgrammeImport) {
@@ -4423,14 +4514,22 @@ function ManagerApp({
         )}
 
         {page === 'programmeBuilder' && canManageStaff && (
-          <Panel title="Programme Builder" onBack={() => setPage('admin')}>
-            <div className="builder-topbar">
+          <Panel title="Programme Builder" onBack={() => programmeBuilderScreen === 'editor' ? setProgrammeBuilderScreen('library') : setPage('admin')}>
+            {programmeBuilderScreen === 'library' ? (
+            <section className="programme-library">
+              <div className="programme-library-hero"><div><p className="eyebrow">Saved programme library</p><h2>Programmes</h2><p>Build a new programme, reopen an old one, add another school, or load it into Staffing and Arrivals.</p></div><button className="primary" onClick={createNewProgramme}><Plus size={18}/>Build new programme</button></div>
+              <div className="programme-library-filters"><label><Search size={17}/><input value={programmeSearch} onChange={(event) => setProgrammeSearch(event.target.value)} placeholder="Search programme or school"/></label><label>Month<input type="month" value={programmeMonth} onChange={(event) => setProgrammeMonth(event.target.value)}/></label></div>
+              {filteredSavedProgrammes.length ? <div className="programme-library-grid">{filteredSavedProgrammes.map((saved) => <article className="programme-library-card" key={saved.id}><div><span>{friendlyProgrammeDateRange(saved.startDate, saved.endDate)}</span><h3>{saved.title}</h3><p>{saved.draft.schools.length} school{saved.draft.schools.length === 1 ? '' : 's'} · Updated {new Date(saved.updatedAt).toLocaleDateString('en-GB')}</p><small>{saved.draft.schools.map((school) => school.name || school.programmeName).filter(Boolean).join(' · ') || 'No schools named yet'}</small></div><div className="programme-library-actions"><button className="secondary-action" onClick={() => openSavedProgramme(saved)}>Open and edit</button><button className="primary" onClick={() => loadSavedProgrammeIntoApp(saved)}>Load into app</button><button className="icon-button small" title="Delete saved programme" onClick={() => deleteSavedProgramme(saved.id)}><Trash2 size={16}/></button></div></article>)}</div> : <div className="empty-state"><CalendarRange size={34}/><h3>No saved programmes found</h3><p>Build your first programme or change the search and month filters.</p></div>}
+            </section>
+            ) : (
+              <>
+            <div className="builder-topbar"><button className="secondary-action" onClick={() => setProgrammeBuilderScreen('library')}><ChevronLeft size={17}/>Programme library</button>
               <div className="staffing-view-switch" role="group" aria-label="Programme builder view">
                 <button className={programmeBuilderView === 'build' ? 'active' : ''} onClick={() => setProgrammeBuilderView('build')}>Build View</button>
                 <button className={programmeBuilderView === 'preview' ? 'active' : ''} onClick={() => setProgrammeBuilderView('preview')}>Preview Calendar</button>
               </div>
               <div className="builder-actions">
-                <button className="secondary-action" onClick={() => saveProgrammeBuilderDraft()}><FileSpreadsheet size={18}/>Save draft</button>
+                <button className="secondary-action" onClick={saveProgrammeToLibrary}><FileSpreadsheet size={18}/>Save programme</button>
                 <button className="primary" onClick={publishProgrammeBuilder}><CheckCircle2 size={18}/>Publish programme</button>
               </div>
             </div>
@@ -4477,6 +4576,9 @@ function ManagerApp({
                 {builderValidation().length > 0 && <div className="builder-validation"><CircleAlert size={20}/><div><strong>Check before publishing</strong>{builderValidation().map((issue) => <p key={issue}>{issue}</p>)}</div></div>}
                 <div className="builder-preview-days">{builderDays.map((dayInfo) => <article className="builder-preview-day" key={dayInfo.day}><h4>{dayInfo.label}</h4>{BUILDER_SESSIONS.map((session) => <section key={session}><strong>Session {session}</strong><div>{builderGroups.map(({ group, school }) => { const state = builderSchoolSessionState(school, dayInfo.date, session); const code = programmeBuilder.assignments[builderAssignmentKey(dayInfo.day, session, group)] ?? ''; const label = state === 'arrival' ? `${school.name || 'School'} – Arrival` : state === 'departed' ? 'Departed' : state === 'offsite' ? 'Not on site' : code ? `${code} — ${activityNameFromList(activities, code)}` : 'Not assigned'; return <button key={group} className={state === 'activity' && code ? 'filled' : 'empty'} onClick={() => setProgrammeBuilderView('build')}><span>G{group} · {school.name || 'School'}</span><b>{label}</b></button> })}</div></section>)}</article>)}</div>
               </section>
+            )}
+
+              </>
             )}
           </Panel>
         )}

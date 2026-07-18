@@ -1,0 +1,8 @@
+Adventure Centre Manager v0.79
+
+- Saved programme library with search and month filter
+- Build new, reopen, edit, add schools and load saved programmes into the app
+- Visible Update Programme and Reset Locks controls in the active src build
+- Manual changes remain locked during updates
+- Auto-update avoids duplicate activities in the same session
+- Campfire is restricted to Session 5 and placed near the end of each school stay

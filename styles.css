@@ -1720,3 +1720,7 @@ button { cursor: pointer; }
 
 .builder-update-actions p { margin: 4px 0 0; }
 .builder-update-actions > div:last-child { display: flex; gap: 10px; flex-wrap: wrap; }
+
+
+/* v0.79 saved programme library */
+.programme-library{display:grid;gap:18px}.programme-library-hero{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;padding:22px;border:1px solid #d8e2df;border-radius:18px;background:#f5faf8}.programme-library-hero h2{margin:3px 0}.programme-library-hero p{margin:0}.programme-library-filters{display:flex;gap:12px;flex-wrap:wrap}.programme-library-filters label{display:flex;align-items:center;gap:8px;border:1px solid #d8e2df;border-radius:12px;padding:9px 12px;background:white}.programme-library-filters input{border:0;outline:0;background:transparent}.programme-library-grid{display:grid;gap:12px}.programme-library-card{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:18px;border:1px solid #d8e2df;border-radius:16px;background:white}.programme-library-card h3{margin:4px 0}.programme-library-card p,.programme-library-card small{margin:0;color:#667}.programme-library-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.empty-state{text-align:center;padding:36px;border:1px dashed #bccdc7;border-radius:16px}.builder-topbar>.secondary-action{margin-right:auto}@media(max-width:760px){.programme-library-card{align-items:flex-start;flex-direction:column}.programme-library-actions{width:100%}}

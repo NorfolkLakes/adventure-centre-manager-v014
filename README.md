@@ -1,4 +1,4 @@
-# Adventure Centre Manager v0.78
+# Adventure Centre Manager v0.79
 
 This version adds the first cloud login and staff rota system.
 
@@ -365,6 +365,6 @@ Adds permanent and loan staff lifecycle management, Former Staff and Loan Staff 
 - Programme publishing carries the same date-aware rules into Programme and Daily Staffing.
 
 
-## v0.78 – Protected manual programme updates
+## v0.79 – Protected manual programme updates
 
 Adds automatic locking for manually edited programme cells, Update Programme and Reset Locks controls, consecutive Canoe/Kayak Bargain Special scheduling, and preferences to place water sessions after arrival while avoiding Friday/departure-day water where practical.
