@@ -1,0 +1,7 @@
+Adventure Centre Manager v0.88
+
+Staff Room Display updates:
+- Staff ordered by Head of Centre, Activities Manager, Team Leaders, then instructors/other staff
+- Names sorted alphabetically within each role
+- Upcoming Time Off covers Holiday, OFF, AM OFF and PM OFF from the staff calendar for the next seven days
+- Sick remains shown separately as a current absence
