@@ -1,0 +1,8 @@
+Adventure Centre Manager v0.94
+
+- Reception Display renamed to Manager Display.
+- New read-only full-screen display URL: ?display=manager
+- Shows schools currently on site, arrival/departure dates, building and flat allocations.
+- Shows School Notes entered in the app.
+- Shows staff in today, sick staff, active loan staff and Norfolk Lakes weather.
+- No on-screen controls or mouse interaction; refreshes automatically every 30 seconds.

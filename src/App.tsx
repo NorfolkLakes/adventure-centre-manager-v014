@@ -3,7 +3,7 @@ import type { Session } from '@supabase/supabase-js'
 import { CalendarDays, LogOut, ShieldCheck } from 'lucide-react'
 import ManagerApp from './ManagerApp'
 import StaffRoomDisplay from './StaffRoomDisplay'
-import ReceptionDisplay from './ReceptionDisplay'
+import ManagerDisplay from './ManagerDisplay'
 import ProgrammeDisplay from './ProgrammeDisplay'
 import { supabase } from './lib/supabase'
 
@@ -137,7 +137,7 @@ function App() {
 
   const exitDisplay = () => { const url = new URL(window.location.href); url.searchParams.delete('display'); window.history.replaceState({}, '', url); setDisplayMode('') }
   if (displayMode === 'staff-room') return <StaffRoomDisplay onExit={exitDisplay} />
-  if (displayMode === 'reception') return <ReceptionDisplay onExit={exitDisplay} />
+  if (displayMode === 'manager' || displayMode === 'reception') return <ManagerDisplay />
   if (displayMode === 'programme') return <ProgrammeDisplay onExit={exitDisplay} />
 
   if (profile?.role === 'manager' || profile?.role === 'centreManager' || profile?.role === 'activityManager' || profile?.role === 'teamLeader') {
