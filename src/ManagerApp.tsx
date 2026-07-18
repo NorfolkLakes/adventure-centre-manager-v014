@@ -2327,16 +2327,26 @@ function ManagerApp({
     const workingIds = new Set(
       workingByDay[day] ?? staff.map((member) => member.id),
     )
-    // Existing assignments are history and must never be erased when somebody
-    // is later marked sick or unavailable. Auto-fill only fills empty cells.
+    // Start from the current rota, but remove assignments that are now blocked
+    // by the live Days Off & Sickness calendar. This prevents Auto-fill from
+    // leaving SICK/OFF/HOL staff on sessions and applies AM/PM rules per session.
     const nextAssignments: StaffingAssignment = { ...assignments }
+    const rowsForDay = programme.rows.filter((row) => row.day === day)
+    for (const row of rowsForDay) {
+      const blocked = unavailableStaffIdsForSession(day, row.session)
+      for (const cell of activityCellsForRow(row)) {
+        const key = cellKey(row.id, cell.group)
+        const assignedStaffId = nextAssignments[key]
+        if (assignedStaffId && blocked.has(assignedStaffId)) delete nextAssignments[key]
+      }
+    }
 
     const workload = new Map<string, number>()
     Object.entries(nextAssignments).forEach(([, staffId]) => {
       workload.set(staffId, (workload.get(staffId) ?? 0) + 1)
     })
 
-    const dayRows = programme.rows.filter((row) => row.day === day)
+    const dayRows = rowsForDay
 
     for (const row of dayRows) {
       for (const cell of activityCellsForRow(row)) {
@@ -3093,7 +3103,13 @@ function ManagerApp({
 
   function staffingStatus(member: StaffMember, day: string, sourceProgramme: ProgrammeImport, sourceDaysOff: StaffDayOff[], sourceWorking: Record<string,string[]>, _sourceSickness: Record<string,string[]>) {
     const isoDay = dateForProgrammeDay(sourceProgramme, day)
-    const exact = sourceDaysOff.find((entry) => entry.staff_id === member.id && entry.day === isoDay)
+    const memberEmail = (member.email ?? '').trim().toLowerCase()
+    const memberName = normaliseIdentity(member.name)
+    const exact = sourceDaysOff.find((entry) => entry.day === isoDay && (
+      entry.staff_id === member.id ||
+      (memberEmail && entry.staff_email.trim().toLowerCase() === memberEmail) ||
+      normaliseIdentity(entry.staff_name) === memberName
+    ))
     if (exact?.status) return exact.status
     const working = sourceWorking[day]
     if (working && !working.includes(member.id)) return 'off' as DayOffStatus
@@ -3245,17 +3261,20 @@ function ManagerApp({
           const unavailable = Boolean(status) && (
             status === 'hol' || status === 'sick' || status === 'off' ||
             (status === 'am_off' && sessionNumber <= 2) ||
-            (status === 'pm_off' && sessionNumber >= 3)
+            (status === 'pm_off' && sessionNumber === 5)
           )
 
-          // Existing/completed assignments always stay visible in the export.
-          // Availability status only fills an otherwise empty blocked session.
-          if (duties.length > 0) {
+          // The live availability calendar wins over rota assignments. A blocked
+          // session must contain only its status and must never export an activity.
+          if (unavailable) {
+            setCell(row, start + 2 + sessionIndex * 2, statusLabel, statusFill)
+            setCell(row, start + 3 + sessionIndex * 2, '', statusFill)
+          } else if (duties.length > 0) {
             setCell(row, start + 2 + sessionIndex * 2, duties.map((duty) => duty.code).join(' / '), activityFill)
             setCell(row, start + 3 + sessionIndex * 2, duties.map((duty) => `G${duty.group}`).join(', '), activityFill)
           } else {
-            setCell(row, start + 2 + sessionIndex * 2, unavailable ? statusLabel : '', unavailable && statusFill ? statusFill : null)
-            setCell(row, start + 3 + sessionIndex * 2, '', unavailable && statusFill ? statusFill : null)
+            setCell(row, start + 2 + sessionIndex * 2, '')
+            setCell(row, start + 3 + sessionIndex * 2, '')
           }
         })
       })
@@ -3420,7 +3439,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.71</span></div>
+          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.72</span></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -3632,7 +3651,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to accommodation, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v0.71</span>
+                  <span className="release-pill">v0.72</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
