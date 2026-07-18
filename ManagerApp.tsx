@@ -3889,7 +3889,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.73</span></div>
+          <div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v0.80</span></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -4104,7 +4104,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to accommodation, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v0.73</span>
+                  <span className="release-pill">v0.80</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
