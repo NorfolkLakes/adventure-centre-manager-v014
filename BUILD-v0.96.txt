@@ -1,0 +1,12 @@
+Adventure Centre Manager v0.96
+
+Bright visual refresh based on the Manager Display:
+- Removed dark green app chrome
+- White header and navigation
+- Light grey background
+- Dark navy text
+- Blue accents
+- Brighter cards, tables, buttons and forms
+- Updated visible release label to v0.96
+
+All v0.95 manager-display and export updates retained.
