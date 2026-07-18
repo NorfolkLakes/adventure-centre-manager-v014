@@ -196,6 +196,7 @@ type ProgrammeBuilderDraft = {
   bargainAllowedActivities: string[]
   schools: BuilderSchool[]
   assignments: Record<string, string>
+  manualLocks: Record<string, boolean>
   notes: string
 }
 
@@ -216,7 +217,7 @@ function blankProgrammeBuilderDraft(): ProgrammeBuilderDraft {
   return {
     name: '', startDate: iso(monday), endDate: iso(friday), purchaseType: 'normal',
     bargainSessionLimit: 15, bargainAllowedActivities: DEFAULT_BARGAIN_CODES,
-    schools: [{ id: `school-${Date.now()}`, name: '', programmeName: '', purchaseType: 'normal', arrivalDate: iso(monday), departureDate: iso(friday), notes: '', groups: 1, requestedActivities: [], backupOption1: '', backupOption2: '', locked: false }], assignments: {}, notes: '',
+    schools: [{ id: `school-${Date.now()}`, name: '', programmeName: '', purchaseType: 'normal', arrivalDate: iso(monday), departureDate: iso(friday), notes: '', groups: 1, requestedActivities: [], backupOption1: '', backupOption2: '', locked: false }], assignments: {}, manualLocks: {}, notes: '',
   }
 }
 
@@ -681,6 +682,7 @@ function ManagerApp({
     const saved = readJson(PROGRAMME_BUILDER_KEY, blankProgrammeBuilderDraft())
     return {
       ...saved,
+      manualLocks: saved.manualLocks ?? {},
       schools: (saved.schools ?? []).map((school) => ({
         ...school,
         programmeName: school.programmeName ?? school.name ?? '',
@@ -1829,29 +1831,111 @@ function ManagerApp({
     return 'activity' as const
   }
 
-  function autoFillProgrammeBuilder(schoolId: string) {
+  const WATER_ACTIVITY_CODES = new Set(['CANOE', 'KAYAK', 'RAFT', 'SUP', 'GSUP', 'GCAN', 'SAIL'])
+
+  function builderSlotPriority(school: BuilderSchool, date: string, session: string) {
+    const day = new Date(`${date}T12:00:00`).getDay()
+    const isFriday = day === 5
+    const isArrival = date === school.arrivalDate
+    const isDeparture = date === school.departureDate
+    const arrival = new Date(`${school.arrivalDate}T12:00:00`)
+    const current = new Date(`${date}T12:00:00`)
+    const daysAfterArrival = Math.round((current.getTime() - arrival.getTime()) / 86400000)
+    if (daysAfterArrival === 1 && !isFriday && !isDeparture) return 0
+    if (!isArrival && !isFriday && !isDeparture) return 1
+    if (isArrival) return 2
+    if (isFriday || isDeparture) return 3
+    return 2
+  }
+
+  function generateSchoolAssignments(schoolId: string, preserveManual: boolean, baseAssignments = programmeBuilder.assignments) {
     const school = programmeBuilder.schools.find((item) => item.id === schoolId)
-    if (!school) return
+    if (!school) return baseAssignments
     const schoolGroups = builderGroups.filter((entry) => entry.school.id === schoolId)
     const requested = school.requestedActivities.length ? school.requestedActivities : activities.filter((item) => item.code !== 'Z').map((item) => item.code)
     const allowed = school.purchaseType === 'bargain' ? requested.filter((code) => programmeBuilder.bargainAllowedActivities.includes(code)) : requested
-    if (!allowed.length) { setProgrammeBuilderMessage(`Choose at least one activity for ${school.name || 'this school'}.`); return }
-    const next = { ...programmeBuilder.assignments }
-    let index = 0
-    for (const dayInfo of builderDays) for (const session of BUILDER_SESSIONS) {
-      const state = builderSchoolSessionState(school, dayInfo.date, session)
-      for (const { group } of schoolGroups) {
-        const key = builderAssignmentKey(dayInfo.day, session, group)
-        if (state !== 'activity') next[key] = ''
-        else { next[key] = allowed[index % allowed.length]; index += 1 }
+    if (!allowed.length) return baseAssignments
+
+    const next = { ...baseAssignments }
+    const activitySlots = builderDays.flatMap((dayInfo) => BUILDER_SESSIONS
+      .filter((session) => builderSchoolSessionState(school, dayInfo.date, session) === 'activity')
+      .map((session) => ({ ...dayInfo, session, priority: builderSlotPriority(school, dayInfo.date, session) })))
+
+    for (const { group } of schoolGroups) {
+      const unlockedSlots = activitySlots.filter((slot) => {
+        const key = builderAssignmentKey(slot.day, slot.session, group)
+        return !(preserveManual && programmeBuilder.manualLocks[key])
+      })
+      for (const slot of unlockedSlots) next[builderAssignmentKey(slot.day, slot.session, group)] = ''
+
+      const sortedSlots = [...unlockedSlots].sort((a, b) => a.priority - b.priority || a.date.localeCompare(b.date) || Number(a.session) - Number(b.session))
+      const queue = [...allowed]
+      const hasCanoe = queue.includes('CANOE')
+      const hasKayak = queue.includes('KAYAK')
+
+      if (school.purchaseType === 'bargain' && hasCanoe && hasKayak) {
+        const pairs = sortedSlots.filter((slot) => {
+          const nextSession = String(Number(slot.session) + 1)
+          return sortedSlots.some((candidate) => candidate.day === slot.day && candidate.session === nextSession && candidate.priority === slot.priority)
+        })
+        const pairStart = pairs[0]
+        if (pairStart) {
+          const second = sortedSlots.find((slot) => slot.day === pairStart.day && Number(slot.session) === Number(pairStart.session) + 1)
+          if (second) {
+            next[builderAssignmentKey(pairStart.day, pairStart.session, group)] = 'CANOE'
+            next[builderAssignmentKey(second.day, second.session, group)] = 'KAYAK'
+            sortedSlots.splice(sortedSlots.indexOf(second), 1)
+            sortedSlots.splice(sortedSlots.indexOf(pairStart), 1)
+            queue.splice(queue.indexOf('CANOE'), 1)
+            queue.splice(queue.indexOf('KAYAK'), 1)
+          }
+        }
+      }
+
+      let index = 0
+      for (const slot of sortedSlots) {
+        if (!queue.length) break
+        const preferred = queue.findIndex((code) => {
+          if (!WATER_ACTIVITY_CODES.has(code)) return true
+          return slot.priority < 2
+        })
+        const chosenIndex = preferred >= 0 ? preferred : 0
+        const [code] = queue.splice(chosenIndex, 1)
+        next[builderAssignmentKey(slot.day, slot.session, group)] = code
+        if (queue.length === 0 && school.purchaseType !== 'bargain') queue.push(...allowed)
+        index += 1
       }
     }
+    return next
+  }
+
+  function autoFillProgrammeBuilder(schoolId: string) {
+    const school = programmeBuilder.schools.find((item) => item.id === schoolId)
+    if (!school) return
+    const next = generateSchoolAssignments(schoolId, true)
     updateProgrammeBuilder({ assignments: next })
-    setProgrammeBuilderMessage(`${school.name || 'School'} auto-filled using its dates and package.`)
+    setProgrammeBuilderMessage(`${school.name || 'School'} updated around your manually locked sessions.`)
+  }
+
+  function updateWholeProgramme() {
+    let next = { ...programmeBuilder.assignments }
+    for (const school of programmeBuilder.schools) next = generateSchoolAssignments(school.id, true, next)
+    updateProgrammeBuilder({ assignments: next })
+    setProgrammeBuilderMessage('Programme updated. Your manual changes were kept and the remaining sessions were rearranged around them.')
+  }
+
+  function resetProgrammeLocks() {
+    updateProgrammeBuilder({ manualLocks: {} })
+    setProgrammeBuilderMessage('Manual locks cleared. The next update can rearrange every activity session.')
   }
 
   function setBuilderActivity(day: string, session: string, group: number, activityCode: string) {
-    updateProgrammeBuilder({ assignments: { ...programmeBuilder.assignments, [builderAssignmentKey(day, session, group)]: activityCode } })
+    const key = builderAssignmentKey(day, session, group)
+    updateProgrammeBuilder({
+      assignments: { ...programmeBuilder.assignments, [key]: activityCode },
+      manualLocks: { ...programmeBuilder.manualLocks, [key]: true },
+    })
+    setProgrammeBuilderMessage('Manual change saved and locked. Update Programme will keep it in place.')
   }
 
   function builderValidation() {
@@ -4382,7 +4466,9 @@ function ManagerApp({
 
                 <section className="builder-section">
                   <div className="builder-section-heading"><div><p className="eyebrow">Programme grid</p><h3>Assign activities</h3></div><span>{builderGroups.length} groups · {builderDays.length} days</span></div>
-                  <div className="builder-grid-wrap"><table className="builder-grid"><thead><tr><th>Day</th><th>Session</th>{builderGroups.map(({ group, school }) => <th key={group}>G{group}<small>{school.name || 'School'}</small></th>)}</tr></thead><tbody>{builderDays.flatMap((dayInfo) => BUILDER_SESSIONS.map((session) => <tr key={`${dayInfo.day}-${session}`}><th>{dayInfo.label}</th><th>S{session}</th>{builderGroups.map(({ group, school }) => { const state = builderSchoolSessionState(school, dayInfo.date, session); const value = programmeBuilder.assignments[builderAssignmentKey(dayInfo.day, session, group)] ?? ''; const options = school.purchaseType === 'bargain' ? activities.filter((activity) => programmeBuilder.bargainAllowedActivities.includes(activity.code)) : activities; return <td key={group} className={`builder-state-${state}`}>{state === 'arrival' ? <strong>{school.name || 'School'} – Arrival</strong> : state === 'departed' ? <span>Departed</span> : state === 'offsite' ? <span>Not on site</span> : <select value={value} onChange={(event) => setBuilderActivity(dayInfo.day, session, group, event.target.value)}><option value="">—</option>{options.map((activity) => <option key={activity.code} value={activity.code}>{activity.code} – {activity.name}</option>)}</select>}</td> })}</tr>))}</tbody></table></div>
+                  <div className="builder-grid-wrap"><table className="builder-grid"><thead><tr><th>Day</th><th>Session</th>{builderGroups.map(({ group, school }) => <th key={group}>G{group}<small>{school.name || 'School'}</small></th>)}</tr></thead><tbody>{builderDays.flatMap((dayInfo) => BUILDER_SESSIONS.map((session) => <tr key={`${dayInfo.day}-${session}`}><th>{dayInfo.label}</th><th>S{session}</th>{builderGroups.map(({ group, school }) => { const state = builderSchoolSessionState(school, dayInfo.date, session); const value = programmeBuilder.assignments[builderAssignmentKey(dayInfo.day, session, group)] ?? ''; const options = school.purchaseType === 'bargain' ? activities.filter((activity) => programmeBuilder.bargainAllowedActivities.includes(activity.code)) : activities; return <td key={group} className={`builder-state-${state}`}>{state === 'arrival' ? <strong>{school.name || 'School'} – Arrival</strong> : state === 'departed' ? <span>Departed</span> : state === 'offsite' ? <span>Not on site</span> : <select className={programmeBuilder.manualLocks[builderAssignmentKey(dayInfo.day, session, group)] ? 'manual-locked' : ''} title={programmeBuilder.manualLocks[builderAssignmentKey(dayInfo.day, session, group)] ? 'Manual change locked' : 'Automatic activity'} value={value} onChange={(event) => setBuilderActivity(dayInfo.day, session, group, event.target.value)}><option value="">—</option>{options.map((activity) => <option key={activity.code} value={activity.code}>{activity.code} – {activity.name}</option>)}</select>}</td> })}</tr>))}</tbody></table></div>
+
+                  <div className="builder-update-actions"><div><strong>Manual changes are protected</strong><p>Any activity you change is locked. Update Programme rearranges only the remaining sessions.</p></div><div><button className="secondary-action" onClick={resetProgrammeLocks}>Reset Locks</button><button className="primary" onClick={updateWholeProgramme}><WandSparkles size={17}/>Update Programme</button></div></div>
                 </section>
               </>
             ) : (

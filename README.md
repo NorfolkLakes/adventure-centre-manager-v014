@@ -1,4 +1,4 @@
-# Adventure Centre Manager v0.77
+# Adventure Centre Manager v0.78
 
 This version adds the first cloud login and staff rota system.
 
@@ -363,3 +363,8 @@ Adds permanent and loan staff lifecycle management, Former Staff and Loan Staff 
 - Arrival day: Sessions 1–2 show Not on site, Session 3 shows the school arrival, Sessions 4–5 allow activities.
 - Departure day: Sessions 1–2 allow activities and Sessions 3–5 show Departed.
 - Programme publishing carries the same date-aware rules into Programme and Daily Staffing.
+
+
+## v0.78 – Protected manual programme updates
+
+Adds automatic locking for manually edited programme cells, Update Programme and Reset Locks controls, consecutive Canoe/Kayak Bargain Special scheduling, and preferences to place water sessions after arrival while avoiding Friday/departure-day water where practical.

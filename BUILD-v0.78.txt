@@ -1,0 +1,7 @@
+Adventure Centre Manager v0.78
+
+- Manual programme edits lock automatically.
+- Update Programme preserves locked changes and rearranges unlocked sessions.
+- Reset Locks allows a complete regeneration.
+- Bargain Special Canoe and Kayak are kept as a consecutive two-session block where possible.
+- Water is preferred for the day after arrival and avoided on arrival day, Friday and departure day where possible.
