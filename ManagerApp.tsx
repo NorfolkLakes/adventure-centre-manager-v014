@@ -2050,14 +2050,26 @@ function ManagerApp({
     const rows: ProgrammeRow[] = []
     for (const dayInfo of days) {
       for (const session of BUILDER_SESSIONS) {
-        for (const school of draft.schools) {
-          const schoolGroups = groups.filter((entry) => entry.school.id === school.id)
-          rows.push({
-            id: `builder-${dayInfo.day}-${session}-${school.id}`,
-            day: dayInfo.day, session, schoolLabel: school.name.trim(),
-            cells: schoolGroups.map(({ group }) => { const state = builderSchoolSessionState(school, dayInfo.date, session); return { group, activityCode: state === 'arrival' ? school.name.trim() : state === 'activity' ? (draft.assignments[builderAssignmentKey(dayInfo.day, session, group)] ?? '') : '' } }),
-          })
-        }
+        const arrivalSchools: string[] = []
+        const cells = groups.map(({ school, group }) => {
+          const state = builderSchoolSessionState(school, dayInfo.date, session)
+          if (state === 'arrival' && !arrivalSchools.includes(school.name.trim())) arrivalSchools.push(school.name.trim())
+          return {
+            group,
+            activityCode: state === 'arrival'
+              ? school.name.trim()
+              : state === 'activity'
+                ? (draft.assignments[builderAssignmentKey(dayInfo.day, session, group)] ?? '')
+                : '',
+          }
+        })
+        rows.push({
+          id: `builder-${dayInfo.day}-${session}`,
+          day: dayInfo.day,
+          session,
+          schoolLabel: arrivalSchools.join(' / '),
+          cells,
+        })
       }
     }
     const next: ProgrammeImport = {
@@ -2065,7 +2077,16 @@ function ManagerApp({
       groupNumbers: groups.map(({ group }) => group), rows, importedAt: new Date().toISOString(),
       sourceFileName: `${draft.name.trim().replace(/[^a-z0-9]+/gi, '-') || 'programme'}-built-in-app.xlsx`,
       startDate: draft.startDate, endDate: draft.endDate,
-      schoolDetails: draft.schools.map((school) => ({ id: school.id, schoolName: school.name.trim(), programmeName: school.programmeName.trim(), purchaseType: school.purchaseType, arrivalDate: school.arrivalDate, departureDate: school.departureDate, notes: school.notes })),
+      schoolDetails: draft.schools.map((school) => ({
+        id: school.id,
+        schoolName: school.name.trim(),
+        programmeName: school.programmeName.trim(),
+        purchaseType: school.purchaseType,
+        arrivalDate: school.arrivalDate,
+        departureDate: school.departureDate,
+        notes: school.notes,
+        groupNumbers: groups.filter((entry) => entry.school.id === school.id).map((entry) => entry.group),
+      })),
     }
     saveProgramme(next, programme ?? undefined)
     ensureWorkingStaffForDays(days.map((entry) => entry.day))
@@ -2126,6 +2147,56 @@ function ManagerApp({
       programme ?? undefined,
     )
     setImportMessage(`Restored ${version.sourceFileName}.`)
+  }
+
+  function programmeGroupSchool(source: ProgrammeImport, group: number) {
+    return source.schoolDetails?.find((school) => school.groupNumbers?.includes(group))?.schoolName ?? ''
+  }
+
+  function programmeCellDisplay(row: ProgrammeRow, group: number) {
+    const value = row.cells.find((cell) => cell.group === group)?.activityCode ?? ''
+    if (!value) return '—'
+    const schoolName = programmeGroupSchool(programme!, group)
+    if (row.session === '3' && schoolName && value.toLowerCase() === schoolName.toLowerCase()) return schoolName
+    return value
+  }
+
+  function downloadPublishedProgrammeExcel() {
+    if (!programme) return
+    const title = programme.title || programme.sourceFileName.replace(/\.xlsx$/i, '') || 'Programme'
+    const header1 = ['PROGRAMME', '', ...programme.groupNumbers.map((group) => programmeGroupSchool(programme, group) || `Group ${group}`)]
+    const header2 = ['DAY', 'SES', ...programme.groupNumbers.map((group) => `G${group}`)]
+    const data = programme.rows.map((row) => [row.day, row.session, ...programme.groupNumbers.map((group) => programmeCellDisplay(row, group))])
+    const worksheet = XLSX.utils.aoa_to_sheet([[title], [friendlyProgrammeDateRange(programme.startDate ?? '', programme.endDate ?? '')], header1, header2, ...data])
+    worksheet['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: Math.max(1, programme.groupNumbers.length + 1) } }]
+    worksheet['!freeze'] = { xSplit: 2, ySplit: 4, topLeftCell: 'C5', activePane: 'bottomRight', state: 'frozen' }
+    worksheet['!cols'] = [{ wch: 10 }, { wch: 7 }, ...programme.groupNumbers.map(() => ({ wch: 15 }))]
+    worksheet['!rows'] = [{ hpt: 28 }, { hpt: 20 }, { hpt: 28 }, { hpt: 24 }, ...data.map(() => ({ hpt: 23 }))]
+
+    const range = XLSX.utils.decode_range(worksheet['!ref'] ?? 'A1:A1')
+    for (let r = range.s.r; r <= range.e.r; r += 1) {
+      for (let c = range.s.c; c <= range.e.c; c += 1) {
+        const address = XLSX.utils.encode_cell({ r, c })
+        const cell = worksheet[address]
+        if (!cell) continue
+        const base = { font: { name: 'Arial', sz: 10, bold: r <= 3 }, alignment: { horizontal: 'center', vertical: 'center', wrapText: true }, border: { top: { style: 'thin', color: { rgb: '9CA3AF' } }, bottom: { style: 'thin', color: { rgb: '9CA3AF' } }, left: { style: 'thin', color: { rgb: '9CA3AF' } }, right: { style: 'thin', color: { rgb: '9CA3AF' } } } } as any
+        if (r === 0) cell.s = { ...base, font: { name: 'Arial', sz: 16, bold: true, color: { rgb: 'FFFFFF' } }, fill: { patternType: 'solid', fgColor: { rgb: '123D38' } } }
+        else if (r === 2) cell.s = { ...base, fill: { patternType: 'solid', fgColor: { rgb: 'DDEFEA' } }, font: { name: 'Arial', sz: 9, bold: true, color: { rgb: '164E45' } } }
+        else if (r === 3) cell.s = { ...base, fill: { patternType: 'solid', fgColor: { rgb: '123D38' } }, font: { name: 'Arial', sz: 10, bold: true, color: { rgb: 'FFFFFF' } } }
+        else if (r >= 4 && c < 2) cell.s = { ...base, fill: { patternType: 'solid', fgColor: { rgb: 'E8F1EF' } }, font: { name: 'Arial', sz: 10, bold: true } }
+        else if (r >= 4) {
+          const value = String(cell.v ?? '').toUpperCase()
+          const fill = value === '—' ? 'F3F4F6' : value.includes('ARRIVAL') || (programme.schoolDetails ?? []).some((school) => value === school.schoolName.toUpperCase()) ? 'DCEBFA' : value === 'CF' ? 'F7D7BE' : ['CANOE','GCAN','KAYAK','SUP','GSUP','RAFT','SAIL','SAILA','SAIL PB'].includes(value) ? 'D8EEF7' : 'E9F2D7'
+          cell.s = { ...base, fill: { patternType: 'solid', fgColor: { rgb: fill } }, font: { name: 'Arial', sz: 10, bold: true } }
+        }
+      }
+    }
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Programme')
+    workbook.Workbook = { Views: [{ RTL: false }] }
+    const safeName = title.replace(/[^a-z0-9 _-]+/gi, '').trim() || 'Programme'
+    XLSX.writeFile(workbook, `${safeName}.xlsx`, { cellStyles: true })
+    setImportMessage('Downloaded the latest edited programme as Excel.')
   }
 
   function updateActivity(rowId: string, group: number, activityCode: string) {
@@ -3973,13 +4044,16 @@ function ManagerApp({
                 {programme ? 'Upload changed programme' : 'Upload programme'}
               </button>
               {programme && (
-                <div className="programme-details">
-                  <strong>{programme.sourceFileName}</strong>
-                  <span>
-                    Sheet: {programme.sheetName} · Imported{' '}
-                    {new Date(programme.importedAt).toLocaleString()}
-                  </span>
-                </div>
+                <>
+                  <div className="programme-details">
+                    <strong>{programme.title || programme.sourceFileName}</strong>
+                    <span>{friendlyProgrammeDateRange(programme.startDate ?? '', programme.endDate ?? '')} · Last updated {new Date(programme.importedAt).toLocaleString()}</span>
+                  </div>
+                  <div className="programme-toolbar-actions">
+                    <button className="secondary-action" onClick={() => setPage('programmeBuilder')}><CalendarRange size={18}/>Edit programme</button>
+                    <button className="primary" onClick={downloadPublishedProgrammeExcel}><FileSpreadsheet size={18}/>Download Excel</button>
+                  </div>
+                </>
               )}
             </div>
 
@@ -5146,9 +5220,10 @@ function ProgrammeGrid({
           <tr>
             <th className="sticky-day">Day</th>
             <th className="sticky-session">Ses</th>
-            {programme.groupNumbers.map((group) => (
-              <th key={group} >G{group}</th>
-            ))}
+            {programme.groupNumbers.map((group) => {
+              const school = programme.schoolDetails?.find((item) => item.groupNumbers?.includes(group))
+              return <th key={group}><span>G{group}</span>{school?.schoolName && <small>{school.schoolName}</small>}</th>
+            })}
           </tr>
         </thead>
         <tbody>
@@ -5169,10 +5244,12 @@ function ProgrammeGrid({
                     (item) => item.group === group,
                   )
                   const code = cell?.activityCode ?? ''
+                  const school = programme.schoolDetails?.find((item) => item.groupNumbers?.includes(group))
+                  const isArrival = Boolean(school && row.session === '3' && code.toLowerCase() === school.schoolName.toLowerCase())
                   return (
-                    <td key={group} >
+                    <td key={group} className={isArrival ? 'programme-arrival-cell' : ''}>
                       <button
-                        className={`programme-cell code-${code.toLowerCase()}`}
+                        className={`programme-cell ${isArrival ? 'programme-arrival' : ''} code-${code.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`}
                         onClick={() => onSelect(row, group)}
                         title={code ? activityNameFromList(activities, code) : 'Empty'}
                       >

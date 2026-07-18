@@ -1,0 +1,6 @@
+Adventure Centre Manager v0.80
+- Published weekly grid redesigned for full-week visibility
+- Programme remains editable
+- Download Excel always exports latest programme data
+- Builder publish now creates one row per day/session
+- School names shown above group columns

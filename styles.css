@@ -1724,3 +1724,25 @@ button { cursor: pointer; }
 
 /* v0.79 saved programme library */
 .programme-library{display:grid;gap:18px}.programme-library-hero{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap;padding:22px;border:1px solid #d8e2df;border-radius:18px;background:#f5faf8}.programme-library-hero h2{margin:3px 0}.programme-library-hero p{margin:0}.programme-library-filters{display:flex;gap:12px;flex-wrap:wrap}.programme-library-filters label{display:flex;align-items:center;gap:8px;border:1px solid #d8e2df;border-radius:12px;padding:9px 12px;background:white}.programme-library-filters input{border:0;outline:0;background:transparent}.programme-library-grid{display:grid;gap:12px}.programme-library-card{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:18px;border:1px solid #d8e2df;border-radius:16px;background:white}.programme-library-card h3{margin:4px 0}.programme-library-card p,.programme-library-card small{margin:0;color:#667}.programme-library-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.empty-state{text-align:center;padding:36px;border:1px dashed #bccdc7;border-radius:16px}.builder-topbar>.secondary-action{margin-right:auto}@media(max-width:760px){.programme-library-card{align-items:flex-start;flex-direction:column}.programme-library-actions{width:100%}}
+
+
+/* v0.80 published weekly programme and Excel export */
+.programme-toolbar { display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+.programme-toolbar-actions { margin-left:auto; display:flex; gap:10px; flex-wrap:wrap; }
+.programme-scroll { max-height:72vh; overflow:auto; border:1px solid #cbd5d1; border-radius:14px; background:#fff; box-shadow:0 8px 24px rgba(15,45,40,.08); }
+.programme-table { border-collapse:separate; border-spacing:0; min-width:max-content; width:100%; font-size:13px; }
+.programme-table th, .programme-table td { border-right:1px solid #b8c8c3; border-bottom:1px solid #b8c8c3; padding:0; text-align:center; }
+.programme-table thead th { position:sticky; top:0; z-index:8; min-width:105px; padding:9px 6px; background:#123d38; color:#fff; text-transform:uppercase; letter-spacing:.03em; }
+.programme-table thead th small { display:block; margin-top:3px; max-width:110px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#c8e7df; font-size:9px; text-transform:none; }
+.programme-table .sticky-day { position:sticky; left:0; z-index:7; min-width:84px; background:#e4efec; color:#143c37; }
+.programme-table thead .sticky-day { z-index:11; background:#123d38; color:#fff; }
+.programme-table .sticky-session { position:sticky; left:84px; z-index:7; min-width:55px; background:#edf4f2; color:#143c37; }
+.programme-table thead .sticky-session { z-index:11; background:#123d38; color:#fff; }
+.programme-cell { width:100%; min-width:105px; min-height:42px; border:0; border-radius:0; padding:7px 5px; background:#e8f1dc; color:#1f342f; font-weight:800; font-size:12px; cursor:pointer; }
+.programme-cell:hover { outline:3px solid #2a8b76; outline-offset:-3px; }
+.programme-cell.code-canoe,.programme-cell.code-gcan,.programme-cell.code-kayak,.programme-cell.code-sup,.programme-cell.code-gsup,.programme-cell.code-raft,.programme-cell.code-sail,.programme-cell.code-saila,.programme-cell.code-sail-pb { background:#d8eef7; }
+.programme-cell.code-cf { background:#f5d0b5; }
+.programme-cell.code-disco,.programme-cell.code-video { background:#eadff4; }
+.programme-cell.code- { background:#f3f5f4; color:#8a9894; }
+.programme-arrival-cell .programme-cell,.programme-cell.programme-arrival { background:#dbeafe; color:#1e3a5f; font-size:11px; }
+@media (max-width:760px) { .programme-toolbar-actions { width:100%; margin-left:0; } .programme-toolbar-actions button { flex:1; } }
