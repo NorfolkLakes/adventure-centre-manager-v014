@@ -841,6 +841,7 @@ function ManagerApp({
       : staffingDayOptions[0] ?? ''
   const [importMessage, setImportMessage] = useState('')
   const [weather, setWeather] = useState<{ temperature: number; wind: number; code: number } | null>(null)
+  const [currentTime, setCurrentTime] = useState(() => new Date())
   const [cloudSyncStatus, setCloudSyncStatus] = useState<
     'idle' | 'syncing' | 'synced' | 'error'
   >('idle')
@@ -915,6 +916,11 @@ function ManagerApp({
     )
   }, [programme, staff])
 
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setCurrentTime(new Date()), 60_000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   useEffect(() => {
     fetch('https://api.open-meteo.com/v1/forecast?latitude=52.69&longitude=0.95&current=temperature_2m,weather_code,wind_speed_10m&timezone=Europe%2FLondon')
@@ -4566,6 +4572,34 @@ function ManagerApp({
   const availableTodayCount = staff.filter((member) =>
     (!todayWorkingIds || todayWorkingIds.includes(member.id)) && !todayUnavailableIds.has(member.id),
   ).length
+
+  // Live dashboard count based on each staff member's individual status.
+  // Working: 08:30–20:30, AM OFF: 12:15–20:30, PM OFF: 08:30–17:15.
+  // OFF, holiday and sick are never counted.
+  const staffCurrentlyOnSiteCount = (() => {
+    const today = dateKey(currentTime)
+    const minutesNow = currentTime.getHours() * 60 + currentTime.getMinutes()
+    const centreOpen = 8 * 60 + 30
+    const amOffStart = 12 * 60 + 15
+    const pmOffEnd = 17 * 60 + 15
+    const centreClose = 20 * 60 + 30
+
+    if (minutesNow < centreOpen || minutesNow > centreClose) return 0
+
+    const workingIds = workingByDay[today]
+    const sickIds = new Set(sicknessByDay[today] ?? [])
+
+    return staff.filter((member) => {
+      if (workingIds && !workingIds.includes(member.id)) return false
+      if (sickIds.has(member.id)) return false
+
+      const status = daysOff.find((entry) => entry.staff_id === member.id && entry.day === today)?.status
+      if (status === 'off' || status === 'hol' || status === 'sick') return false
+      if (status === 'am_off') return minutesNow >= amOffStart && minutesNow <= centreClose
+      if (status === 'pm_off') return minutesNow >= centreOpen && minutesNow <= pmOffEnd
+      return minutesNow >= centreOpen && minutesNow <= centreClose
+    }).length
+  })()
   const dailyShortages = programmeDays.map((day) => {
     const required = busiestSessionForDay(day)?.total ?? 0
     const available = (workingByDay[day] ?? staff.map((member) => member.id))
@@ -4640,7 +4674,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v3.01</span></div><small>Norfolk Lakes</small></div></div>
+          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v3.1</span></div><small>Norfolk Lakes</small></div></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -4702,8 +4736,8 @@ function ManagerApp({
               </div>
               <div className="hero-live-card">
                 <span className="live-indicator"><span/>LIVE</span>
-                <strong>{availableTodayCount}</strong>
-                <small>staff available today</small>
+                <strong>{staffCurrentlyOnSiteCount}</strong>
+                <small>staff currently on site</small>
                 <div className={!hasProgramme ? 'hero-alert' : staffingShortages ? 'hero-alert warning' : 'hero-alert ready'}>
                   {!hasProgramme ? 'No programme loaded' : staffingShortages ? `${staffingShortages} staffing gaps need attention` : 'Programme fully staffed'}
                 </div>
@@ -4723,7 +4757,7 @@ function ManagerApp({
                 label="Activity places"
               />
               <Stat icon={<Users />} value={schoolsOnSite} label="Schools on site" />
-              <Stat icon={<UserRoundCheck />} value={availableTodayCount} label="Staff available" />
+              <Stat icon={<UserRoundCheck />} value={staffCurrentlyOnSiteCount} label="Staff currently on site" />
               <Stat icon={<CircleAlert />} value={staffingShortages} label="Staffing shortages" />
               <article className="stat-card busiest-card">
                 <span><CircleAlert /></span>
