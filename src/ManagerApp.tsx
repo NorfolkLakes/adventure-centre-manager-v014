@@ -48,6 +48,16 @@ type ZipEntry = {
 const zipEncoder = new TextEncoder()
 const zipDecoder = new TextDecoder()
 
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>'"]/g, (character) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    "'": '&#39;',
+    '"': '&quot;',
+  }[character] ?? character))
+}
+
 function zipU16(view: DataView, offset: number, value: number) { view.setUint16(offset, value, true) }
 function zipU32(view: DataView, offset: number, value: number) { view.setUint32(offset, value >>> 0, true) }
 
@@ -186,6 +196,7 @@ const PAYROLL_SYNC_KEY = 'acm-payroll-sync'
 const STAFFING_ARCHIVES_KEY = 'acm-staffing-archives'
 const PROGRAMME_BUILDER_KEY = 'acm-programme-builder-draft'
 const PROGRAMME_LIBRARY_KEY = 'acm-programme-library'
+const PROGRAMME_ARCHIVE_KEY = 'acm-programme-archive-v1'
 
 type ProgrammePurchaseType = 'bargain' | 'normal'
 type BuilderSchool = { id: string; name: string; programmeName: string; purchaseType: ProgrammePurchaseType; arrivalDate: string; departureDate: string; notes: string; groups: number; requestedActivities: string[]; backupOption1: string; backupOption2: string; locked: boolean }
@@ -203,6 +214,7 @@ type ProgrammeBuilderDraft = {
 }
 
 type SavedProgramme = { id: string; title: string; startDate: string; endDate: string; updatedAt: string; draft: ProgrammeBuilderDraft }
+type ArchivedProgramme = ProgrammeImport & { archiveId: string; archivedAt: string }
 
 const DEFAULT_BARGAIN_CODES = ['CANOE', 'KAYAK', 'ARCH', 'BT', 'VB', 'MO', 'OC', 'LR', 'AIR', 'CF', 'DISCO']
 const ACTIVITY_CAPACITY: Record<string, number> = { CLIMB: 2, HR: 2, BT: 2, SAIL: 3, 'SAIL PB': 1, CANOE: 3, GCAN: 3, KAYAK: 3, SUP: 3, GSUP: 3, RAFT: 2, ARCH: 2, RIFLES: 2, CF: 30, DISCO: 30 }
@@ -738,6 +750,10 @@ function ManagerApp({
   const [activeSavedProgrammeId, setActiveSavedProgrammeId] = useState<string | null>(null)
   const [programmeSearch, setProgrammeSearch] = useState('')
   const [programmeMonth, setProgrammeMonth] = useState('')
+  const [programmeArchive, setProgrammeArchive] = useState<ArchivedProgramme[]>(() => readJson(PROGRAMME_ARCHIVE_KEY, []))
+  const [archiveSearch, setArchiveSearch] = useState('')
+  const [archiveYear, setArchiveYear] = useState('')
+  const [archiveMonth, setArchiveMonth] = useState('')
   const [assignments, setAssignments] = useState<StaffingAssignment>(() =>
     readJson(ASSIGNMENT_KEY, {}),
   )
@@ -762,10 +778,41 @@ function ManagerApp({
     group: number
   } | null>(null)
   const [query, setQuery] = useState('')
+
+  useEffect(() => {
+    if (!programme) return
+    const archiveId = `${programme.startDate ?? programme.importedAt.slice(0, 10)}|${programme.endDate ?? ''}|${programme.title || programme.sourceFileName}`.toLowerCase()
+    setProgrammeArchive((current) => {
+      const existing = current.find((item) => item.archiveId === archiveId)
+      const archived: ArchivedProgramme = {
+        ...programme,
+        archiveId,
+        archivedAt: existing?.archivedAt ?? new Date().toISOString(),
+      }
+      const next = [archived, ...current.filter((item) => item.archiveId !== archiveId)]
+        .sort((a, b) => (b.startDate ?? b.importedAt).localeCompare(a.startDate ?? a.importedAt))
+      localStorage.setItem(PROGRAMME_ARCHIVE_KEY, JSON.stringify(next))
+      return next
+    })
+  }, [programme])
+
   const programmeDays = useMemo(
     () => Array.from(new Set(programme?.rows.map((row) => row.day) ?? [])),
     [programme],
   )
+  const archiveYears = useMemo(() => Array.from(new Set(programmeArchive.map((item) => (item.startDate ?? item.importedAt.slice(0, 10)).slice(0, 4)))).filter(Boolean).sort((a, b) => b.localeCompare(a)), [programmeArchive])
+  const filteredProgrammeArchive = useMemo(() => {
+    const search = archiveSearch.trim().toLowerCase()
+    return programmeArchive.filter((item) => {
+      const start = item.startDate ?? item.importedAt.slice(0, 10)
+      const year = start.slice(0, 4)
+      const month = start.slice(5, 7)
+      const schoolNames = (item.schoolDetails ?? []).map((school) => `${school.schoolName} ${school.programmeName}`).join(' ')
+      const haystack = `${item.title} ${item.sourceFileName} ${schoolNames} ${start} ${item.endDate ?? ''}`.toLowerCase()
+      return (!archiveYear || year === archiveYear) && (!archiveMonth || month === archiveMonth) && (!search || haystack.includes(search))
+    })
+  }, [programmeArchive, archiveSearch, archiveYear, archiveMonth])
+
   const [selectedStaffingDay, setSelectedStaffingDay] = useState('')
   const [staffingView, setStaffingView] = useState<'activity' | 'calendar' | 'availability'>('activity')
   const [staffingZoom, setStaffingZoom] = useState<number>(() => {
@@ -2775,6 +2822,38 @@ function ManagerApp({
     setImportMessage('Downloaded the professional centre exportProgramme workbook using your saved activity colours.')
   }
 
+  function schoolProgrammeFromArchive(source: ProgrammeImport, schoolName: string) {
+    const school = (source.schoolDetails ?? []).find((item) => item.schoolName === schoolName)
+    if (!school) return source
+    const groups = new Set(school.groupNumbers ?? [])
+    return {
+      ...source,
+      title: school.programmeName || `${school.schoolName} Programme`,
+      sourceFileName: `${school.schoolName}-programme.xlsx`,
+      groupNumbers: source.groupNumbers.filter((group) => groups.has(group)),
+      rows: source.rows.map((row) => ({ ...row, cells: row.cells.filter((cell) => groups.has(cell.group)) })),
+      schoolDetails: [school],
+    }
+  }
+
+  function printArchivedProgramme(source: ProgrammeImport, schoolName?: string) {
+    const exportProgramme = schoolName ? schoolProgrammeFromArchive(source, schoolName) : source
+    const groups = exportProgramme.groupNumbers
+    const headers = groups.map((group) => `<th>G${group}<small>${escapeHtml(exportProgramme.schoolDetails?.find((school) => school.groupNumbers?.includes(group))?.schoolName ?? '')}</small></th>`).join('')
+    const rows = exportProgramme.rows.map((row) => `<tr><th>${escapeHtml(row.day)}</th><th>${escapeHtml(row.session)}</th>${groups.map((group) => `<td>${escapeHtml(row.cells.find((cell) => cell.group === group)?.activityCode ?? '')}</td>`).join('')}</tr>`).join('')
+    const popup = window.open('', '_blank')
+    if (!popup) { setImportMessage('Allow pop-ups to download the programme PDF.'); return }
+    popup.document.write(`<!doctype html><html><head><title>${escapeHtml(exportProgramme.title)}</title><style>@page{size:A4 landscape;margin:8mm}*{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}body{font-family:Arial;margin:0;color:#17212b}.head{display:flex;justify-content:space-between;align-items:end;border-bottom:3px solid #2f6f9f;margin-bottom:10px}.head h1{margin:0;font-size:24px;color:#17324d}.head p{margin:4px 0 8px}table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:${groups.length > 18 ? '7px' : groups.length > 12 ? '8px' : '9px'}th,td{border:1px solid #80909d;padding:4px;text-align:center;font-weight:700;overflow-wrap:anywhere}thead th{background:#17324d;color:white}thead small{display:block;font-size:7px;margin-top:2px}.no-print{position:fixed;right:10px;top:10px;background:#17324d;color:white;border:0;border-radius:6px;padding:9px 12px;font-weight:700}@media print{.no-print{display:none}}</style></head><body><button class="no-print" onclick="window.print()">Save / Print PDF</button><div class="head"><div><h1>${escapeHtml(exportProgramme.title)}</h1><p>${schoolName ? escapeHtml(schoolName) : 'Complete Centre Programme'}</p></div><strong>${escapeHtml(friendlyProgrammeDateRange(exportProgramme.startDate ?? '', exportProgramme.endDate ?? ''))}</strong></div><table><thead><tr><th>DAY</th><th>SES</th>${headers}</tr></thead><tbody>${rows}</tbody></table><script>setTimeout(()=>window.print(),500)<\/script></body></html>`)
+    popup.document.close()
+  }
+
+  function deleteArchivedProgramme(archiveId: string) {
+    if (!window.confirm('Delete this programme from the archive?')) return
+    const next = programmeArchive.filter((item) => item.archiveId !== archiveId)
+    setProgrammeArchive(next)
+    localStorage.setItem(PROGRAMME_ARCHIVE_KEY, JSON.stringify(next))
+  }
+
   function updateActivity(rowId: string, group: number, activityCode: string) {
     if (!programme) return
     const next = {
@@ -4690,6 +4769,25 @@ function ManagerApp({
                 )}
               </>
             )}
+          </Panel>
+        )}
+
+        {page === 'programmeArchive' && (
+          <Panel title="Programme Files" onBack={() => setPage('dashboard')}>
+            <section className="programme-archive-intro">
+              <div><p className="eyebrow">Admin programme filing</p><h3>Search every programme by school, year and month</h3><p>Programmes are filed automatically when they are loaded into the app. Download a complete centre programme or an individual school programme.</p></div>
+              <span className="release-pill">v2.10</span>
+            </section>
+            <div className="programme-archive-filters">
+              <label className="archive-search"><Search size={18}/><input value={archiveSearch} onChange={(event) => setArchiveSearch(event.target.value)} placeholder="Search school or programme"/></label>
+              <label>Year<select value={archiveYear} onChange={(event) => { setArchiveYear(event.target.value); setArchiveMonth('') }}><option value="">All years</option>{archiveYears.map((year) => <option key={year} value={year}>{year}</option>)}</select></label>
+              <label>Month<select value={archiveMonth} onChange={(event) => setArchiveMonth(event.target.value)}><option value="">All months</option>{Array.from({ length: 12 }, (_, index) => String(index + 1).padStart(2, '0')).map((month) => <option key={month} value={month}>{new Date(2026, Number(month) - 1, 1).toLocaleDateString('en-GB', { month: 'long' })}</option>)}</select></label>
+              {(archiveSearch || archiveYear || archiveMonth) && <button className="secondary-action" onClick={() => { setArchiveSearch(''); setArchiveYear(''); setArchiveMonth('') }}>Clear filters</button>}
+            </div>
+            {!filteredProgrammeArchive.length ? <div className="empty-state"><History size={34}/><h3>No programme files found</h3><p>Load or upload a programme and it will appear here automatically.</p></div> : <div className="programme-archive-list">{filteredProgrammeArchive.map((item) => <article className="programme-archive-card" key={item.archiveId}>
+              <header><div><span>{friendlyProgrammeDateRange(item.startDate ?? '', item.endDate ?? '')}</span><h3>{item.title || item.sourceFileName}</h3><p>{item.schoolDetails?.length ?? 0} school{(item.schoolDetails?.length ?? 0) === 1 ? '' : 's'} · {item.groupNumbers.length} groups · Filed {new Date(item.archivedAt).toLocaleDateString('en-GB')}</p></div><div className="archive-main-actions"><button className="primary" onClick={() => void downloadPublishedProgrammeExcel(item)}><FileSpreadsheet size={17}/>Complete Excel</button><button className="secondary-action" onClick={() => printArchivedProgramme(item)}><Printer size={17}/>Complete PDF</button><button className="icon-button small" title="Delete archive" onClick={() => deleteArchivedProgramme(item.archiveId)}><Trash2 size={16}/></button></div></header>
+              <div className="archive-school-list">{(item.schoolDetails ?? []).map((school) => <div className="archive-school-row" key={school.id || school.schoolName}><div><strong>{school.schoolName}</strong><span>{school.groupNumbers?.length ?? 0} groups · {friendlyProgrammeDateRange(school.arrivalDate || item.startDate || '', school.departureDate || item.endDate || '')}</span></div><div><button className="secondary-action" onClick={() => void downloadPublishedProgrammeExcel(schoolProgrammeFromArchive(item, school.schoolName))}><FileSpreadsheet size={16}/>Excel</button><button className="secondary-action" onClick={() => printArchivedProgramme(item, school.schoolName)}><Printer size={16}/>PDF</button></div></div>)}</div>
+            </article>)}</div>}
           </Panel>
         )}
 

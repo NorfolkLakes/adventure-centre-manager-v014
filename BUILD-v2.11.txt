@@ -1,0 +1,3 @@
+Adventure Centre Manager v2.11
+
+Fixes the Programme Archive build by providing a shared escapeHtml helper used by archived PDF exports.

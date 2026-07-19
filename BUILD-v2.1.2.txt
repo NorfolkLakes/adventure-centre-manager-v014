@@ -1,0 +1,3 @@
+Adventure Centre Manager v2.1.2
+
+Fix: added shared escapeHtml helper to src/ManagerApp.tsx so Programme Archive PDF export compiles.

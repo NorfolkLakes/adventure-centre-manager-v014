@@ -1,0 +1,15 @@
+Adventure Centre Manager v2.10 — Programme Files
+
+Added:
+- Programme Files page in main navigation.
+- Automatic archive whenever a programme is loaded or edited.
+- Search by school/programme name.
+- Browse/filter by year and month.
+- Download complete centre programme as Excel or PDF.
+- Download each school's programme as Excel or PDF.
+- Delete archive entries.
+- Archive stored in browser localStorage under acm-programme-archive-v1.
+
+Validation:
+- New TypeScript/TSX files passed TypeScript syntax transpilation.
+- Full npm build could not run in the tool environment because the package mirror did not contain scheduler@0.28.0. Run npm install/npm run build on the Mac.
