@@ -1,3 +1,4 @@
+// Adventure Centre Manager v2.2 — live serialized rota synchronisation
 import { ChangeEvent, Fragment, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Building2,
@@ -842,6 +843,8 @@ function ManagerApp({
     'idle' | 'syncing' | 'synced' | 'error'
   >('idle')
   const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const rotaSyncPromiseRef = useRef<Promise<void>>(Promise.resolve())
+  const rotaSyncRevisionRef = useRef(0)
   const [showSickPanel, setShowSickPanel] = useState(false)
   const [showWorkingPanel, setShowWorkingPanel] = useState(false)
   const [showActivityManager, setShowActivityManager] = useState(false)
@@ -3747,6 +3750,14 @@ function ManagerApp({
     localStorage.setItem(WATER_SUPPORT_KEY, JSON.stringify(clearedWaterSupport))
     localStorage.setItem(ARRIVAL_ASSIGNMENTS_KEY, JSON.stringify(clearedArrivals))
 
+    try {
+      await clearCloudRotaAssignments()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setImportMessage(`Programme was cleared locally, but staff duties could not be cleared from the cloud: ${message}`)
+      return
+    }
+
     // Save immediately as well as through the normal live-state autosave, so a
     // refresh or another logged-in computer cannot restore the cleared week.
     if (sharedStateReadyRef.current && accountEmail.trim()) {
@@ -3996,8 +4007,9 @@ function ManagerApp({
     : []
 
 
-  async function syncRotaToStaff(showMessage = false) {
+  async function performRotaSync(showMessage = false) {
     if (!programme) return
+    const requestedRevision = ++rotaSyncRevisionRef.current
     setCloudSyncStatus('syncing')
 
     const emailByStaffId = new Map(
@@ -4153,7 +4165,12 @@ function ManagerApp({
       }
     }
 
-    setCloudSyncStatus('synced')
+    // A newer staffing edit may have been queued while this network request
+    // was running. The queued request will write the newest state; only the
+    // newest completed revision should report the rota as fully synced.
+    if (requestedRevision === rotaSyncRevisionRef.current) {
+      setCloudSyncStatus('synced')
+    }
     if (showMessage) {
       setImportMessage(
         `Synced ${publishedRows.length} duties to staff accounts.${
@@ -4163,6 +4180,35 @@ function ManagerApp({
         }`,
       )
     }
+  }
+
+  function syncRotaToStaff(showMessage = false) {
+    // Serialize delete-and-insert cycles. Without this queue, two rapid edits
+    // could overlap: the older request might delete rows after the newer one
+    // inserted them, briefly leaving staff accounts empty or out of date.
+    rotaSyncPromiseRef.current = rotaSyncPromiseRef.current
+      .catch(() => undefined)
+      .then(() => performRotaSync(showMessage))
+    return rotaSyncPromiseRef.current
+  }
+
+  async function clearCloudRotaAssignments() {
+    rotaSyncRevisionRef.current += 1
+    rotaSyncPromiseRef.current = rotaSyncPromiseRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        setCloudSyncStatus('syncing')
+        const { error } = await supabase
+          .from('rota_assignments')
+          .delete()
+          .neq('id', '00000000-0000-0000-0000-000000000000')
+        if (error) {
+          setCloudSyncStatus('error')
+          throw error
+        }
+        setCloudSyncStatus('synced')
+      })
+    return rotaSyncPromiseRef.current
   }
 
   useEffect(() => {
@@ -4570,9 +4616,44 @@ function ManagerApp({
     })
   })
 
-  const schoolsOnSite = new Set(programme?.rows.map(arrivalSchoolName).filter(Boolean) ?? []).size
-  const availableTodayCount = activeStaffingDay
-    ? (workingByDay[activeStaffingDay] ?? staff.map((m) => m.id)).filter((id) => !unavailableStaffIdsForDay(activeStaffingDay).has(id)).length
+  // The dashboard must describe the real calendar date, not whichever day is
+  // currently selected on the Staffing page. This keeps Home in step with the
+  // weekly calendar and with changes received from Supabase.
+  const todayIso = dateKey(new Date())
+  const dashboardProgrammeDay = programme
+    ? programmeDays.find((day) => dateForProgrammeDay(programme, day) === todayIso)
+      ?? activeStaffingDay
+    : activeStaffingDay
+
+  const dashboardSchools = useMemo(() => {
+    if (!programme) return [] as string[]
+
+    const datedSchools = (programme.schoolDetails ?? [])
+      .filter((school) => {
+        const arrival = school.arrivalDate || programme.startDate || ''
+        const departure = school.departureDate || programme.endDate || ''
+        return Boolean(arrival && departure && arrival <= todayIso && departure >= todayIso)
+      })
+      .map((school) => school.schoolName.trim())
+      .filter(Boolean)
+
+    if (datedSchools.length) return Array.from(new Set(datedSchools))
+
+    // Older imported programmes do not always have schoolDetails. In that case
+    // use the school labels attached to today's programme rows.
+    return Array.from(new Set(
+      programme.rows
+        .filter((row) => row.day === dashboardProgrammeDay)
+        .map((row) => row.schoolLabel || arrivalSchoolName(row))
+        .map((name) => name.trim())
+        .filter(Boolean),
+    ))
+  }, [programme, dashboardProgrammeDay, todayIso])
+
+  const schoolsOnSite = dashboardSchools.length
+  const availableTodayCount = dashboardProgrammeDay
+    ? (workingByDay[dashboardProgrammeDay] ?? staff.map((m) => m.id))
+        .filter((id) => !unavailableStaffIdsForDay(dashboardProgrammeDay).has(id)).length
     : staff.length
   const dailyShortages = programmeDays.map((day) => {
     const required = busiestSessionForDay(day)?.total ?? 0
@@ -4692,7 +4773,7 @@ function ManagerApp({
             <section className="hero command-hero">
               <div className="hero-copy">
                 <div className="hero-kicker"><ShieldCheck size={17}/><span>Live operations command centre</span></div>
-                <p className="eyebrow">Today at Norfolk Lakes</p>
+                <p className="eyebrow">Today at Norfolk Lakes · {new Date(`${todayIso}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
                 <h2>{programme?.title ?? 'Upload today’s programme'}</h2>
                 <p>
                   Control programme changes, staffing, availability, qualifications
@@ -4711,7 +4792,7 @@ function ManagerApp({
               <div className="hero-live-card">
                 <span className="live-indicator"><span/>LIVE</span>
                 <strong>{availableTodayCount}</strong>
-                <small>staff available today</small>
+                <small>staff available today{dashboardProgrammeDay ? ` · ${dashboardProgrammeDay}` : ''}</small>
                 <div className={staffingShortages ? 'hero-alert warning' : 'hero-alert ready'}>
                   {staffingShortages ? `${staffingShortages} staffing gaps need attention` : 'Programme fully staffed'}
                 </div>

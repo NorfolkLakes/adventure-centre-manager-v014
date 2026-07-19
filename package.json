@@ -1,12 +1,16 @@
 {
   "name": "adventure-centre-manager",
   "private": true,
-  "version": "2.2.0",
+  "version": "2.2.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "phone:start": "npm --prefix staff-mobile start",
+    "phone:android": "npm --prefix staff-mobile run android",
+    "phone:typecheck": "npm --prefix staff-mobile run typecheck",
+    "phone:build": "npm --prefix staff-mobile run build:android"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.4",

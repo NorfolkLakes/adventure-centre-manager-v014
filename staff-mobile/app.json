@@ -1,0 +1,20 @@
+{
+  "expo": {
+    "name": "Adventure Centre Staff",
+    "slug": "adventure-centre-staff",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "scheme": "adventurecentrestaff",
+    "android": {
+      "package": "com.manoradventure.adventurecentrestaff",
+      "adaptiveIcon": {
+        "backgroundColor": "#0c3b35"
+      }
+    },
+    "ios": {
+      "bundleIdentifier": "com.manoradventure.adventurecentrestaff",
+      "supportsTablet": true
+    }
+  }
+}

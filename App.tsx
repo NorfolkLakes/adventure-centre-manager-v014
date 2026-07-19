@@ -54,46 +54,6 @@ function sessionRank(value: string) {
   return Number.isFinite(numeric) ? numeric : 999
 }
 
-
-const WEEKDAY_ORDER: Record<string, number> = {
-  MON: 1, MONDAY: 1,
-  TUE: 2, TUES: 2, TUESDAY: 2,
-  WED: 3, WEDNESDAY: 3,
-  THU: 4, THUR: 4, THURS: 4, THURSDAY: 4,
-  FRI: 5, FRIDAY: 5,
-  SAT: 6, SATURDAY: 6,
-  SUN: 7, SUNDAY: 7,
-}
-
-function weekdayRank(value: string) {
-  const key = value.trim().toUpperCase().replace(/[^A-Z]/g, '')
-  return WEEKDAY_ORDER[key] ?? 99
-}
-
-function displayProgrammeDay(value: string) {
-  const key = value.trim().toUpperCase().replace(/[^A-Z]/g, '')
-  const names: Record<string, string> = {
-    MON: 'Monday', MONDAY: 'Monday',
-    TUE: 'Tuesday', TUES: 'Tuesday', TUESDAY: 'Tuesday',
-    WED: 'Wednesday', WEDNESDAY: 'Wednesday',
-    THU: 'Thursday', THUR: 'Thursday', THURS: 'Thursday', THURSDAY: 'Thursday',
-    FRI: 'Friday', FRIDAY: 'Friday',
-    SAT: 'Saturday', SATURDAY: 'Saturday',
-    SUN: 'Sunday', SUNDAY: 'Sunday',
-  }
-  return names[key] ?? value
-}
-
-function isTodayProgrammeDay(value: string) {
-  const today = new Date().toLocaleDateString('en-GB', { weekday: 'long' })
-  return displayProgrammeDay(value) === today
-}
-
-function sessionRank(value: string) {
-  const numeric = Number.parseFloat(value)
-  return Number.isFinite(numeric) ? numeric : 999
-}
-
 type RotaDuty = {
   id: string
   programme_name: string

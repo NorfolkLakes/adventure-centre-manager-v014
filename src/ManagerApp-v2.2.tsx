@@ -1,3 +1,4 @@
+// Adventure Centre Manager v2.2 — live serialized rota synchronisation
 import { ChangeEvent, Fragment, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Building2,
@@ -639,16 +640,13 @@ function ManagerApp({
   accountEmail: string
   displayName?: string | null
   onSignOut: () => void
-  accountRole?: 'centreManager' | 'activityManager' | 'teamLeader' | 'admin'
+  accountRole?: 'centreManager' | 'activityManager' | 'teamLeader'
 }) {
-  const isAdminAccount = accountRole === 'admin'
   const canManageHolidays = accountRole === 'centreManager' || accountRole === 'activityManager'
   const canManageStaff = accountRole === 'centreManager' || accountRole === 'activityManager'
   const canRecordSickness = true
   const canViewLogs = canManageStaff
-  const [page, setPage] = useState<Page>(() => isAdminAccount ? 'admin' : 'dashboard')
-  const [adminAccountEmail, setAdminAccountEmail] = useState('')
-  const [adminAccountBusy, setAdminAccountBusy] = useState(false)
+  const [page, setPage] = useState<Page>('dashboard')
   const [programme, setProgramme] = useState<ProgrammeImport | null>(() =>
     readJson(PROGRAMME_KEY, null),
   )
@@ -845,6 +843,8 @@ function ManagerApp({
     'idle' | 'syncing' | 'synced' | 'error'
   >('idle')
   const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const rotaSyncPromiseRef = useRef<Promise<void>>(Promise.resolve())
+  const rotaSyncRevisionRef = useRef(0)
   const [showSickPanel, setShowSickPanel] = useState(false)
   const [showWorkingPanel, setShowWorkingPanel] = useState(false)
   const [showActivityManager, setShowActivityManager] = useState(false)
@@ -898,8 +898,6 @@ function ManagerApp({
   const sharedStateReadyRef = useRef(false)
   const applyingRemoteStateRef = useRef(false)
   const sharedSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const sharedSaveInFlightRef = useRef(false)
-  const sharedSaveQueuedRef = useRef(false)
   const [mySessions, setMySessions] = useState<MySessionDuty[]>([])
   const [mySessionsLoading, setMySessionsLoading] = useState(true)
   const [selectedMySessionsDay, setSelectedMySessionsDay] = useState('')
@@ -1149,7 +1147,7 @@ function ManagerApp({
 
   function handleWeeklyCellKeyDown(event: KeyboardEvent<HTMLDivElement>, member: StaffMember, day: string, row: number, column: number) {
     const target = event.target as HTMLElement
-    if (['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName)) return
+    if (['INPUT', 'TEXTAREA'].includes(target.tagName)) return
     const key = event.key.toLowerCase()
     if (event.key === 'ArrowLeft') { event.preventDefault(); focusWeeklyCell(row, column - 1); return }
     if (event.key === 'ArrowRight') { event.preventDefault(); focusWeeklyCell(row, column + 1); return }
@@ -1171,7 +1169,7 @@ function ManagerApp({
 
   function handleDailyCellKeyDown(event: KeyboardEvent<HTMLDivElement>, member: StaffMember, row: number) {
     const target = event.target as HTMLElement
-    if (['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName)) return
+    if (['INPUT', 'TEXTAREA'].includes(target.tagName)) return
     const key = event.key.toLowerCase()
     if (event.key === 'ArrowUp') { event.preventDefault(); focusDailyCell(row - 1); return }
     if (event.key === 'ArrowDown' || event.key === 'Enter') { event.preventDefault(); focusDailyCell(row + 1); return }
@@ -1561,52 +1559,20 @@ function ManagerApp({
   useEffect(() => {
     if (!sharedStateReadyRef.current || applyingRemoteStateRef.current) return
     if (sharedSaveTimerRef.current) clearTimeout(sharedSaveTimerRef.current)
-
-    const saveSharedState = async () => {
-      if (sharedSaveInFlightRef.current) {
-        sharedSaveQueuedRef.current = true
-        return
-      }
-
-      sharedSaveInFlightRef.current = true
+    sharedSaveTimerRef.current = setTimeout(async () => {
       const updatedAt = new Date().toISOString()
       const updatedByName = displayName?.trim() || accountEmail
-      // Archives are intentionally excluded from the live row. They can become very
-      // large and were causing Supabase statement timeouts on every small rota edit.
-      const state = { programme, staff, activities, assignments, waterSupportAssignments, workingByDay, sicknessByDay, arrivalAssignments }
-      let lastError: { message: string } | null = null
-
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        const { error } = await supabase.from('app_live_state').upsert({
-          id: 'main', state, updated_by_name: updatedByName,
-          updated_by_email: accountEmail.trim().toLowerCase(), updated_at: updatedAt,
-          section: page,
-        }, { onConflict: 'id' })
-        if (!error) {
-          lastError = null
-          break
-        }
-        lastError = error
-        if (attempt === 0) await new Promise((resolve) => window.setTimeout(resolve, 1200))
-      }
-
-      sharedSaveInFlightRef.current = false
-      if (lastError) {
-        setImportMessage(`Live update failed: ${lastError.message}`)
-      } else {
-        setImportMessage((message) => message.startsWith('Live update failed:') ? '' : message)
-        setLastSharedUpdate({ updated_by_name: updatedByName, updated_by_email: accountEmail, updated_at: updatedAt, section: page })
-      }
-
-      if (sharedSaveQueuedRef.current) {
-        sharedSaveQueuedRef.current = false
-        window.setTimeout(saveSharedState, 500)
-      }
-    }
-
-    sharedSaveTimerRef.current = setTimeout(saveSharedState, 2500)
+      const state = { programme, staff, activities, assignments, waterSupportAssignments, workingByDay, sicknessByDay, arrivalAssignments, staffingArchives }
+      const { error } = await supabase.from('app_live_state').upsert({
+        id: 'main', state, updated_by_name: updatedByName,
+        updated_by_email: accountEmail.trim().toLowerCase(), updated_at: updatedAt,
+        section: page,
+      }, { onConflict: 'id' })
+      if (error) setImportMessage(`Live update failed: ${error.message}`)
+      else setLastSharedUpdate({ updated_by_name: updatedByName, updated_by_email: accountEmail, updated_at: updatedAt, section: page })
+    }, 700)
     return () => { if (sharedSaveTimerRef.current) clearTimeout(sharedSaveTimerRef.current) }
-  }, [programme, staff, activities, assignments, waterSupportAssignments, workingByDay, sicknessByDay, arrivalAssignments, accountEmail, displayName, page])
+  }, [programme, staff, activities, assignments, waterSupportAssignments, workingByDay, sicknessByDay, arrivalAssignments, staffingArchives, accountEmail, displayName, page])
 
   async function addHoliday() {
     if (!canManageHolidays) {
@@ -3058,29 +3024,6 @@ function ManagerApp({
     setImportMessage(`Payroll synced with ${permanentCount} permanent staff. Existing template order will be retained and new staff will be added to the bottom of their role group.`)
   }
 
-  async function makeAdminAccount() {
-    const email = adminAccountEmail.trim().toLowerCase()
-    if (!email) return
-    setAdminAccountBusy(true)
-    const { data, error } = await supabase
-      .from('profiles')
-      .update({ role: 'admin' })
-      .eq('email', email)
-      .select('id,email')
-
-    setAdminAccountBusy(false)
-    if (error) {
-      setImportMessage(`Could not give admin access: ${error.message}`)
-      return
-    }
-    if (!data?.length) {
-      setImportMessage('No account was found with that email. Ask the admin person to create an account on the login screen first, then try again.')
-      return
-    }
-    setAdminAccountEmail('')
-    setImportMessage(`${email} now has access to Admin → Programme Files only.`)
-  }
-
   async function setStaffRole(staffId: string, role: StaffRole) {
     const member = staff.find((item) => item.id === staffId)
     const next = staff.map((item) =>
@@ -3765,6 +3708,86 @@ function ManagerApp({
     localStorage.setItem(ARRIVAL_ASSIGNMENTS_KEY, JSON.stringify(next))
   }
 
+
+  function clearArrivalSchool(row: ProgrammeRow) {
+    const schoolName = arrivalSchoolName(row)
+    if (!window.confirm(`Clear all arrival details for ${schoolName}? This removes accommodation, Party Leader and group instructors.`)) return
+    const next = { ...arrivalAssignments }
+    delete next[arrivalKey(row)]
+    setArrivalAssignments(next)
+    localStorage.setItem(ARRIVAL_ASSIGNMENTS_KEY, JSON.stringify(next))
+    setImportMessage(`${schoolName} arrival details were cleared and saved.`)
+  }
+
+  function clearAllArrivalSchools(day: string) {
+    const rows = arrivalRows.filter((row) => row.day === day)
+    if (!rows.length) return
+    if (!window.confirm(`Clear all ${rows.length} school arrivals for ${day}? This removes accommodation, Party Leaders and group instructors.`)) return
+    const keys = new Set(rows.map(arrivalKey))
+    const next = Object.fromEntries(Object.entries(arrivalAssignments).filter(([key]) => !keys.has(key)))
+    setArrivalAssignments(next)
+    localStorage.setItem(ARRIVAL_ASSIGNMENTS_KEY, JSON.stringify(next))
+    setImportMessage(`All ${day} school arrival details were cleared and saved.`)
+  }
+
+  async function clearCurrentProgramme() {
+    if (!programme) return
+    if (!window.confirm('Clear the current programme and all staffing and arrivals linked to it? The saved Programme Files archive will not be deleted.')) return
+
+    const clearedAssignments: Record<string, string> = {}
+    const clearedWaterSupport: Record<string, string> = {}
+    const clearedArrivals: Record<string, ArrivalAssignment> = {}
+
+    setProgramme(null)
+    setAssignments(clearedAssignments)
+    setWaterSupportAssignments(clearedWaterSupport)
+    setArrivalAssignments(clearedArrivals)
+    setSelectedCell(null)
+    setSelectedStaffingCell(null)
+
+    localStorage.removeItem(PROGRAMME_KEY)
+    localStorage.setItem(ASSIGNMENT_KEY, JSON.stringify(clearedAssignments))
+    localStorage.setItem(WATER_SUPPORT_KEY, JSON.stringify(clearedWaterSupport))
+    localStorage.setItem(ARRIVAL_ASSIGNMENTS_KEY, JSON.stringify(clearedArrivals))
+
+    try {
+      await clearCloudRotaAssignments()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setImportMessage(`Programme was cleared locally, but staff duties could not be cleared from the cloud: ${message}`)
+      return
+    }
+
+    // Save immediately as well as through the normal live-state autosave, so a
+    // refresh or another logged-in computer cannot restore the cleared week.
+    if (sharedStateReadyRef.current && accountEmail.trim()) {
+      const updatedAt = new Date().toISOString()
+      const updatedByName = displayName?.trim() || accountEmail
+      const state = {
+        programme: null,
+        staff,
+        activities,
+        assignments: clearedAssignments,
+        waterSupportAssignments: clearedWaterSupport,
+        workingByDay,
+        sicknessByDay,
+        arrivalAssignments: clearedArrivals,
+        staffingArchives,
+      }
+      const { error } = await supabase.from('app_live_state').upsert({
+        id: 'main', state, updated_by_name: updatedByName,
+        updated_by_email: accountEmail.trim().toLowerCase(), updated_at: updatedAt,
+        section: 'programme',
+      }, { onConflict: 'id' })
+      if (error) {
+        setImportMessage(`Programme was cleared locally, but the shared save failed: ${error.message}`)
+        return
+      }
+      setLastSharedUpdate({ updated_by_name: updatedByName, updated_by_email: accountEmail, updated_at: updatedAt, section: 'programme' })
+    }
+    setImportMessage('The current programme, staffing and arrivals were cleared and saved. Programme Files were kept.')
+  }
+
   function flatLabel(flatId: string) {
     const [building, flat] = flatId.split('-')
     return `${accommodationName(Number(building))} · Flat ${flat}`
@@ -3984,8 +4007,9 @@ function ManagerApp({
     : []
 
 
-  async function syncRotaToStaff(showMessage = false) {
+  async function performRotaSync(showMessage = false) {
     if (!programme) return
+    const requestedRevision = ++rotaSyncRevisionRef.current
     setCloudSyncStatus('syncing')
 
     const emailByStaffId = new Map(
@@ -4141,7 +4165,12 @@ function ManagerApp({
       }
     }
 
-    setCloudSyncStatus('synced')
+    // A newer staffing edit may have been queued while this network request
+    // was running. The queued request will write the newest state; only the
+    // newest completed revision should report the rota as fully synced.
+    if (requestedRevision === rotaSyncRevisionRef.current) {
+      setCloudSyncStatus('synced')
+    }
     if (showMessage) {
       setImportMessage(
         `Synced ${publishedRows.length} duties to staff accounts.${
@@ -4151,6 +4180,35 @@ function ManagerApp({
         }`,
       )
     }
+  }
+
+  function syncRotaToStaff(showMessage = false) {
+    // Serialize delete-and-insert cycles. Without this queue, two rapid edits
+    // could overlap: the older request might delete rows after the newer one
+    // inserted them, briefly leaving staff accounts empty or out of date.
+    rotaSyncPromiseRef.current = rotaSyncPromiseRef.current
+      .catch(() => undefined)
+      .then(() => performRotaSync(showMessage))
+    return rotaSyncPromiseRef.current
+  }
+
+  async function clearCloudRotaAssignments() {
+    rotaSyncRevisionRef.current += 1
+    rotaSyncPromiseRef.current = rotaSyncPromiseRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        setCloudSyncStatus('syncing')
+        const { error } = await supabase
+          .from('rota_assignments')
+          .delete()
+          .neq('id', '00000000-0000-0000-0000-000000000000')
+        if (error) {
+          setCloudSyncStatus('error')
+          throw error
+        }
+        setCloudSyncStatus('synced')
+      })
+    return rotaSyncPromiseRef.current
   }
 
   useEffect(() => {
@@ -4558,11 +4616,10 @@ function ManagerApp({
     })
   })
 
-  const hasProgramme = Boolean(programme && programme.rows.length > 0)
-  const schoolsOnSite = hasProgramme ? new Set(programme?.rows.map(arrivalSchoolName).filter(Boolean) ?? []).size : 0
-  const availableTodayCount = hasProgramme && activeStaffingDay
+  const schoolsOnSite = new Set(programme?.rows.map(arrivalSchoolName).filter(Boolean) ?? []).size
+  const availableTodayCount = activeStaffingDay
     ? (workingByDay[activeStaffingDay] ?? staff.map((m) => m.id)).filter((id) => !unavailableStaffIdsForDay(activeStaffingDay).has(id)).length
-    : 0
+    : staff.length
   const dailyShortages = programmeDays.map((day) => {
     const required = busiestSessionForDay(day)?.total ?? 0
     const available = (workingByDay[day] ?? staff.map((member) => member.id))
@@ -4637,7 +4694,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v3.01</span></div><small>Norfolk Lakes</small></div></div>
+          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v1.01</span></div><small>Norfolk Lakes</small></div></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -4669,7 +4726,7 @@ function ManagerApp({
         </div>
       </header>
 
-      <Nav page={page} setPage={setPage} accountRole={accountRole} />
+      <Nav page={page} setPage={setPage} />
 
       <main className="page-content">
         {importMessage && (
@@ -4701,8 +4758,8 @@ function ManagerApp({
                 <span className="live-indicator"><span/>LIVE</span>
                 <strong>{availableTodayCount}</strong>
                 <small>staff available today</small>
-                <div className={!hasProgramme ? 'hero-alert' : staffingShortages ? 'hero-alert warning' : 'hero-alert ready'}>
-                  {!hasProgramme ? 'No programme loaded' : staffingShortages ? `${staffingShortages} staffing gaps need attention` : 'Programme fully staffed'}
+                <div className={staffingShortages ? 'hero-alert warning' : 'hero-alert ready'}>
+                  {staffingShortages ? `${staffingShortages} staffing gaps need attention` : 'Programme fully staffed'}
                 </div>
               </div>
             </section>
@@ -4806,58 +4863,14 @@ function ManagerApp({
                   <div className="programme-toolbar-actions">
                     <button className="secondary-action" onClick={() => setPage('programmeBuilder')}><CalendarRange size={18}/>Edit programme</button>
                     <button className="primary" onClick={() => void downloadPublishedProgrammeExcel()}><FileSpreadsheet size={18}/>Download Excel</button>
+                    <button className="danger-action" onClick={() => void clearCurrentProgramme()}><Trash2 size={18}/>Clear programme</button>
                   </div>
                 </>
               )}
             </div>
 
             {!programme ? (
-              <>
-                <section className="staffing-no-programme-banner">
-                  <div>
-                    <p className="eyebrow">Availability mode</p>
-                    <h3>No programme loaded</h3>
-                    <p>You can still view and edit this week's staff days off, holidays and sickness. Uploading a programme will restore the normal activity staffing tools.</p>
-                  </div>
-                  <button className="secondary-action" onClick={() => fileInputRef.current?.click()}><Upload size={18}/>Upload programme</button>
-                </section>
-                <div className="day-tabs staffing-day-tabs" role="tablist" aria-label="Availability day">
-                  {availabilityWeekDays.map((day) => (
-                    <button key={day} className={activeStaffingDay === day ? 'active' : ''} onClick={() => setSelectedStaffingDay(day)}>
-                      {new Date(`${day}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
-                    </button>
-                  ))}
-                </div>
-                <section className="staffing-availability-panel">
-                  <div className="staffing-availability-heading">
-                    <div><p className="eyebrow">Staff availability</p><h3>Days Off &amp; Sickness</h3><p>{new Date(`${activeStaffingDay}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p></div>
-                    <button className="secondary-action" onClick={() => setPage('holidays')}>Open full calendar</button>
-                  </div>
-                  <div className="staffing-availability-table">
-                    <div className="availability-table-head">Staff member</div>
-                    <div className="availability-table-head">Role</div>
-                    <div className="availability-table-head">Status</div>
-                    {sortedDaysOffStaff().map((member) => {
-                      const existing = daysOff.find((entry) => memberIdForDayOff(entry) === member.id && entry.day === activeStaffingDay)
-                      const value: DayOffStatus | 'working' = existing?.status ?? 'working'
-                      return <Fragment key={`no-programme-availability-${member.id}`}>
-                        <div className="availability-staff-name"><strong>{member.name}</strong></div>
-                        <div><span className="role-pill">{roleLabel(resolvedRole(member))}</span></div>
-                        <div className={`availability-status status-${value}`}>
-                          <select value={value} disabled={!canManageHolidays && accountRole !== 'teamLeader'} onChange={(event) => void setSingleDayOff(member, activeStaffingDay, event.target.value as DayOffStatus | 'working')}>
-                            <option value="working">Working</option>
-                            {canManageHolidays && <option value="off">OFF</option>}
-                            {canManageHolidays && <option value="hol">HOL</option>}
-                            <option value="sick">SICK</option>
-                            {canManageHolidays && <option value="am_off">AM OFF</option>}
-                            {canManageHolidays && <option value="pm_off">PM OFF</option>}
-                          </select>
-                        </div>
-                      </Fragment>
-                    })}
-                  </div>
-                </section>
-              </>
+              <EmptyProgramme onUpload={() => fileInputRef.current?.click()} />
             ) : (
               <>
                 <ProgrammeGrid
@@ -4892,7 +4905,7 @@ function ManagerApp({
         )}
 
         {page === 'programmeArchive' && (
-          <Panel title="Programme Files" onBack={() => setPage('admin')}>
+          <Panel title="Programme Files" onBack={() => setPage('dashboard')}>
             <section className="programme-archive-intro">
               <div><p className="eyebrow">Admin programme filing</p><h3>Search every programme by school, year and month</h3><p>Programmes are filed automatically when they are loaded into the app. Download a complete centre programme or an individual school programme.</p></div>
               <span className="release-pill">v2.10</span>
@@ -4922,7 +4935,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to accommodation, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v3.01</span>
+                  <span className="release-pill">v1.01</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
@@ -4951,7 +4964,10 @@ function ManagerApp({
                         <h3>{arrivalRowsForDay.length} school{arrivalRowsForDay.length === 1 ? '' : 's'} detected from the programme</h3>
                         <p>Choose accommodation and a Party Leader for every school, then fill each school separately or fill all schools at once.</p>
                       </div>
-                      <button className="primary" disabled={arrivalRowsForDay.some((row) => !arrivalAssignment(row).leaderId)} onClick={() => autoFillAllArrivalSchools(activeStaffingDay)}><WandSparkles size={18}/>Auto-fill all schools</button>
+                      <div className="arrival-board-actions">
+                        <button className="primary" disabled={arrivalRowsForDay.some((row) => !arrivalAssignment(row).leaderId)} onClick={() => autoFillAllArrivalSchools(activeStaffingDay)}><WandSparkles size={18}/>Auto-fill all schools</button>
+                        <button className="danger-action" onClick={() => clearAllArrivalSchools(activeStaffingDay)}><Trash2 size={18}/>Clear all schools</button>
+                      </div>
                     </section>
 
                     <div className="arrival-cards-grid">
@@ -5015,7 +5031,10 @@ function ManagerApp({
                             </div>
 
                             <div className="arrival-actions">
-                              <button className="primary" disabled={!assignment.leaderId} onClick={() => autoFillArrivalSchool(row)}><WandSparkles size={18} />Auto-fill school</button>
+                              <div className="arrival-action-buttons">
+                                <button className="primary" disabled={!assignment.leaderId} onClick={() => autoFillArrivalSchool(row)}><WandSparkles size={18} />Auto-fill school</button>
+                                <button className="danger-action" onClick={() => clearArrivalSchool(row)}><Trash2 size={18}/>Clear school</button>
+                              </div>
                               <span>{assignment.leaderId ? 'One instructor per group where possible; maximum two groups from this school.' : 'Select the Party Leader first.'}</span>
                             </div>
                           </section>
@@ -5033,7 +5052,17 @@ function ManagerApp({
           <Panel title="Daily staffing" onBack={() => setPage('dashboard')}>
             {programme && <div className="staffing-date-context"><article><span>Programme</span><strong>{programme.title}</strong><small>{programmeDays.length ? friendlyProgrammeDateRange(dateForProgrammeDay(programme, programmeDays[0]), dateForProgrammeDay(programme, programmeDays[programmeDays.length - 1])) : programme.title}</small></article><article className="today-card"><span>Selected programme date</span><strong>{new Date(`${dateForProgrammeDay(programme, activeStaffingDay)}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</strong></article></div>}
             {!programme ? (
-              <EmptyProgramme onUpload={() => fileInputRef.current?.click()} />
+              <>
+                <EmptyProgramme onUpload={() => fileInputRef.current?.click()} />
+                <section className="staffing-no-programme-banner">
+                  <div>
+                    <p className="eyebrow">Staff availability</p>
+                    <h3>Days Off &amp; Sickness</h3>
+                    <p>You can still view and update staff availability while no programme is loaded.</p>
+                  </div>
+                  <button className="primary" onClick={() => setPage('holidays')}>Open Days Off &amp; Sickness</button>
+                </section>
+              </>
             ) : (
               <>
                 <div className="staffing-view-toolbar">
@@ -5485,13 +5514,9 @@ function ManagerApp({
         )}
 
         {page === 'admin' && (
-          <Panel title="Admin" onBack={isAdminAccount ? undefined : () => setPage('dashboard')}>
+          <Panel title="Admin" onBack={() => setPage('dashboard')}>
             <section className="admin-choice-grid">
-              <button className="admin-choice-card programme-builder-card" onClick={() => setPage('programmeArchive')}>
-                <Archive size={34} />
-                <div><h3>Programme Files</h3><p>Search programmes by school, year and month, then download school or complete centre files.</p></div>
-              </button>
-              {!isAdminAccount && <section className="display-manager-card"><div><Monitor size={34}/><div><h3>Display Manager</h3><p>Open or copy the live read-only links for screens around the centre.</p></div></div><div className="display-link-list">{([['Staff room','staff-room'],['Manager','manager'],['Programme','programme']] as const).map(([label,mode]) => { const url = new URL(window.location.href); url.searchParams.set('display',mode); return <article key={mode}><strong>{label}</strong><code>{url.toString()}</code><button onClick={() => window.open(url.toString(),'_blank','noopener,noreferrer')}>Open</button><button onClick={() => { void navigator.clipboard.writeText(url.toString()); setImportMessage(`${label} display link copied.`) }}>Copy link</button></article> })}</div></section>}
+              <section className="display-manager-card"><div><Monitor size={34}/><div><h3>Display Manager</h3><p>Open or copy the live read-only links for screens around the centre.</p></div></div><div className="display-link-list">{([['Staff room','staff-room'],['Manager','manager'],['Programme','programme']] as const).map(([label,mode]) => { const url = new URL(window.location.href); url.searchParams.set('display',mode); return <article key={mode}><strong>{label}</strong><code>{url.toString()}</code><button onClick={() => window.open(url.toString(),'_blank','noopener,noreferrer')}>Open</button><button onClick={() => { void navigator.clipboard.writeText(url.toString()); setImportMessage(`${label} display link copied.`) }}>Copy link</button></article> })}</div></section>
               {canManageStaff && <button className="admin-choice-card programme-builder-card" onClick={() => setPage('programmeBuilder')}>
                 <CalendarRange size={34} />
                 <div><h3>Programme Builder</h3><p>Design Bargain Special or Normal Purchase programmes, preview them and publish them.</p></div>
@@ -5504,16 +5529,15 @@ function ManagerApp({
                 <Users size={34} />
                 <div><h3>Staff</h3><p>Manage staff accounts, roles and availability.</p></div>
               </button>}
-              {!isAdminAccount && <button className="admin-choice-card" onClick={() => setPage('signoffs')}>
+              <button className="admin-choice-card" onClick={() => setPage('signoffs')}>
                 <ShieldCheck size={34} />
                 <div><h3>Sign-off</h3><p>Search staff and manage activity sign-offs.</p></div>
-              </button>}
+              </button>
               {canViewLogs && <button className="admin-choice-card" onClick={() => setPage('logs')}>
                 <ClipboardList size={34} />
                 <div><h3>Logs</h3><p>Review water-lead permission confirmations.</p></div>
               </button>}
               {canViewLogs && <button className="admin-choice-card" onClick={() => setPage('staffingLogs')}><FileSpreadsheet size={34}/><div><h3>Staffing Logs</h3><p>Locked weekly staffing records and historical downloads.</p></div></button>}
-              {canManageStaff && <section className="display-manager-card admin-account-card"><div><Users size={34}/><div><h3>Admin Account</h3><p>Give an existing signed-up account access to Admin → Programme Files only.</p></div></div><div className="admin-account-form"><input type="email" value={adminAccountEmail} onChange={(event) => setAdminAccountEmail(event.target.value)} placeholder="admin@school.co.uk"/><button className="primary" disabled={adminAccountBusy || !adminAccountEmail.trim()} onClick={() => void makeAdminAccount()}>{adminAccountBusy ? 'Saving…' : 'Give Admin Access'}</button></div></section>}
               {canManageStaff && <button className="admin-choice-card" onClick={() => setPage('formerStaff')}><History size={34}/><div><h3>Former Staff</h3><p>Employment start and leaving records.</p></div></button>}
               {canManageStaff && <button className="admin-choice-card" onClick={() => setPage('loanHistory')}><Users size={34}/><div><h3>Loan Staff History</h3><p>Reactivate loan staff or add them permanently.</p></div></button>}
             </section>
@@ -6190,15 +6214,15 @@ function Panel({
   children,
 }: {
   title: string
-  onBack?: () => void
+  onBack: () => void
   children: React.ReactNode
 }) {
   return (
     <section className="panel">
-      {onBack && <button className="back" onClick={onBack}>
+      <button className="back" onClick={onBack}>
         <ChevronLeft size={18} />
         Back
-      </button>}
+      </button>
       <h2>{title}</h2>
       {children}
     </section>

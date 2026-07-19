@@ -1,0 +1,39 @@
+Adventure Centre Manager v2.2.1
+
+WEB MANAGER FIX
+- Home now uses the real current calendar date instead of the selected Staffing tab day.
+- Staff available today is calculated from today's weekly calendar status.
+- Holiday, sick and off staff are excluded from the Home total.
+- Schools on site is calculated from each school's arrival and departure dates.
+- Older programmes without schoolDetails fall back to today's school-labelled programme rows.
+- Home shows today's date and the matched programme weekday.
+- Manager web build tested successfully with npm run build.
+
+PHONE APP
+- Added staff-mobile, an Expo React Native app using the same Supabase backend.
+- Staff can sign in with their existing account.
+- Today shows only Session, Activity and Groups.
+- Live rota changes are received from rota_assignments.
+- Time Off writes Working, Holiday and Sick to staff_availability.
+- Tabs: Today, Time Off, Notifications and Profile.
+- Added EAS configuration for an installable Android APK and production AAB.
+
+INSTALL WEB
+1. npm ci --no-audit --no-fund
+2. npm run build
+3. git add .
+4. git commit -m "Build v2.2.1 home sync and staff phone app"
+5. git push
+
+RUN PHONE APP
+1. cd staff-mobile
+2. cp .env.example .env
+3. Copy the Supabase URL and anon key from ../.env.local into .env using the EXPO_PUBLIC names.
+4. npm install
+5. npx expo start
+
+BUILD ANDROID APK
+1. cd staff-mobile
+2. npx eas-cli@latest login
+3. npx eas-cli@latest build:configure
+4. npm run build:android
