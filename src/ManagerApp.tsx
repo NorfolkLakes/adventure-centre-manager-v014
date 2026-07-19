@@ -4651,10 +4651,13 @@ function ManagerApp({
   }, [programme, dashboardProgrammeDay, todayIso])
 
   const schoolsOnSite = dashboardSchools.length
-  const availableTodayCount = dashboardProgrammeDay
-    ? (workingByDay[dashboardProgrammeDay] ?? staff.map((m) => m.id))
-        .filter((id) => !unavailableStaffIdsForDay(dashboardProgrammeDay).has(id)).length
-    : staff.length
+  const hasProgramme = Boolean(programme && programme.rows.length > 0)
+  const todayAvailabilityDay = new Date().toISOString().slice(0, 10)
+  const todayWorkingIds = workingByDay[todayAvailabilityDay]
+  const todayUnavailableIds = unavailableStaffIdsForDay(todayAvailabilityDay)
+  const availableTodayCount = staff.filter((member) =>
+    (!todayWorkingIds || todayWorkingIds.includes(member.id)) && !todayUnavailableIds.has(member.id),
+  ).length
   const dailyShortages = programmeDays.map((day) => {
     const required = busiestSessionForDay(day)?.total ?? 0
     const available = (workingByDay[day] ?? staff.map((member) => member.id))
@@ -4794,7 +4797,7 @@ function ManagerApp({
                 <strong>{availableTodayCount}</strong>
                 <small>staff available today{dashboardProgrammeDay ? ` · ${dashboardProgrammeDay}` : ''}</small>
                 <div className={staffingShortages ? 'hero-alert warning' : 'hero-alert ready'}>
-                  {staffingShortages ? `${staffingShortages} staffing gaps need attention` : 'Programme fully staffed'}
+                  {!hasProgramme ? 'No programme loaded' : staffingShortages ? `${staffingShortages} staffing gaps need attention` : 'Programme fully staffed'}
                 </div>
               </div>
             </section>

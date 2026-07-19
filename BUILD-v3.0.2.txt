@@ -1,0 +1,6 @@
+Adventure Centre Manager v3.0.2
+
+Fixes:
+- Dashboard staff available count now uses today's weekly availability, not programme selection or total staff count.
+- OFF, HOL and SICK staff are excluded.
+- No programme loaded status cannot display Programme fully staffed.

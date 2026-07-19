@@ -4560,9 +4560,12 @@ function ManagerApp({
 
   const hasProgramme = Boolean(programme && programme.rows.length > 0)
   const schoolsOnSite = hasProgramme ? new Set(programme?.rows.map(arrivalSchoolName).filter(Boolean) ?? []).size : 0
-  const availableTodayCount = hasProgramme && activeStaffingDay
-    ? (workingByDay[activeStaffingDay] ?? staff.map((m) => m.id)).filter((id) => !unavailableStaffIdsForDay(activeStaffingDay).has(id)).length
-    : 0
+  const todayAvailabilityDay = new Date().toISOString().slice(0, 10)
+  const todayWorkingIds = workingByDay[todayAvailabilityDay]
+  const todayUnavailableIds = unavailableStaffIdsForDay(todayAvailabilityDay)
+  const availableTodayCount = staff.filter((member) =>
+    (!todayWorkingIds || todayWorkingIds.includes(member.id)) && !todayUnavailableIds.has(member.id),
+  ).length
   const dailyShortages = programmeDays.map((day) => {
     const required = busiestSessionForDay(day)?.total ?? 0
     const available = (workingByDay[day] ?? staff.map((member) => member.id))
