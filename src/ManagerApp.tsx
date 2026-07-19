@@ -1,5 +1,6 @@
 import { ChangeEvent, Fragment, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  Archive,
   Building2,
   CalendarDays,
   CalendarRange,
@@ -4563,7 +4564,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v3.0</span></div><small>Norfolk Lakes</small></div></div>
+          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v2.0</span></div><small>Norfolk Lakes</small></div></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -4773,10 +4774,10 @@ function ManagerApp({
         )}
 
         {page === 'programmeArchive' && (
-          <Panel title="Programme Files" onBack={() => setPage('admin')}>
+          <Panel title="Programme Files" onBack={() => setPage('dashboard')}>
             <section className="programme-archive-intro">
               <div><p className="eyebrow">Admin programme filing</p><h3>Search every programme by school, year and month</h3><p>Programmes are filed automatically when they are loaded into the app. Download a complete centre programme or an individual school programme.</p></div>
-              <span className="release-pill">v2.10</span>
+              <span className="release-pill">v2.0</span>
             </section>
             <div className="programme-archive-filters">
               <label className="archive-search"><Search size={18}/><input value={archiveSearch} onChange={(event) => setArchiveSearch(event.target.value)} placeholder="Search school or programme"/></label>
@@ -4803,7 +4804,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to accommodation, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v1.01</span>
+                  <span className="release-pill">v2.0</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
@@ -5370,7 +5371,7 @@ function ManagerApp({
             <section className="admin-choice-grid">
               <section className="display-manager-card"><div><Monitor size={34}/><div><h3>Display Manager</h3><p>Open or copy the live read-only links for screens around the centre.</p></div></div><div className="display-link-list">{([['Staff room','staff-room'],['Manager','manager'],['Programme','programme']] as const).map(([label,mode]) => { const url = new URL(window.location.href); url.searchParams.set('display',mode); return <article key={mode}><strong>{label}</strong><code>{url.toString()}</code><button onClick={() => window.open(url.toString(),'_blank','noopener,noreferrer')}>Open</button><button onClick={() => { void navigator.clipboard.writeText(url.toString()); setImportMessage(`${label} display link copied.`) }}>Copy link</button></article> })}</div></section>
               <button className="admin-choice-card programme-files-card" onClick={() => setPage('programmeArchive')}>
-                <History size={34} />
+                <Archive size={34} />
                 <div><h3>Programme Files</h3><p>Search programmes by school, year and month, then download complete or school-specific copies.</p></div>
               </button>
               {canManageStaff && <button className="admin-choice-card programme-builder-card" onClick={() => setPage('programmeBuilder')}>

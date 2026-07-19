@@ -1,0 +1,3 @@
+Adventure Centre Manager v2.0
+Professional refresh of the familiar layout.
+Programme Files moved into Admin.
