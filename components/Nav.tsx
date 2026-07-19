@@ -1,5 +1,5 @@
 import { Building2, CalendarDays, Home, NotebookPen, Settings, Users } from 'lucide-react'
-import type { AccountRole, Page } from '../types'
+import type { Page } from '../types'
 
 const items = [
   { page: 'dashboard' as Page, label: 'Home', icon: Home },
@@ -10,15 +10,11 @@ const items = [
   { page: 'admin' as Page, label: 'Admin', icon: Settings },
 ]
 
-export function Nav({ page, setPage, accountRole }: { page: Page; setPage: (page: Page) => void; accountRole: AccountRole }) {
-  const visibleItems = accountRole === 'admin'
-    ? items.filter((item) => item.page === 'admin')
-    : items
-
+export function Nav({ page, setPage }: { page: Page; setPage: (page: Page) => void }) {
   return (
     <nav className="top-nav">
-      {visibleItems.map(({ page: itemPage, label, icon: Icon }) => {
-        const active = page === itemPage || (itemPage === 'admin' && (page === 'staff' || page === 'holidays' || page === 'signoffs' || page === 'logs' || page === 'staffingLogs' || page === 'programmeArchive'))
+      {items.map(({ page: itemPage, label, icon: Icon }) => {
+        const active = page === itemPage || (itemPage === 'admin' && (page === 'staff' || page === 'signoffs'))
         return (
           <button key={itemPage} className={active ? 'active' : ''} onClick={() => setPage(itemPage)}>
             <Icon size={19} />
