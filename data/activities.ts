@@ -49,7 +49,10 @@ export const activityNames: Record<string, string> = {
 }
 
 export const startingActivities: Activity[] = Object.entries(activityNames).map(
-  ([code, name]) => ({ code, name, colour: '#dce8f5', equipmentQuantity: 0, capacity: 1, enabled: true, notes: '' }),
+  ([code, name]) => {
+    const shared: Record<string, number> = { CF: 4, DISCO: 5, MO: 3, BT: 2 }
+    return { code, name, colour: '#dce8f5', equipmentQuantity: 0, capacity: 1, enabled: true, notes: '', staffingRuleType: shared[code] ? 'per_x_groups' : 'per_group', staffingRuleValue: shared[code] ?? 1, staffingPriority: ['SAIL','CANOE','KAYAK','SUP','GSUP','GCAN','RAFT','CLIMB','HR','HR UP','HR GR'].includes(code) ? 1 : shared[code] ? 3 : 2 } as Activity
+  },
 )
 
 export function activityNameFromList(

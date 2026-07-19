@@ -689,6 +689,9 @@ function ManagerApp({
       capacity: Math.max(1, activity.capacity ?? ACTIVITY_CAPACITY[activity.code] ?? 1),
       enabled: activity.enabled ?? true,
       notes: activity.notes ?? '',
+      staffingRuleType: activity.staffingRuleType ?? ({ CF: 'per_x_groups', DISCO: 'per_x_groups', MO: 'per_x_groups', BT: 'per_x_groups' } as Record<string, Activity['staffingRuleType']>)[activity.code] ?? 'per_group',
+      staffingRuleValue: Math.max(1, activity.staffingRuleValue ?? ({ CF: 4, DISCO: 5, MO: 3, BT: 2 } as Record<string, number>)[activity.code] ?? 1),
+      staffingPriority: Math.min(3, Math.max(1, activity.staffingPriority ?? (['SAIL','CANOE','KAYAK','SUP','GSUP','GCAN','RAFT','CLIMB','HR','HR UP','HR GR'].includes(activity.code) ? 1 : ['CF','DISCO','MO','BT'].includes(activity.code) ? 3 : 2))),
     }))
   })
 
@@ -1687,18 +1690,15 @@ function ManagerApp({
       { session: string; activityStaff: number; arrivalStaff: number; waterSupportStaff: number }
     >()
 
-    for (const row of programme.rows.filter((item) => item.day === day)) {
-      const activeCells = activityCellsForRow(row)
-
-      const current = sessionMap.get(row.session) ?? {
-        session: row.session,
+    for (const cluster of staffingClustersForRows(programme.rows.filter((item) => item.day === day))) {
+      const current = sessionMap.get(cluster.session) ?? {
+        session: cluster.session,
         activityStaff: 0,
         arrivalStaff: 0,
         waterSupportStaff: 0,
       }
-
-      current.activityStaff += activeCells.length
-      sessionMap.set(row.session, current)
+      current.activityStaff += cluster.required
+      sessionMap.set(cluster.session, current)
     }
 
     for (const need of waterSupportNeedsForDay(day)) {
@@ -1777,6 +1777,37 @@ function ManagerApp({
 
   function activityName(code: string) {
     return activityNameFromList(activities, code)
+  }
+
+  function staffingRuleForActivity(code: string) {
+    const activity = activities.find((item) => item.code === code)
+    return {
+      type: activity?.staffingRuleType ?? 'per_group',
+      value: Math.max(1, activity?.staffingRuleValue ?? 1),
+      priority: Math.min(3, Math.max(1, activity?.staffingPriority ?? 2)),
+    }
+  }
+
+  function requiredStaffForActivity(code: string, groupCount: number) {
+    const rule = staffingRuleForActivity(code)
+    if (rule.type === 'fixed') return Math.max(1, rule.value)
+    if (rule.type === 'per_x_groups') return Math.max(1, Math.ceil(groupCount / rule.value))
+    // Manual activities remain one-per-group until a manager assigns them.
+    return Math.max(1, groupCount)
+  }
+
+  type StaffingCluster = { key: string; day: string; session: string; school: string; activityCode: string; cells: { row: ProgrammeRow; group: number }[]; required: number; priority: number }
+
+  function staffingClustersForRows(rows: ProgrammeRow[]) {
+    const map = new Map<string, StaffingCluster>()
+    rows.forEach((row) => activityCellsForRow(row).forEach((cell) => {
+      const school = row.schoolLabel?.trim() || 'Centre programme'
+      const key = `${row.day}::${row.session}::${school}::${cell.activityCode}`
+      const current = map.get(key) ?? { key, day: row.day, session: row.session, school, activityCode: cell.activityCode, cells: [], required: 0, priority: staffingRuleForActivity(cell.activityCode).priority }
+      current.cells.push({ row, group: cell.group })
+      map.set(key, current)
+    }))
+    return Array.from(map.values()).map((cluster) => ({ ...cluster, required: requiredStaffForActivity(cluster.activityCode, cluster.cells.length) }))
   }
 
   function ensureWorkingStaffForDays(days: string[]) {
@@ -3064,11 +3095,10 @@ function ManagerApp({
       const blockedByArrivals = arrivalStaffForDaySession(day, session)
       const sessionUnavailable = unavailableStaffIdsForSession(day, session)
       const sessionStaff = available.filter((member) => !sessionUnavailable.has(member.id) && !blockedByArrivals.has(member.id))
-      const slots = programme.rows
-        .filter((row) => row.day === day && row.session === session)
-        .flatMap((row) => activityCellsForRow(row).map((cell, index) => ({
-          id: `${row.id}::${cell.group}::${index}`,
-          activityCode: cell.activityCode,
+      const slots = staffingClustersForRows(programme.rows.filter((row) => row.day === day && row.session === session))
+        .flatMap((cluster) => Array.from({ length: cluster.required }, (_, index) => ({
+          id: `${cluster.key}::slot-${index}`,
+          activityCode: cluster.activityCode,
         })))
         .sort((a, b) => {
           const aCount = sessionStaff.filter((member) => qualificationIsValid(member, a.activityCode)).length
@@ -3329,54 +3359,47 @@ function ManagerApp({
     })
 
     const dayRows = rowsForDay
+    const clusters = staffingClustersForRows(dayRows).sort((a, b) => a.priority - b.priority || Number(a.session) - Number(b.session) || a.activityCode.localeCompare(b.activityCode))
 
-    for (const row of dayRows) {
-      for (const cell of activityCellsForRow(row)) {
+    // Rebuild each activity cluster so shared activities only use the number of
+    // instructors required by their saved staffing rule.
+    for (const cluster of clusters) {
+      cluster.cells.forEach(({ row, group }) => delete nextAssignments[cellKey(row.id, group)])
 
-        const key = cellKey(row.id, cell.group)
-        if (nextAssignments[key]) continue
-
+      const chosenStaff: StaffMember[] = []
+      for (let slot = 0; slot < cluster.required; slot += 1) {
         const candidates = staff
-          .filter(
-            (member) =>
-              workingIds.has(member.id) &&
-              !unavailableStaffIdsForSession(day, row.session).has(member.id) &&
-              qualificationIsValid(member, cell.activityCode) &&
-              !arrivalStaffForDaySession(day, row.session).has(member.id),
+          .filter((member) =>
+            workingIds.has(member.id) &&
+            !unavailableStaffIdsForSession(day, cluster.session).has(member.id) &&
+            qualificationIsValid(member, cluster.activityCode) &&
+            !arrivalStaffForDaySession(day, cluster.session).has(member.id) &&
+            !chosenStaff.some((chosen) => chosen.id === member.id)
           )
-          .filter((member) => {
-            return !dayRows.some(
-              (otherRow) =>
-                otherRow.session === row.session &&
-                otherRow.cells.some(
-                  (otherCell) =>
-                    nextAssignments[cellKey(otherRow.id, otherCell.group)] ===
-                    member.id,
-                ),
-            )
-          })
+          .filter((member) => !dayRows.some((otherRow) =>
+            otherRow.session === cluster.session &&
+            activityCellsForRow(otherRow).some((otherCell) => nextAssignments[cellKey(otherRow.id, otherCell.group)] === member.id)
+          ))
           .sort((a, b) => {
-            if (isWaterActivity(cell.activityCode) && (row.session === '2' || row.session === '4')) {
-              const aWaterContinuity = hadWaterInPreviousPairedSession(a.id, day, row.session, nextAssignments)
-              const bWaterContinuity = hadWaterInPreviousPairedSession(b.id, day, row.session, nextAssignments)
-              if (aWaterContinuity !== bWaterContinuity) return aWaterContinuity ? -1 : 1
+            if (isWaterActivity(cluster.activityCode) && (cluster.session === '2' || cluster.session === '4')) {
+              const aWater = hadWaterInPreviousPairedSession(a.id, day, cluster.session, nextAssignments)
+              const bWater = hadWaterInPreviousPairedSession(b.id, day, cluster.session, nextAssignments)
+              if (aWater !== bWater) return aWater ? -1 : 1
             }
-
-            const priorityDifference = rolePriority(resolvedRole(a)) - rolePriority(resolvedRole(b))
-            if (priorityDifference !== 0) return priorityDifference
-
-            const workloadDifference = (workload.get(a.id) ?? 0) - (workload.get(b.id) ?? 0)
-            if (workloadDifference !== 0) return workloadDifference
-
-            return Math.random() - 0.5
+            return rolePriority(resolvedRole(a)) - rolePriority(resolvedRole(b)) ||
+              (workload.get(a.id) ?? 0) - (workload.get(b.id) ?? 0) ||
+              a.name.localeCompare(b.name)
           })
-
-        const chosen = candidates[0]
-        if (chosen) {
-          nextAssignments[key] = chosen.id
-          workload.set(chosen.id, (workload.get(chosen.id) ?? 0) + 1)
-        }
+        if (candidates[0]) chosenStaff.push(candidates[0])
       }
+
+      if (!chosenStaff.length) continue
+      // Balanced distribution: 10 groups / 3 staff becomes 4, 3 and 3.
+      cluster.cells.forEach(({ row, group }, index) => {
+        const staffIndex = Math.min(chosenStaff.length - 1, Math.floor(index * chosenStaff.length / cluster.cells.length))
+        nextAssignments[cellKey(row.id, group)] = chosenStaff[staffIndex].id
+      })
+      chosenStaff.forEach((member) => workload.set(member.id, (workload.get(member.id) ?? 0) + 1))
     }
 
     const nextWaterSupport = { ...waterSupportAssignments }
@@ -3418,7 +3441,7 @@ function ManagerApp({
     setAssignments(nextAssignments)
     localStorage.setItem(ASSIGNMENT_KEY, JSON.stringify(nextAssignments))
     setImportMessage(
-      `Auto-filled qualified staff and required canoe/kayak leads for ${day}.`,
+      `Smart Auto-fill completed for ${day} using activity staffing rules, priorities and required canoe/kayak leads.`,
     )
   }
 
@@ -3429,15 +3452,17 @@ function ManagerApp({
   ) {
     if (!programme) return false
     if (targetRow.session === '3' && arrivalStaffForDaySession(targetRow.day, targetRow.session).has(staffId)) return true
-    return programme.rows.some(
-      (row) =>
-        row.day === targetRow.day &&
-        row.session === targetRow.session &&
-        row.cells.some(
-          (cell) =>
-            !(row.id === targetRow.id && cell.group === targetGroup) &&
-            assignments[cellKey(row.id, cell.group)] === staffId,
-        ),
+    const targetCell = activityCellsForRow(targetRow).find((cell) => cell.group === targetGroup)
+    return programme.rows.some((row) =>
+      row.day === targetRow.day && row.session === targetRow.session &&
+      activityCellsForRow(row).some((cell) => {
+        if (row.id === targetRow.id && cell.group === targetGroup) return false
+        if (assignments[cellKey(row.id, cell.group)] !== staffId) return false
+        const sameSharedCluster = targetCell && cell.activityCode === targetCell.activityCode &&
+          (row.schoolLabel?.trim() || 'Centre programme') === (targetRow.schoolLabel?.trim() || 'Centre programme') &&
+          staffingRuleForActivity(cell.activityCode).type !== 'per_group'
+        return !sameSharedCluster
+      }),
     )
   }
 
@@ -3501,7 +3526,7 @@ function ManagerApp({
       setImportMessage(`${code} already exists.`)
       return
     }
-    const next = [...activities, { code, name, colour: '#dce8f5', equipmentQuantity: 0, capacity: 1, enabled: true, notes: '' }].sort((a, b) =>
+    const next = [...activities, { code, name, colour: '#dce8f5', equipmentQuantity: 0, capacity: 1, enabled: true, notes: '', staffingRuleType: 'per_group', staffingRuleValue: 1, staffingPriority: 2 }].sort((a, b) =>
       a.code.localeCompare(b.code),
     )
     setActivities(next)
@@ -5252,7 +5277,7 @@ function ManagerApp({
         {page === 'activitiesEquipment' && canManageStaff && (
           <Panel title="Activities & Equipment" onBack={() => setPage('admin')}>
             <section className="activity-equipment-intro">
-              <div><p className="eyebrow">Programme limits</p><h3>Equipment and simultaneous group capacity</h3><p>The programme builder uses <strong>maximum groups per session</strong>. Equipment quantity is recorded separately so you can see how much kit the centre owns.</p></div>
+              <div><p className="eyebrow">Programme and staffing rules</p><h3>Equipment, capacity and smart staffing</h3><p>Set how many instructors each activity needs. Shared activities from the same school and session are combined automatically during Auto-fill.</p></div>
               <div className="capacity-example"><strong>Example</strong><span>12 boats</span><span>Maximum 2 groups per session</span></div>
             </section>
             <section className="add-activity-strip">
@@ -5272,9 +5297,12 @@ function ManagerApp({
                     <label>Activity colour<input type="color" value={activity.colour ?? '#dce8f5'} onChange={(event) => updateActivityDefinition(activity.code, { colour: event.target.value })}/></label>
                     <label>Equipment quantity<input type="number" min="0" value={activity.equipmentQuantity ?? 0} onChange={(event) => updateActivityDefinition(activity.code, { equipmentQuantity: Math.max(0, Number(event.target.value) || 0) })}/></label>
                     <label>Maximum groups per session<input type="number" min="1" value={activity.capacity ?? 1} onChange={(event) => updateActivityDefinition(activity.code, { capacity: Math.max(1, Number(event.target.value) || 1) })}/></label>
+                    <label>Staffing method<select value={activity.staffingRuleType ?? 'per_group'} onChange={(event) => updateActivityDefinition(activity.code, { staffingRuleType: event.target.value as Activity['staffingRuleType'] })}><option value="per_group">1 instructor per group</option><option value="per_x_groups">1 instructor per X groups</option><option value="fixed">Fixed number of instructors</option><option value="manual">Manual / one per group</option></select></label>
+                    <label>{activity.staffingRuleType === 'fixed' ? 'Fixed instructors' : activity.staffingRuleType === 'per_x_groups' ? 'Groups per instructor' : 'Staffing value'}<input type="number" min="1" disabled={activity.staffingRuleType === 'per_group' || activity.staffingRuleType === 'manual'} value={activity.staffingRuleValue ?? 1} onChange={(event) => updateActivityDefinition(activity.code, { staffingRuleValue: Math.max(1, Number(event.target.value) || 1) })}/></label>
+                    <label>Staffing priority<select value={activity.staffingPriority ?? 2} onChange={(event) => updateActivityDefinition(activity.code, { staffingPriority: Number(event.target.value) })}><option value="1">1 · Highest</option><option value="2">2 · Normal</option><option value="3">3 · Shared / lowest</option></select></label>
                     <label className="activity-notes">Notes<input value={activity.notes ?? ''} onChange={(event) => updateActivityDefinition(activity.code, { notes: event.target.value })} placeholder="Optional equipment note"/></label>
                   </div>
-                  <div className="activity-equipment-footer"><span>{activity.equipmentQuantity ?? 0} item{(activity.equipmentQuantity ?? 0) === 1 ? '' : 's'} recorded · {activity.capacity ?? 1} group{(activity.capacity ?? 1) === 1 ? '' : 's'} at once</span><button className="remove-button" onClick={() => deleteActivity(activity.code)}><Trash2 size={16}/>Remove</button></div>
+                  <div className="activity-equipment-footer"><span>{activity.equipmentQuantity ?? 0} item{(activity.equipmentQuantity ?? 0) === 1 ? '' : 's'} recorded · {activity.capacity ?? 1} group{(activity.capacity ?? 1) === 1 ? '' : 's'} at once · {activity.staffingRuleType === 'per_x_groups' ? `1 instructor per ${activity.staffingRuleValue ?? 1} groups` : activity.staffingRuleType === 'fixed' ? `${activity.staffingRuleValue ?? 1} instructors fixed` : '1 instructor per group'}</span><button className="remove-button" onClick={() => deleteActivity(activity.code)}><Trash2 size={16}/>Remove</button></div>
                 </article>
               ))}
             </div>

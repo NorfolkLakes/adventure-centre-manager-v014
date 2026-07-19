@@ -1,0 +1,11 @@
+Adventure Centre Manager v1.02
+
+Added Smart Activity Staffing:
+- Per-group, per-X-groups, fixed and manual staffing methods
+- Default shared rules: Campfire 1:4, Disco 1:5, Manor Olympics 1:3, Blind Trail 1:2
+- Staffing priorities
+- Auto-fill groups activities by school, session and activity
+- Balanced group allocation across the minimum required instructors
+- Updated demand and qualification shortage calculations
+
+Run: npm install && npm run build

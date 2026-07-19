@@ -8,6 +8,9 @@ export type Activity = {
   capacity?: number
   enabled?: boolean
   notes?: string
+  staffingRuleType?: 'per_group' | 'per_x_groups' | 'fixed' | 'manual'
+  staffingRuleValue?: number
+  staffingPriority?: number
 }
 
 export type ProgrammeCell = {
