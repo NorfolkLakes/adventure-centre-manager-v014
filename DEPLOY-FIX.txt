@@ -1,0 +1,13 @@
+GitHub Pages blank-page fix
+
+This version fixes two deployment problems:
+1. GitHub Actions now installs dependencies and builds the app before publishing dist.
+2. Supabase public client configuration is available during the GitHub build, so the app does not crash before rendering.
+
+Copy the contents of this folder over your current project, then run:
+
+git add .
+git commit -m "Fix blank GitHub Pages app"
+git push origin main
+
+In GitHub, Settings > Pages > Source must be set to GitHub Actions.
