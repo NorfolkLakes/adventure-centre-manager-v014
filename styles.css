@@ -1856,3 +1856,6 @@ button { cursor: pointer; }
   flex: 1 1 260px;
   min-width: 0;
 }
+
+.staffing-no-programme-banner { display:flex;align-items:center;justify-content:space-between;gap:20px;padding:22px;margin-bottom:18px;border:1px solid rgba(28,105,77,.22);border-radius:18px;background:linear-gradient(135deg,rgba(231,246,238,.95),rgba(255,255,255,.98)); }
+.staffing-no-programme-banner h3{margin:2px 0 6px}.staffing-no-programme-banner p:last-child{margin:0;max-width:760px}@media(max-width:720px){.staffing-no-programme-banner{align-items:stretch;flex-direction:column}}

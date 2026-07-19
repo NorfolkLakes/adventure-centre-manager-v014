@@ -1871,3 +1871,20 @@ button { cursor: pointer; }
   .arrival-action-buttons > button { flex: 1 1 180px; }
   .programme-toolbar-actions .danger-action { width: 100%; }
 }
+
+.staffing-no-programme-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 22px;
+  margin-bottom: 18px;
+  border: 1px solid rgba(28, 105, 77, 0.22);
+  border-radius: 18px;
+  background: linear-gradient(135deg, rgba(231, 246, 238, 0.95), rgba(255, 255, 255, 0.98));
+}
+.staffing-no-programme-banner h3 { margin: 2px 0 6px; }
+.staffing-no-programme-banner p:last-child { margin: 0; max-width: 760px; }
+@media (max-width: 720px) {
+  .staffing-no-programme-banner { align-items: stretch; flex-direction: column; }
+}

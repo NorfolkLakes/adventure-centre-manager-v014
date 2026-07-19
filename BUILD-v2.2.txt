@@ -1,0 +1,19 @@
+Adventure Centre Manager v2.2
+
+Added programme-independent staff availability:
+- Staffing remains available when no programme is loaded.
+- Current-week day tabs remain visible.
+- Days Off, Holiday, Sick, AM Off and PM Off can be viewed and edited.
+- Full Days Off & Sickness calendar remains accessible.
+- Uploading a programme automatically restores activity staffing.
+
+Includes the v2.1 quality-of-life changes:
+- Clear individual arrival school.
+- Clear all arrival schools.
+- Clear programme and linked staffing/arrivals state.
+- Weekly calendar keyboard navigation improvements.
+- Programme Files archive retained.
+
+Validation:
+- TypeScript compilation passed.
+- Vite packaging could not complete in the OpenAI Linux environment because the Linux Rolldown optional native binding is unavailable. Run npm install and npm run build on macOS.
