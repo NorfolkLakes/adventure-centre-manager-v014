@@ -1840,3 +1840,102 @@ button { cursor: pointer; }
 
 /* v2.10 Programme Files */
 .programme-archive-intro{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;padding:22px;border:1px solid var(--line,#d9e3dc);border-radius:18px;background:linear-gradient(135deg,#f7fbf8,#eef6f0);margin-bottom:18px}.programme-archive-intro h3{margin:4px 0 6px}.programme-archive-intro p{margin:0;max-width:780px}.programme-archive-filters{display:flex;gap:12px;align-items:end;flex-wrap:wrap;margin-bottom:18px}.programme-archive-filters label{display:flex;flex-direction:column;gap:6px;font-weight:700}.programme-archive-filters input,.programme-archive-filters select{min-height:42px;border:1px solid #cddbd2;border-radius:10px;padding:0 12px;background:white}.programme-archive-filters .archive-search{position:relative;min-width:min(420px,100%)}.programme-archive-filters .archive-search svg{position:absolute;left:12px;bottom:12px}.programme-archive-filters .archive-search input{padding-left:40px;width:100%}.programme-archive-list{display:grid;gap:16px}.programme-archive-card{border:1px solid #d5e0d8;border-radius:18px;background:white;overflow:hidden;box-shadow:0 5px 18px rgba(27,62,42,.06)}.programme-archive-card>header{display:flex;justify-content:space-between;align-items:flex-start;gap:20px;padding:20px;background:#f7faf8;border-bottom:1px solid #e0e8e2}.programme-archive-card header span{font-weight:800;color:#2b6845}.programme-archive-card h3{margin:4px 0}.programme-archive-card header p{margin:0}.archive-main-actions,.archive-school-row>div:last-child{display:flex;gap:8px;flex-wrap:wrap}.archive-school-list{padding:8px 20px 18px}.archive-school-row{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:13px 0;border-bottom:1px solid #edf1ee}.archive-school-row:last-child{border-bottom:0}.archive-school-row>div:first-child{display:flex;flex-direction:column;gap:3px}.archive-school-row span{font-size:.88rem;color:#66736b}@media(max-width:800px){.programme-archive-card>header,.archive-school-row,.programme-archive-intro{flex-direction:column}.archive-main-actions{width:100%}.programme-archive-filters .archive-search{min-width:100%}}
+
+/* Adventure Centre Manager v3 — professional Manor-inspired shell */
+:root {
+  --v3-ink: #13231f;
+  --v3-muted: #65736e;
+  --v3-green: #0f4b3c;
+  --v3-green-2: #176552;
+  --v3-lime: #bad532;
+  --v3-stone: #f3f5f2;
+  --v3-line: #dce4df;
+  --v3-card: #ffffff;
+  --v3-shadow: 0 14px 38px rgba(21, 51, 42, .09);
+}
+
+html, body, #root { min-height: 100%; }
+body { background: var(--v3-stone); color: var(--v3-ink); }
+.app-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  grid-template-rows: auto 1fr;
+  padding: 0;
+  background:
+    radial-gradient(circle at 85% 0%, rgba(186,213,50,.10), transparent 25rem),
+    var(--v3-stone);
+}
+.app-sidebar {
+  grid-column: 1;
+  grid-row: 1 / -1;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 24px 16px 18px;
+  background: linear-gradient(180deg, #103f34 0%, #0b2f28 100%);
+  color: #fff;
+  box-shadow: 12px 0 35px rgba(7,30,25,.15);
+  z-index: 50;
+}
+.sidebar-brand { display:flex; align-items:center; gap:12px; padding:0 8px 24px; border-bottom:1px solid rgba(255,255,255,.12); }
+.sidebar-brand img { width:48px; height:48px; object-fit:contain; padding:5px; border-radius:14px; background:#fff; }
+.sidebar-brand div { display:grid; gap:2px; min-width:0; }
+.sidebar-brand span { color:rgba(255,255,255,.65); font-size:.72rem; font-weight:800; text-transform:uppercase; letter-spacing:.08em; }
+.sidebar-brand strong { font-size:1rem; line-height:1.15; }
+.sidebar-section-label { margin:24px 12px 9px; color:rgba(255,255,255,.45); font-size:.68rem; font-weight:900; text-transform:uppercase; letter-spacing:.14em; }
+.top-nav { position:static; display:grid; grid-template-columns:1fr; gap:6px; padding:0; border:0; background:transparent; box-shadow:none; backdrop-filter:none; }
+.top-nav button { display:flex; justify-content:flex-start; place-items:center; gap:12px; min-height:48px; padding:0 14px; border-radius:12px; color:rgba(255,255,255,.72); font-size:.88rem; }
+.top-nav button:hover { background:rgba(255,255,255,.08); color:#fff; }
+.top-nav button.active { position:relative; background:#fff; color:var(--v3-green); box-shadow:0 10px 24px rgba(0,0,0,.18); }
+.top-nav button.active::before { content:""; position:absolute; left:-4px; width:4px; height:24px; border-radius:999px; background:var(--v3-lime); }
+.sidebar-footer { display:flex; align-items:center; gap:10px; margin-top:auto; padding:14px 12px 2px; border-top:1px solid rgba(255,255,255,.12); }
+.sidebar-footer div { display:grid; }
+.sidebar-footer strong { font-size:.78rem; }
+.sidebar-footer small { color:rgba(255,255,255,.5); font-size:.7rem; }
+.sidebar-status-dot { width:9px; height:9px; border-radius:50%; background:var(--v3-lime); box-shadow:0 0 0 5px rgba(186,213,50,.13); }
+.topbar { grid-column:2; grid-row:1; position:sticky; top:0; z-index:40; display:flex; align-items:center; justify-content:space-between; gap:24px; padding:16px 28px; border-bottom:1px solid rgba(15,75,60,.10); background:rgba(255,255,255,.88); backdrop-filter:blur(18px); box-shadow:0 5px 24px rgba(25,55,46,.05); }
+.topbar > div:first-child > .eyebrow, .topbar .brand-lockup img, .topbar .brand-lockup small { display:none; }
+.topbar .brand-lockup { display:block; }
+.topbar .brand-title-row { display:flex; align-items:center; gap:10px; }
+.topbar .brand-title-row h1 { margin:0; color:var(--v3-ink); font-size:clamp(1.15rem,2vw,1.45rem); letter-spacing:-.025em; }
+.release-pill { border:1px solid rgba(15,75,60,.14); background:#eaf2ed; color:var(--v3-green); }
+.account-email { display:block; margin-top:3px; color:var(--v3-muted); }
+.account-actions { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+.account-actions button { min-height:40px; border-radius:10px; }
+.page-content { grid-column:2; grid-row:2; width:min(1500px,100%); margin:0 auto; padding:28px clamp(18px,3vw,42px) 48px; }
+.panel { border:1px solid rgba(15,75,60,.08); border-radius:20px; box-shadow:var(--v3-shadow); }
+.panel h2 { font-size:clamp(1.6rem,3vw,2.25rem); letter-spacing:-.035em; }
+.hero.command-hero { border:1px solid rgba(255,255,255,.2); border-radius:24px; background:linear-gradient(125deg,#103f34,#176552); box-shadow:0 22px 50px rgba(10,47,39,.22); }
+.stat-card, .action-card, .admin-choice-card, .display-manager-card { border:1px solid var(--v3-line); border-radius:16px; box-shadow:0 7px 24px rgba(25,55,46,.055); }
+.action-card, .admin-choice-card { transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
+.action-card:hover, .admin-choice-card:hover { transform:translateY(-2px); border-color:rgba(23,101,82,.35); box-shadow:0 14px 30px rgba(25,55,46,.11); }
+input, select, textarea { max-width:100%; min-width:0; border-color:#cfd9d3 !important; border-radius:10px !important; background:#fff; }
+input:focus, select:focus, textarea:focus { outline:3px solid rgba(23,101,82,.12); border-color:var(--v3-green-2) !important; }
+button.primary, .primary { background:var(--v3-green-2); border-radius:10px; }
+button.primary:hover, .primary:hover { background:var(--v3-green); }
+.secondary-action { border-color:#cddad3; background:#f8faf8; color:var(--v3-green); }
+.programme-scroll, .builder-grid-wrap { border-radius:14px; box-shadow:0 7px 20px rgba(21,51,42,.06); }
+.programme-table thead th, .builder-grid thead th { background:var(--v3-green); }
+.programme-files-card { background:linear-gradient(135deg,#f4f8f0,#fff); }
+
+@media (max-width: 900px) {
+  .app-shell { display:block; padding-bottom:78px; }
+  .app-sidebar { position:fixed; top:auto; bottom:0; left:0; right:0; width:auto; height:auto; padding:7px 8px calc(7px + env(safe-area-inset-bottom)); background:rgba(11,47,40,.97); }
+  .sidebar-brand, .sidebar-section-label, .sidebar-footer { display:none; }
+  .top-nav { grid-template-columns:repeat(6,1fr); gap:3px; }
+  .top-nav button { flex-direction:column; justify-content:center; gap:3px; min-height:56px; padding:4px 2px; font-size:.62rem; }
+  .top-nav button.active::before { display:none; }
+  .topbar { position:sticky; top:0; padding:12px 14px; }
+  .account-actions .display-top, .account-actions .sync-status { display:none; }
+  .account-actions button { padding:8px 10px; font-size:.75rem; }
+  .page-content { width:100%; padding:18px 12px 30px; }
+}
+
+@media print {
+  .app-sidebar, .topbar, .back, .no-print { display:none !important; }
+  .app-shell, .page-content { display:block; width:100%; padding:0; margin:0; background:#fff; }
+  .panel { border:0; box-shadow:none; padding:0; }
+}

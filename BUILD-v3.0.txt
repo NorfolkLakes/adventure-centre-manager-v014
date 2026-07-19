@@ -1,0 +1,11 @@
+Adventure Centre Manager v3.0
+
+Major interface redesign:
+- Professional Manor-inspired desktop sidebar
+- Responsive mobile bottom navigation
+- Redesigned top status bar, cards, forms, tables and print layout
+- Programme Files moved from main navigation into Admin
+- Version branding updated to v3.0
+- Existing programme, staffing, arrivals, downloads and print functions retained
+
+Build: npm install && npm run build
