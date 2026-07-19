@@ -3526,7 +3526,19 @@ function ManagerApp({
       setImportMessage(`${code} already exists.`)
       return
     }
-    const next = [...activities, { code, name, colour: '#dce8f5', equipmentQuantity: 0, capacity: 1, enabled: true, notes: '', staffingRuleType: 'per_group', staffingRuleValue: 1, staffingPriority: 2 }].sort((a, b) =>
+    const newActivity: Activity = {
+      code,
+      name,
+      colour: '#dce8f5',
+      equipmentQuantity: 0,
+      capacity: 1,
+      enabled: true,
+      notes: '',
+      staffingRuleType: 'per_group',
+      staffingRuleValue: 1,
+      staffingPriority: 2,
+    }
+    const next: Activity[] = [...activities, newActivity].sort((a, b) =>
       a.code.localeCompare(b.code),
     )
     setActivities(next)
