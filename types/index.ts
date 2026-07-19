@@ -1,3 +1,5 @@
+export type AccountRole = 'centreManager' | 'activityManager' | 'teamLeader' | 'admin'
+
 export type Page = 'dashboard' | 'programme' | 'arrivals' | 'staffing' | 'schoolNotes' | 'admin' | 'staff' | 'holidays' | 'signoffs' | 'logs' | 'formerStaff' | 'loanHistory' | 'staffingLogs' | 'programmeBuilder' | 'activitiesEquipment' | 'programmeArchive'
 
 export type Activity = {

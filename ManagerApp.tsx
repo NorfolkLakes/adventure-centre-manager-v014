@@ -639,13 +639,16 @@ function ManagerApp({
   accountEmail: string
   displayName?: string | null
   onSignOut: () => void
-  accountRole?: 'centreManager' | 'activityManager' | 'teamLeader'
+  accountRole?: 'centreManager' | 'activityManager' | 'teamLeader' | 'admin'
 }) {
+  const isAdminAccount = accountRole === 'admin'
   const canManageHolidays = accountRole === 'centreManager' || accountRole === 'activityManager'
   const canManageStaff = accountRole === 'centreManager' || accountRole === 'activityManager'
   const canRecordSickness = true
   const canViewLogs = canManageStaff
-  const [page, setPage] = useState<Page>('dashboard')
+  const [page, setPage] = useState<Page>(() => isAdminAccount ? 'admin' : 'dashboard')
+  const [adminAccountEmail, setAdminAccountEmail] = useState('')
+  const [adminAccountBusy, setAdminAccountBusy] = useState(false)
   const [programme, setProgramme] = useState<ProgrammeImport | null>(() =>
     readJson(PROGRAMME_KEY, null),
   )
@@ -3008,6 +3011,29 @@ function ManagerApp({
     setImportMessage(`Payroll synced with ${permanentCount} permanent staff. Existing template order will be retained and new staff will be added to the bottom of their role group.`)
   }
 
+  async function makeAdminAccount() {
+    const email = adminAccountEmail.trim().toLowerCase()
+    if (!email) return
+    setAdminAccountBusy(true)
+    const { data, error } = await supabase
+      .from('profiles')
+      .update({ role: 'admin' })
+      .eq('email', email)
+      .select('id,email')
+
+    setAdminAccountBusy(false)
+    if (error) {
+      setImportMessage(`Could not give admin access: ${error.message}`)
+      return
+    }
+    if (!data?.length) {
+      setImportMessage('No account was found with that email. Ask the admin person to create an account on the login screen first, then try again.')
+      return
+    }
+    setAdminAccountEmail('')
+    setImportMessage(`${email} now has access to Admin → Programme Files only.`)
+  }
+
   async function setStaffRole(staffId: string, role: StaffRole) {
     const member = staff.find((item) => item.id === staffId)
     const next = staff.map((item) =>
@@ -4595,7 +4621,7 @@ function ManagerApp({
         </div>
       </header>
 
-      <Nav page={page} setPage={setPage} />
+      <Nav page={page} setPage={setPage} accountRole={accountRole} />
 
       <main className="page-content">
         {importMessage && (
@@ -4773,7 +4799,7 @@ function ManagerApp({
         )}
 
         {page === 'programmeArchive' && (
-          <Panel title="Programme Files" onBack={() => setPage('dashboard')}>
+          <Panel title="Programme Files" onBack={() => setPage('admin')}>
             <section className="programme-archive-intro">
               <div><p className="eyebrow">Admin programme filing</p><h3>Search every programme by school, year and month</h3><p>Programmes are filed automatically when they are loaded into the app. Download a complete centre programme or an individual school programme.</p></div>
               <span className="release-pill">v2.10</span>
@@ -5366,9 +5392,13 @@ function ManagerApp({
         )}
 
         {page === 'admin' && (
-          <Panel title="Admin" onBack={() => setPage('dashboard')}>
+          <Panel title="Admin" onBack={isAdminAccount ? undefined : () => setPage('dashboard')}>
             <section className="admin-choice-grid">
-              <section className="display-manager-card"><div><Monitor size={34}/><div><h3>Display Manager</h3><p>Open or copy the live read-only links for screens around the centre.</p></div></div><div className="display-link-list">{([['Staff room','staff-room'],['Manager','manager'],['Programme','programme']] as const).map(([label,mode]) => { const url = new URL(window.location.href); url.searchParams.set('display',mode); return <article key={mode}><strong>{label}</strong><code>{url.toString()}</code><button onClick={() => window.open(url.toString(),'_blank','noopener,noreferrer')}>Open</button><button onClick={() => { void navigator.clipboard.writeText(url.toString()); setImportMessage(`${label} display link copied.`) }}>Copy link</button></article> })}</div></section>
+              <button className="admin-choice-card programme-builder-card" onClick={() => setPage('programmeArchive')}>
+                <Archive size={34} />
+                <div><h3>Programme Files</h3><p>Search programmes by school, year and month, then download school or complete centre files.</p></div>
+              </button>
+              {!isAdminAccount && <section className="display-manager-card"><div><Monitor size={34}/><div><h3>Display Manager</h3><p>Open or copy the live read-only links for screens around the centre.</p></div></div><div className="display-link-list">{([['Staff room','staff-room'],['Manager','manager'],['Programme','programme']] as const).map(([label,mode]) => { const url = new URL(window.location.href); url.searchParams.set('display',mode); return <article key={mode}><strong>{label}</strong><code>{url.toString()}</code><button onClick={() => window.open(url.toString(),'_blank','noopener,noreferrer')}>Open</button><button onClick={() => { void navigator.clipboard.writeText(url.toString()); setImportMessage(`${label} display link copied.`) }}>Copy link</button></article> })}</div></section>}
               {canManageStaff && <button className="admin-choice-card programme-builder-card" onClick={() => setPage('programmeBuilder')}>
                 <CalendarRange size={34} />
                 <div><h3>Programme Builder</h3><p>Design Bargain Special or Normal Purchase programmes, preview them and publish them.</p></div>
@@ -5381,15 +5411,16 @@ function ManagerApp({
                 <Users size={34} />
                 <div><h3>Staff</h3><p>Manage staff accounts, roles and availability.</p></div>
               </button>}
-              <button className="admin-choice-card" onClick={() => setPage('signoffs')}>
+              {!isAdminAccount && <button className="admin-choice-card" onClick={() => setPage('signoffs')}>
                 <ShieldCheck size={34} />
                 <div><h3>Sign-off</h3><p>Search staff and manage activity sign-offs.</p></div>
-              </button>
+              </button>}
               {canViewLogs && <button className="admin-choice-card" onClick={() => setPage('logs')}>
                 <ClipboardList size={34} />
                 <div><h3>Logs</h3><p>Review water-lead permission confirmations.</p></div>
               </button>}
               {canViewLogs && <button className="admin-choice-card" onClick={() => setPage('staffingLogs')}><FileSpreadsheet size={34}/><div><h3>Staffing Logs</h3><p>Locked weekly staffing records and historical downloads.</p></div></button>}
+              {canManageStaff && <section className="display-manager-card admin-account-card"><div><Users size={34}/><div><h3>Admin Account</h3><p>Give an existing signed-up account access to Admin → Programme Files only.</p></div></div><div className="admin-account-form"><input type="email" value={adminAccountEmail} onChange={(event) => setAdminAccountEmail(event.target.value)} placeholder="admin@school.co.uk"/><button className="primary" disabled={adminAccountBusy || !adminAccountEmail.trim()} onClick={() => void makeAdminAccount()}>{adminAccountBusy ? 'Saving…' : 'Give Admin Access'}</button></div></section>}
               {canManageStaff && <button className="admin-choice-card" onClick={() => setPage('formerStaff')}><History size={34}/><div><h3>Former Staff</h3><p>Employment start and leaving records.</p></div></button>}
               {canManageStaff && <button className="admin-choice-card" onClick={() => setPage('loanHistory')}><Users size={34}/><div><h3>Loan Staff History</h3><p>Reactivate loan staff or add them permanently.</p></div></button>}
             </section>
@@ -6066,15 +6097,15 @@ function Panel({
   children,
 }: {
   title: string
-  onBack: () => void
+  onBack?: () => void
   children: React.ReactNode
 }) {
   return (
     <section className="panel">
-      <button className="back" onClick={onBack}>
+      {onBack && <button className="back" onClick={onBack}>
         <ChevronLeft size={18} />
         Back
-      </button>
+      </button>}
       <h2>{title}</h2>
       {children}
     </section>

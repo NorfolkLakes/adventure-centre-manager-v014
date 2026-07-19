@@ -11,7 +11,7 @@ type Profile = {
   id: string
   email: string
   display_name: string | null
-  role: 'manager' | 'staff' | 'centreManager' | 'activityManager' | 'teamLeader'
+  role: 'manager' | 'staff' | 'centreManager' | 'activityManager' | 'teamLeader' | 'admin'
 }
 
 
@@ -140,13 +140,13 @@ function App() {
   if (displayMode === 'manager' || displayMode === 'reception') return <ManagerDisplay />
   if (displayMode === 'programme') return <ProgrammeDisplay onExit={exitDisplay} />
 
-  if (profile?.role === 'manager' || profile?.role === 'centreManager' || profile?.role === 'activityManager' || profile?.role === 'teamLeader') {
+  if (profile?.role === 'manager' || profile?.role === 'centreManager' || profile?.role === 'activityManager' || profile?.role === 'teamLeader' || profile?.role === 'admin') {
     return (
       <ManagerApp
         accountEmail={profile.email || session.user.email || ''}
         displayName={profile.display_name ?? null}
         onSignOut={signOut}
-        accountRole={profile.role === 'activityManager' ? 'activityManager' : profile.role === 'teamLeader' ? 'teamLeader' : 'centreManager'}
+        accountRole={profile.role === 'admin' ? 'admin' : profile.role === 'activityManager' ? 'activityManager' : profile.role === 'teamLeader' ? 'teamLeader' : 'centreManager'}
       />
     )
   }

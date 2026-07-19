@@ -1,0 +1,7 @@
+Adventure Centre Manager v2.20
+
+- Programme Files moved into Admin.
+- Added Admin account role with Programme Files-only access.
+- Managers can grant Admin access by email after the person signs up.
+
+Run supabase/v2.20-admin-account.sql once in Supabase SQL Editor.

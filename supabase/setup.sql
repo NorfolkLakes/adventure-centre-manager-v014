@@ -158,7 +158,7 @@ grant usage, select on all sequences in schema public to authenticated;
 -- v0.32 holiday calendar and role permissions
 alter table public.profiles drop constraint if exists profiles_role_check;
 alter table public.profiles add constraint profiles_role_check
-  check (role in ('manager','staff','centreManager','activityManager','teamLeader'));
+  check (role in ('manager','staff','centreManager','activityManager','teamLeader','admin'));
 
 create or replace function public.can_manage_holidays()
 returns boolean language sql stable security definer set search_path = '' as $$
