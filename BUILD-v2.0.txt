@@ -1,0 +1,14 @@
+Adventure Centre Manager v2.0 – SOP Engine Foundation
+
+Added:
+- Activity Library replaces Activities & Equipment.
+- Per-activity staffing rules, minimum staffing and priorities.
+- Required and lead qualification fields.
+- Maximum participant/group value.
+- Shareable-session and safety-boat controls.
+- Weather/environment restrictions.
+- Setup and pack-away checklists.
+- Emergency procedure, SOP reference and Risk Assessment reference.
+- Existing saved activities migrate automatically with safe defaults.
+
+This is the v2.0 operational foundation. Managers should verify and enter the exact approved ratios and qualification wording from the current controlled SOP/RA documents before relying on compliance decisions.

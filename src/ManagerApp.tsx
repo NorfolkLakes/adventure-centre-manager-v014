@@ -692,6 +692,18 @@ function ManagerApp({
       staffingRuleType: activity.staffingRuleType ?? ({ CF: 'per_x_groups', DISCO: 'per_x_groups', MO: 'per_x_groups', BT: 'per_x_groups' } as Record<string, Activity['staffingRuleType']>)[activity.code] ?? 'per_group',
       staffingRuleValue: Math.max(1, activity.staffingRuleValue ?? ({ CF: 4, DISCO: 5, MO: 3, BT: 2 } as Record<string, number>)[activity.code] ?? 1),
       staffingPriority: Math.min(3, Math.max(1, activity.staffingPriority ?? (['SAIL','CANOE','KAYAK','SUP','GSUP','GCAN','RAFT','CLIMB','HR','HR UP','HR GR'].includes(activity.code) ? 1 : ['CF','DISCO','MO','BT'].includes(activity.code) ? 3 : 2))),
+      requiredQualifications: activity.requiredQualifications ?? '',
+      leadQualification: activity.leadQualification ?? '',
+      minimumInstructors: Math.max(1, activity.minimumInstructors ?? 1),
+      maximumGroupSize: Math.max(0, activity.maximumGroupSize ?? 0),
+      safetyBoatRequired: activity.safetyBoatRequired ?? ['SAIL','RAFT','SUP','GSUP','GCAN'].includes(activity.code),
+      shareable: activity.shareable ?? ['CF','DISCO','MO','BT','QUIZ','FILM','VIDEO','TG','WG','VB'].includes(activity.code),
+      weatherRestrictions: activity.weatherRestrictions ?? (['SAIL','CANOE','KAYAK','RAFT','SUP','GSUP','GCAN'].includes(activity.code) ? 'Follow water, wind, visibility, flooding and lightning procedures.' : ['HR','HR UP','HR GR','LR','CS'].includes(activity.code) ? 'Stop during lightning restrictions and follow site weather procedures.' : ''),
+      setupChecklist: activity.setupChecklist ?? '',
+      packAwayChecklist: activity.packAwayChecklist ?? '',
+      emergencyProcedure: activity.emergencyProcedure ?? 'Stop the session, make the group safe, contact OCM/AM/HoC by radio and follow the centre emergency procedures.',
+      sopReference: activity.sopReference ?? 'Norfolk Lakes SOPs – activity section',
+      riskAssessmentReference: activity.riskAssessmentReference ?? 'Norfolk Lakes Activity Risk Assessments V1 2026',
     }))
   })
 
@@ -5265,7 +5277,7 @@ function ManagerApp({
               </button>}
               {canManageStaff && <button className="admin-choice-card" onClick={() => setPage('activitiesEquipment')}>
                 <ClipboardList size={34} />
-                <div><h3>Activities &amp; Equipment</h3><p>Add, edit or remove activities and set the maximum groups that can run each session.</p></div>
+                <div><h3>Activity Library</h3><p>Manage SOP-led staffing, qualifications, equipment, restrictions and safety rules for every activity.</p></div>
               </button>}
               {canManageStaff && <button className="admin-choice-card" onClick={() => setPage('staff')}>
                 <Users size={34} />
@@ -5287,10 +5299,10 @@ function ManagerApp({
         )}
 
         {page === 'activitiesEquipment' && canManageStaff && (
-          <Panel title="Activities & Equipment" onBack={() => setPage('admin')}>
+          <Panel title="Activity Library" onBack={() => setPage('admin')}>
             <section className="activity-equipment-intro">
-              <div><p className="eyebrow">Programme and staffing rules</p><h3>Equipment, capacity and smart staffing</h3><p>Set how many instructors each activity needs. Shared activities from the same school and session are combined automatically during Auto-fill.</p></div>
-              <div className="capacity-example"><strong>Example</strong><span>12 boats</span><span>Maximum 2 groups per session</span></div>
+              <div><p className="eyebrow">SOP-driven operations engine</p><h3>Staffing, qualifications, equipment and safety controls</h3><p>These rules drive Programme Builder, Auto-fill and compliance warnings. Shared activities from the same school and session are combined automatically.</p></div>
+              <div className="capacity-example"><strong>Compliance status</strong><span>Rules stored per activity</span><span>SOP and RA references visible to managers</span></div>
             </section>
             <section className="add-activity-strip">
               <input value={newActivityCode} onChange={(event) => setNewActivityCode(event.target.value.toUpperCase())} placeholder="Code, e.g. RAFT" />
@@ -5312,9 +5324,21 @@ function ManagerApp({
                     <label>Staffing method<select value={activity.staffingRuleType ?? 'per_group'} onChange={(event) => updateActivityDefinition(activity.code, { staffingRuleType: event.target.value as Activity['staffingRuleType'] })}><option value="per_group">1 instructor per group</option><option value="per_x_groups">1 instructor per X groups</option><option value="fixed">Fixed number of instructors</option><option value="manual">Manual / one per group</option></select></label>
                     <label>{activity.staffingRuleType === 'fixed' ? 'Fixed instructors' : activity.staffingRuleType === 'per_x_groups' ? 'Groups per instructor' : 'Staffing value'}<input type="number" min="1" disabled={activity.staffingRuleType === 'per_group' || activity.staffingRuleType === 'manual'} value={activity.staffingRuleValue ?? 1} onChange={(event) => updateActivityDefinition(activity.code, { staffingRuleValue: Math.max(1, Number(event.target.value) || 1) })}/></label>
                     <label>Staffing priority<select value={activity.staffingPriority ?? 2} onChange={(event) => updateActivityDefinition(activity.code, { staffingPriority: Number(event.target.value) })}><option value="1">1 · Highest</option><option value="2">2 · Normal</option><option value="3">3 · Shared / lowest</option></select></label>
-                    <label className="activity-notes">Notes<input value={activity.notes ?? ''} onChange={(event) => updateActivityDefinition(activity.code, { notes: event.target.value })} placeholder="Optional equipment note"/></label>
+                    <label>Minimum instructors<input type="number" min="1" value={activity.minimumInstructors ?? 1} onChange={(event) => updateActivityDefinition(activity.code, { minimumInstructors: Math.max(1, Number(event.target.value) || 1) })}/></label>
+                    <label>Maximum participants per group<input type="number" min="0" value={activity.maximumGroupSize ?? 0} onChange={(event) => updateActivityDefinition(activity.code, { maximumGroupSize: Math.max(0, Number(event.target.value) || 0) })} placeholder="0 = not set"/></label>
+                    <label>Required qualification<input value={activity.requiredQualifications ?? ''} onChange={(event) => updateActivityDefinition(activity.code, { requiredQualifications: event.target.value })} placeholder="Centre sign-off / NGB qualification"/></label>
+                    <label>Lead qualification<input value={activity.leadQualification ?? ''} onChange={(event) => updateActivityDefinition(activity.code, { leadQualification: event.target.value })} placeholder="Optional lead requirement"/></label>
+                    <label className="activity-enabled"><input type="checkbox" checked={activity.shareable === true} onChange={(event) => updateActivityDefinition(activity.code, { shareable: event.target.checked })}/>Can be shared across groups</label>
+                    <label className="activity-enabled"><input type="checkbox" checked={activity.safetyBoatRequired === true} onChange={(event) => updateActivityDefinition(activity.code, { safetyBoatRequired: event.target.checked })}/>Safety boat required</label>
+                    <label className="activity-notes">Weather / environmental restrictions<textarea value={activity.weatherRestrictions ?? ''} onChange={(event) => updateActivityDefinition(activity.code, { weatherRestrictions: event.target.value })} placeholder="Wind, visibility, flooding, lightning or seasonal restrictions"/></label>
+                    <label className="activity-notes">Setup checklist<textarea value={activity.setupChecklist ?? ''} onChange={(event) => updateActivityDefinition(activity.code, { setupChecklist: event.target.value })} placeholder="One item per line"/></label>
+                    <label className="activity-notes">Pack-away checklist<textarea value={activity.packAwayChecklist ?? ''} onChange={(event) => updateActivityDefinition(activity.code, { packAwayChecklist: event.target.value })} placeholder="One item per line"/></label>
+                    <label className="activity-notes">Emergency procedure<textarea value={activity.emergencyProcedure ?? ''} onChange={(event) => updateActivityDefinition(activity.code, { emergencyProcedure: event.target.value })}/></label>
+                    <label>SOP reference<input value={activity.sopReference ?? ''} onChange={(event) => updateActivityDefinition(activity.code, { sopReference: event.target.value })}/></label>
+                    <label>Risk assessment reference<input value={activity.riskAssessmentReference ?? ''} onChange={(event) => updateActivityDefinition(activity.code, { riskAssessmentReference: event.target.value })}/></label>
+                    <label className="activity-notes">Manager notes<input value={activity.notes ?? ''} onChange={(event) => updateActivityDefinition(activity.code, { notes: event.target.value })} placeholder="Optional operational note"/></label>
                   </div>
-                  <div className="activity-equipment-footer"><span>{activity.equipmentQuantity ?? 0} item{(activity.equipmentQuantity ?? 0) === 1 ? '' : 's'} recorded · {activity.capacity ?? 1} group{(activity.capacity ?? 1) === 1 ? '' : 's'} at once · {activity.staffingRuleType === 'per_x_groups' ? `1 instructor per ${activity.staffingRuleValue ?? 1} groups` : activity.staffingRuleType === 'fixed' ? `${activity.staffingRuleValue ?? 1} instructors fixed` : '1 instructor per group'}</span><button className="remove-button" onClick={() => deleteActivity(activity.code)}><Trash2 size={16}/>Remove</button></div>
+                  <div className="activity-equipment-footer"><span>{activity.equipmentQuantity ?? 0} equipment recorded · {activity.capacity ?? 1} group{(activity.capacity ?? 1) === 1 ? '' : 's'} at once · {activity.staffingRuleType === 'per_x_groups' ? `1 instructor per ${activity.staffingRuleValue ?? 1} groups` : activity.staffingRuleType === 'fixed' ? `${activity.staffingRuleValue ?? 1} instructors fixed` : '1 instructor per group'} · {activity.requiredQualifications ? 'Qualification rule set' : 'Qualification rule needed'} · {activity.sopReference ? 'SOP linked' : 'SOP reference needed'}</span><button className="remove-button" onClick={() => deleteActivity(activity.code)}><Trash2 size={16}/>Remove</button></div>
                 </article>
               ))}
             </div>

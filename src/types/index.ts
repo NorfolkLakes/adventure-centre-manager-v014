@@ -11,6 +11,18 @@ export type Activity = {
   staffingRuleType?: 'per_group' | 'per_x_groups' | 'fixed' | 'manual'
   staffingRuleValue?: number
   staffingPriority?: number
+  requiredQualifications?: string
+  leadQualification?: string
+  minimumInstructors?: number
+  maximumGroupSize?: number
+  safetyBoatRequired?: boolean
+  shareable?: boolean
+  weatherRestrictions?: string
+  setupChecklist?: string
+  packAwayChecklist?: string
+  emergencyProcedure?: string
+  sopReference?: string
+  riskAssessmentReference?: string
 }
 
 export type ProgrammeCell = {
