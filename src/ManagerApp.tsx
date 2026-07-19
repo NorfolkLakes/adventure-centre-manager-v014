@@ -2136,7 +2136,17 @@ function ManagerApp({
       for (const slot of unlockedSlots) next[builderAssignmentKey(slot.day, slot.session, group)] = ''
 
       const sortedSlots = [...unlockedSlots].sort((a, b) => a.priority - b.priority || a.date.localeCompare(b.date) || Number(a.session) - Number(b.session))
-      const queue = [...allowed].filter((code) => code !== 'CF' && code !== 'DISCO' && !(pairedWaterGroups.has(group) && (code === 'CANOE' || code === 'KAYAK')))
+      const alreadyAssigned = new Set(
+        activitySlots
+          .map((slot) => next[builderAssignmentKey(slot.day, slot.session, group)])
+          .filter(Boolean),
+      )
+      const queue = [...allowed].filter((code) =>
+        code !== 'CF' &&
+        code !== 'DISCO' &&
+        !alreadyAssigned.has(code) &&
+        !(pairedWaterGroups.has(group) && (code === 'CANOE' || code === 'KAYAK')),
+      )
       const campfireIndex = queue.indexOf('CF')
       if (campfireIndex >= 0) {
         queue.splice(campfireIndex, 1)
@@ -2160,7 +2170,6 @@ function ManagerApp({
         if (chosenIndex < 0) continue
         const [code] = queue.splice(chosenIndex, 1)
         next[key] = code
-        if (queue.length === 0 && school.purchaseType !== 'bargain') queue.push(...allowed.filter((item) => item !== 'CF'))
       }
     }
     // Campfire and Disco are whole-school evening activities. Put them together in Session 5,
@@ -3287,6 +3296,25 @@ function ManagerApp({
 
   function aiBuildEntireRota() {
     if (!programme) return
+    const faults: string[] = []
+    const unfilledProgrammeCells = programme.rows.reduce(
+      (total, row) => total + activityCellsForRow(row).filter((cell) => !cell.activityCode.trim()).length,
+      0,
+    )
+    if (unfilledProgrammeCells > 0) faults.push(`${unfilledProgrammeCells} programme session${unfilledProgrammeCells === 1 ? '' : 's'} have no activity.`)
+    if (dailyShortages.length > 0) faults.push(`${dailyShortages.length} day${dailyShortages.length === 1 ? '' : 's'} have staffing shortages.`)
+    const qualificationFaults = programmeDays.flatMap((day) => qualificationShortagesForDay(day))
+    if (qualificationFaults.length > 0) faults.push(`${qualificationFaults.length} activity session${qualificationFaults.length === 1 ? '' : 's'} do not have enough correctly signed-off staff.`)
+    const arrivalFaults = arrivalRows.filter((row) => !arrivalAssignment(row).leaderId)
+    if (arrivalFaults.length > 0) faults.push(`${arrivalFaults.length} school arrival${arrivalFaults.length === 1 ? '' : 's'} do not have a Party Leader.`)
+    const message = faults.length
+      ? `Faults found before building the rota:
+
+• ${faults.join('\n• ')}
+
+Do you want to build the rota anyway?`
+      : 'No faults were found. Build the entire rota now?'
+    if (!window.confirm(message)) return
     let next: StaffingAssignment = { ...assignments }
     const workload = new Map<string, number>()
     const sortedRows = [...programme.rows].sort((a,b) => a.day.localeCompare(b.day) || Number(a.session)-Number(b.session))
@@ -4651,13 +4679,10 @@ function ManagerApp({
   }, [programme, dashboardProgrammeDay, todayIso])
 
   const schoolsOnSite = dashboardSchools.length
-  const hasProgramme = Boolean(programme && programme.rows.length > 0)
-  const todayAvailabilityDay = new Date().toISOString().slice(0, 10)
-  const todayWorkingIds = workingByDay[todayAvailabilityDay]
-  const todayUnavailableIds = unavailableStaffIdsForDay(todayAvailabilityDay)
-  const availableTodayCount = staff.filter((member) =>
-    (!todayWorkingIds || todayWorkingIds.includes(member.id)) && !todayUnavailableIds.has(member.id),
-  ).length
+  const availableTodayCount = dashboardProgrammeDay
+    ? (workingByDay[dashboardProgrammeDay] ?? staff.map((m) => m.id))
+        .filter((id) => !unavailableStaffIdsForDay(dashboardProgrammeDay).has(id)).length
+    : staff.length
   const dailyShortages = programmeDays.map((day) => {
     const required = busiestSessionForDay(day)?.total ?? 0
     const available = (workingByDay[day] ?? staff.map((member) => member.id))
@@ -4732,7 +4757,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v1.01</span></div><small>Norfolk Lakes</small></div></div>
+          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v3.2</span></div><small>Norfolk Lakes</small></div></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -4797,7 +4822,7 @@ function ManagerApp({
                 <strong>{availableTodayCount}</strong>
                 <small>staff available today{dashboardProgrammeDay ? ` · ${dashboardProgrammeDay}` : ''}</small>
                 <div className={staffingShortages ? 'hero-alert warning' : 'hero-alert ready'}>
-                  {!hasProgramme ? 'No programme loaded' : staffingShortages ? `${staffingShortages} staffing gaps need attention` : 'Programme fully staffed'}
+                  {staffingShortages ? `${staffingShortages} staffing gaps need attention` : 'Programme fully staffed'}
                 </div>
               </div>
             </section>
@@ -5091,15 +5116,35 @@ function ManagerApp({
             {programme && <div className="staffing-date-context"><article><span>Programme</span><strong>{programme.title}</strong><small>{programmeDays.length ? friendlyProgrammeDateRange(dateForProgrammeDay(programme, programmeDays[0]), dateForProgrammeDay(programme, programmeDays[programmeDays.length - 1])) : programme.title}</small></article><article className="today-card"><span>Selected programme date</span><strong>{new Date(`${dateForProgrammeDay(programme, activeStaffingDay)}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</strong></article></div>}
             {!programme ? (
               <>
-                <EmptyProgramme onUpload={() => fileInputRef.current?.click()} />
                 <section className="staffing-no-programme-banner">
                   <div>
-                    <p className="eyebrow">Staff availability</p>
-                    <h3>Days Off &amp; Sickness</h3>
-                    <p>You can still view and update staff availability while no programme is loaded.</p>
+                    <p className="eyebrow">Daily staffing calendar</p>
+                    <h3>No programme loaded for this date</h3>
+                    <p>The calendar remains available so you can review staff availability before loading a programme.</p>
                   </div>
-                  <button className="primary" onClick={() => setPage('holidays')}>Open Days Off &amp; Sickness</button>
+                  <button className="primary" onClick={() => fileInputRef.current?.click()}>Upload programme</button>
                 </section>
+                <div className="staffing-controls">
+                  <div className="day-tabs staffing-day-tabs" role="tablist" aria-label="Staffing date">
+                    {availabilityWeekDays.map((day) => (
+                      <button key={day} className={activeStaffingDay === day ? 'active' : ''} onClick={() => setSelectedStaffingDay(day)}>
+                        {new Date(`${day}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <section className="staffing-calendar-wrap" aria-label="Availability calendar">
+                  <div className="staffing-calendar" style={{ gridTemplateColumns: 'minmax(220px, 1fr) minmax(180px, 0.5fr)' }}>
+                    <div className="staffing-calendar-corner">Staff member</div>
+                    <div className="staffing-calendar-corner">Status</div>
+                    {staff.map((member) => {
+                      const status = daysOff.find((entry) => memberIdForDayOff(entry) === member.id && entry.day === activeStaffingDay)?.status
+                      const label = status === 'hol' ? 'Holiday' : status === 'sick' ? 'Sick' : status === 'am_off' ? 'AM off' : status === 'pm_off' ? 'PM off' : status === 'off' ? 'Off' : 'Working'
+                      return <Fragment key={member.id}><div className="staffing-calendar-cell"><strong>{member.name}</strong><small>{roleLabel(resolvedRole(member))}</small></div><div className="staffing-calendar-cell"><strong>{label}</strong></div></Fragment>
+                    })}
+                  </div>
+                </section>
+                <div className="staffing-actions"><button className="primary" onClick={() => setPage('holidays')}>Manage Days Off &amp; Sickness</button></div>
               </>
             ) : (
               <>

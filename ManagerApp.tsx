@@ -2176,7 +2176,20 @@ function ManagerApp({
       for (const slot of unlockedSlots) next[builderAssignmentKey(slot.day, slot.session, group)] = ''
 
       const sortedSlots = [...unlockedSlots].sort((a, b) => a.priority - b.priority || a.date.localeCompare(b.date) || Number(a.session) - Number(b.session))
-      const queue = [...allowed].filter((code) => code !== 'CF' && code !== 'DISCO' && !(pairedWaterGroups.has(group) && (code === 'CANOE' || code === 'KAYAK')))
+      // Each selected activity may only appear once per group. Activities already
+      // placed in manually locked cells (or in the linked canoe/kayak rotation)
+      // are removed from the auto-fill queue.
+      const alreadyAssigned = new Set(
+        activitySlots
+          .map((slot) => next[builderAssignmentKey(slot.day, slot.session, group)])
+          .filter(Boolean),
+      )
+      const queue = [...allowed].filter((code) =>
+        code !== 'CF' &&
+        code !== 'DISCO' &&
+        !alreadyAssigned.has(code) &&
+        !(pairedWaterGroups.has(group) && (code === 'CANOE' || code === 'KAYAK')),
+      )
       const campfireIndex = queue.indexOf('CF')
       if (campfireIndex >= 0) {
         queue.splice(campfireIndex, 1)
@@ -2200,7 +2213,6 @@ function ManagerApp({
         if (chosenIndex < 0) continue
         const [code] = queue.splice(chosenIndex, 1)
         next[key] = code
-        if (queue.length === 0 && school.purchaseType !== 'bargain') queue.push(...allowed.filter((item) => item !== 'CF'))
       }
     }
     // Campfire and Disco are whole-school evening activities. Put them together in Session 5,
@@ -3349,25 +3361,78 @@ function ManagerApp({
   }
 
   function aiBuildEntireRota() {
-    if (!programme) return
+    if (!programme) {
+      window.alert('No programme is loaded. Load or build a programme before building the rota.')
+      return
+    }
+
     let next: StaffingAssignment = { ...assignments }
     const workload = new Map<string, number>()
+    const unresolved: string[] = []
     const sortedRows = [...programme.rows].sort((a,b) => a.day.localeCompare(b.day) || Number(a.session)-Number(b.session))
+
     for (const row of sortedRows) {
       const workingIds = new Set(workingByDay[row.day] ?? staff.map((m) => m.id))
-      const sickIds = unavailableStaffIdsForSession(row.day, row.session)
+      const unavailableIds = unavailableStaffIdsForSession(row.day, row.session)
+      const arrivalIds = arrivalStaffForDaySession(row.day, row.session)
+
       for (const cell of activityCellsForRow(row)) {
         const key = cellKey(row.id, cell.group)
-        if (next[key]) { workload.set(next[key], (workload.get(next[key]) ?? 0) + 1); continue }
-        const candidates = staff.filter((m) => workingIds.has(m.id) && !sickIds.has(m.id) && qualificationIsValid(m, cell.activityCode) && !arrivalStaffForDaySession(row.day, row.session).has(m.id))
-          .filter((m) => !sortedRows.some((other) => other.day === row.day && other.session === row.session && other.cells.some((c) => next[cellKey(other.id,c.group)] === m.id)))
-          .sort((a,b) => (rolePriority(resolvedRole(a))-rolePriority(resolvedRole(b))) || ((workload.get(a.id)??0)-(workload.get(b.id)??0)) || a.name.localeCompare(b.name))
-        if (candidates[0]) { next[key]=candidates[0].id; workload.set(candidates[0].id,(workload.get(candidates[0].id)??0)+1) }
+        if (next[key]) {
+          workload.set(next[key], (workload.get(next[key]) ?? 0) + 1)
+          continue
+        }
+
+        const candidates = staff
+          .filter((member) => workingIds.has(member.id))
+          .filter((member) => !unavailableIds.has(member.id))
+          .filter((member) => qualificationIsValid(member, cell.activityCode))
+          .filter((member) => !arrivalIds.has(member.id))
+          .filter((member) => !sortedRows.some((other) =>
+            other.day === row.day &&
+            other.session === row.session &&
+            other.cells.some((otherCell) => next[cellKey(other.id, otherCell.group)] === member.id),
+          ))
+          .sort((a,b) =>
+            (rolePriority(resolvedRole(a)) - rolePriority(resolvedRole(b))) ||
+            ((workload.get(a.id) ?? 0) - (workload.get(b.id) ?? 0)) ||
+            a.name.localeCompare(b.name),
+          )
+
+        if (candidates[0]) {
+          next[key] = candidates[0].id
+          workload.set(candidates[0].id, (workload.get(candidates[0].id) ?? 0) + 1)
+        } else {
+          unresolved.push(`${row.day}, Session ${row.session}, Group ${cell.group}: ${activityName(cell.activityCode)}`)
+        }
       }
     }
+
+    const faultLines: string[] = []
+    if (unresolved.length) {
+      faultLines.push(`${unresolved.length} activity assignment${unresolved.length === 1 ? '' : 's'} could not be filled.`)
+      unresolved.slice(0, 8).forEach((line) => faultLines.push(`• ${line}`))
+      if (unresolved.length > 8) faultLines.push(`• Plus ${unresolved.length - 8} more.`)
+    }
+
+    const qualificationDays = programmeDays.filter((day) => qualificationShortagesForDay(day).length > 0)
+    if (qualificationDays.length) faultLines.push(`Qualification/sign-off shortages detected on: ${qualificationDays.join(', ')}.`)
+
+    const message = faultLines.length
+      ? `Faults were found before building the rota:
+
+${faultLines.join('\n')}
+
+Build the rota anyway?`
+      : 'No faults were found. Build the entire rota now?'
+
+    if (!window.confirm(message)) return
+
     setAssignments(next)
     localStorage.setItem(ASSIGNMENT_KEY, JSON.stringify(next))
-    setImportMessage('AI rota builder completed the programme using availability, valid qualifications, workload balancing and conflict prevention.')
+    setImportMessage(faultLines.length
+      ? `Rota built with ${unresolved.length} unfilled activity assignment${unresolved.length === 1 ? '' : 's'}. Review the warnings in Daily Staffing.`
+      : 'Entire rota built successfully using availability, qualifications, workload balancing and conflict prevention.')
   }
 
   function isWaterActivity(code: string) {
@@ -4674,7 +4739,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v3.1</span></div><small>Norfolk Lakes</small></div></div>
+          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v3.2</span></div><small>Norfolk Lakes</small></div></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -4950,7 +5015,38 @@ function ManagerApp({
         {page === 'arrivals' && (
           <Panel title="Arrivals" onBack={() => setPage('dashboard')}>
             {!programme ? (
-              <EmptyProgramme onUpload={() => fileInputRef.current?.click()} />
+              <>
+                <section className="staffing-no-programme-banner">
+                  <div>
+                    <p className="eyebrow">Calendar mode</p>
+                    <h3>No programme loaded for these dates</h3>
+                    <p>The staffing calendar remains available so days off, holidays and sickness can still be viewed and managed.</p>
+                  </div>
+                  <button className="secondary-action" onClick={() => fileInputRef.current?.click()}><Upload size={18}/>Upload programme</button>
+                </section>
+                <div className="day-tabs staffing-day-tabs" role="tablist" aria-label="Staffing calendar dates">
+                  {availabilityWeekDays.map((day) => (
+                    <button key={day} className={activeStaffingDay === day ? 'active' : ''} onClick={() => setSelectedStaffingDay(day)}>
+                      {new Date(`${day}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
+                    </button>
+                  ))}
+                </div>
+                <section className="staffing-availability-panel">
+                  <div className="staffing-availability-heading">
+                    <div>
+                      <p className="eyebrow">Daily staffing calendar</p>
+                      <h3>{new Date(`${activeStaffingDay}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</h3>
+                      <p>No programme is loaded for this date. Staff availability can still be managed.</p>
+                    </div>
+                    <button className="primary" onClick={() => setPage('holidays')}><CalendarDays size={18}/>Open full calendar</button>
+                  </div>
+                  <div className="staffing-availability-summary" aria-label="Staff availability summary">
+                    <article><span>Staff total</span><strong>{staff.length}</strong></article>
+                    <article><span>Available</span><strong>{staff.length - unavailableStaffIdsForDay(activeStaffingDay).size}</strong></article>
+                    <article><span>Unavailable</span><strong>{unavailableStaffIdsForDay(activeStaffingDay).size}</strong></article>
+                  </div>
+                </section>
+              </>
             ) : (
               <>
                 <section className="arrivals-module-intro">

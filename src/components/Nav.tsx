@@ -1,10 +1,9 @@
-import { Archive, Building2, CalendarDays, Home, NotebookPen, Settings, Users } from 'lucide-react'
+import { Building2, CalendarDays, Home, NotebookPen, Settings, Users } from 'lucide-react'
 import type { Page } from '../types'
 
 const items = [
   { page: 'dashboard' as Page, label: 'Home', icon: Home },
   { page: 'programme' as Page, label: 'Programme', icon: CalendarDays },
-  { page: 'programmeArchive' as Page, label: 'Programme Files', icon: Archive },
   { page: 'staffing' as Page, label: 'Staffing', icon: Users },
   { page: 'arrivals' as Page, label: 'Arrivals', icon: Building2 },
   { page: 'schoolNotes' as Page, label: 'School Notes', icon: NotebookPen },

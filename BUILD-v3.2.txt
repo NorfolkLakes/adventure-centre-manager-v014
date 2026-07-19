@@ -1,0 +1,10 @@
+Adventure Centre Manager v3.2
+
+Updates:
+- Programme Files remains in Admin and is not shown in the main navigation.
+- Programme Builder Auto Fill prevents duplicate activities for the same group.
+- Build Entire Rota checks for faults and asks for confirmation before applying assignments.
+- Daily Staffing always shows a staffing calendar when no programme is loaded.
+- Dashboard live staff currently-on-site calculation retained.
+
+Build verified successfully with npm run build.
