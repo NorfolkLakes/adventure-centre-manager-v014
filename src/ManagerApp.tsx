@@ -4824,52 +4824,7 @@ function ManagerApp({
             </div>
 
             {!programme ? (
-              <>
-                <section className="staffing-no-programme-banner">
-                  <div>
-                    <p className="eyebrow">Availability mode</p>
-                    <h3>No programme loaded</h3>
-                    <p>You can still view and edit this week's staff days off, holidays and sickness. Uploading a programme will restore the normal activity staffing tools.</p>
-                  </div>
-                  <button className="secondary-action" onClick={() => fileInputRef.current?.click()}><Upload size={18}/>Upload programme</button>
-                </section>
-                <div className="day-tabs staffing-day-tabs" role="tablist" aria-label="Availability day">
-                  {availabilityWeekDays.map((day) => (
-                    <button key={day} className={activeStaffingDay === day ? 'active' : ''} onClick={() => setSelectedStaffingDay(day)}>
-                      {new Date(`${day}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
-                    </button>
-                  ))}
-                </div>
-                <section className="staffing-availability-panel">
-                  <div className="staffing-availability-heading">
-                    <div><p className="eyebrow">Staff availability</p><h3>Days Off &amp; Sickness</h3><p>{new Date(`${activeStaffingDay}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p></div>
-                    <button className="secondary-action" onClick={() => setPage('holidays')}>Open full calendar</button>
-                  </div>
-                  <div className="staffing-availability-table">
-                    <div className="availability-table-head">Staff member</div>
-                    <div className="availability-table-head">Role</div>
-                    <div className="availability-table-head">Status</div>
-                    {sortedDaysOffStaff().map((member) => {
-                      const existing = daysOff.find((entry) => memberIdForDayOff(entry) === member.id && entry.day === activeStaffingDay)
-                      const value: DayOffStatus | 'working' = existing?.status ?? 'working'
-                      return <Fragment key={`no-programme-availability-${member.id}`}>
-                        <div className="availability-staff-name"><strong>{member.name}</strong></div>
-                        <div><span className="role-pill">{roleLabel(resolvedRole(member))}</span></div>
-                        <div className={`availability-status status-${value}`}>
-                          <select value={value} disabled={!canManageHolidays && accountRole !== 'teamLeader'} onChange={(event) => void setSingleDayOff(member, activeStaffingDay, event.target.value as DayOffStatus | 'working')}>
-                            <option value="working">Working</option>
-                            {canManageHolidays && <option value="off">OFF</option>}
-                            {canManageHolidays && <option value="hol">HOL</option>}
-                            <option value="sick">SICK</option>
-                            {canManageHolidays && <option value="am_off">AM OFF</option>}
-                            {canManageHolidays && <option value="pm_off">PM OFF</option>}
-                          </select>
-                        </div>
-                      </Fragment>
-                    })}
-                  </div>
-                </section>
-              </>
+              <EmptyProgramme onUpload={() => fileInputRef.current?.click()} />
             ) : (
               <>
                 <ProgrammeGrid
@@ -5051,7 +5006,17 @@ function ManagerApp({
           <Panel title="Daily staffing" onBack={() => setPage('dashboard')}>
             {programme && <div className="staffing-date-context"><article><span>Programme</span><strong>{programme.title}</strong><small>{programmeDays.length ? friendlyProgrammeDateRange(dateForProgrammeDay(programme, programmeDays[0]), dateForProgrammeDay(programme, programmeDays[programmeDays.length - 1])) : programme.title}</small></article><article className="today-card"><span>Selected programme date</span><strong>{new Date(`${dateForProgrammeDay(programme, activeStaffingDay)}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</strong></article></div>}
             {!programme ? (
-              <EmptyProgramme onUpload={() => fileInputRef.current?.click()} />
+              <>
+                <EmptyProgramme onUpload={() => fileInputRef.current?.click()} />
+                <section className="staffing-no-programme-banner">
+                  <div>
+                    <p className="eyebrow">Staff availability</p>
+                    <h3>Days Off &amp; Sickness</h3>
+                    <p>You can still view and update staff availability while no programme is loaded.</p>
+                  </div>
+                  <button className="primary" onClick={() => setPage('holidays')}>Open Days Off &amp; Sickness</button>
+                </section>
+              </>
             ) : (
               <>
                 <div className="staffing-view-toolbar">
