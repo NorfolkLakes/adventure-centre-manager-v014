@@ -1,6 +1,5 @@
 import { ChangeEvent, Fragment, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Archive,
   Building2,
   CalendarDays,
   CalendarRange,
@@ -1132,7 +1131,7 @@ function ManagerApp({
 
   function handleWeeklyCellKeyDown(event: KeyboardEvent<HTMLDivElement>, member: StaffMember, day: string, row: number, column: number) {
     const target = event.target as HTMLElement
-    if (['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName)) return
+    if (['INPUT', 'TEXTAREA'].includes(target.tagName)) return
     const key = event.key.toLowerCase()
     if (event.key === 'ArrowLeft') { event.preventDefault(); focusWeeklyCell(row, column - 1); return }
     if (event.key === 'ArrowRight') { event.preventDefault(); focusWeeklyCell(row, column + 1); return }
@@ -1154,7 +1153,7 @@ function ManagerApp({
 
   function handleDailyCellKeyDown(event: KeyboardEvent<HTMLDivElement>, member: StaffMember, row: number) {
     const target = event.target as HTMLElement
-    if (['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName)) return
+    if (['INPUT', 'TEXTAREA'].includes(target.tagName)) return
     const key = event.key.toLowerCase()
     if (event.key === 'ArrowUp') { event.preventDefault(); focusDailyCell(row - 1); return }
     if (event.key === 'ArrowDown' || event.key === 'Enter') { event.preventDefault(); focusDailyCell(row + 1); return }
@@ -3693,6 +3692,78 @@ function ManagerApp({
     localStorage.setItem(ARRIVAL_ASSIGNMENTS_KEY, JSON.stringify(next))
   }
 
+
+  function clearArrivalSchool(row: ProgrammeRow) {
+    const schoolName = arrivalSchoolName(row)
+    if (!window.confirm(`Clear all arrival details for ${schoolName}? This removes accommodation, Party Leader and group instructors.`)) return
+    const next = { ...arrivalAssignments }
+    delete next[arrivalKey(row)]
+    setArrivalAssignments(next)
+    localStorage.setItem(ARRIVAL_ASSIGNMENTS_KEY, JSON.stringify(next))
+    setImportMessage(`${schoolName} arrival details were cleared and saved.`)
+  }
+
+  function clearAllArrivalSchools(day: string) {
+    const rows = arrivalRows.filter((row) => row.day === day)
+    if (!rows.length) return
+    if (!window.confirm(`Clear all ${rows.length} school arrivals for ${day}? This removes accommodation, Party Leaders and group instructors.`)) return
+    const keys = new Set(rows.map(arrivalKey))
+    const next = Object.fromEntries(Object.entries(arrivalAssignments).filter(([key]) => !keys.has(key)))
+    setArrivalAssignments(next)
+    localStorage.setItem(ARRIVAL_ASSIGNMENTS_KEY, JSON.stringify(next))
+    setImportMessage(`All ${day} school arrival details were cleared and saved.`)
+  }
+
+  async function clearCurrentProgramme() {
+    if (!programme) return
+    if (!window.confirm('Clear the current programme and all staffing and arrivals linked to it? The saved Programme Files archive will not be deleted.')) return
+
+    const clearedAssignments: Record<string, string> = {}
+    const clearedWaterSupport: Record<string, string> = {}
+    const clearedArrivals: Record<string, ArrivalAssignment> = {}
+
+    setProgramme(null)
+    setAssignments(clearedAssignments)
+    setWaterSupportAssignments(clearedWaterSupport)
+    setArrivalAssignments(clearedArrivals)
+    setSelectedCell(null)
+    setSelectedStaffingCell(null)
+
+    localStorage.removeItem(PROGRAMME_KEY)
+    localStorage.setItem(ASSIGNMENT_KEY, JSON.stringify(clearedAssignments))
+    localStorage.setItem(WATER_SUPPORT_KEY, JSON.stringify(clearedWaterSupport))
+    localStorage.setItem(ARRIVAL_ASSIGNMENTS_KEY, JSON.stringify(clearedArrivals))
+
+    // Save immediately as well as through the normal live-state autosave, so a
+    // refresh or another logged-in computer cannot restore the cleared week.
+    if (sharedStateReadyRef.current && accountEmail.trim()) {
+      const updatedAt = new Date().toISOString()
+      const updatedByName = displayName?.trim() || accountEmail
+      const state = {
+        programme: null,
+        staff,
+        activities,
+        assignments: clearedAssignments,
+        waterSupportAssignments: clearedWaterSupport,
+        workingByDay,
+        sicknessByDay,
+        arrivalAssignments: clearedArrivals,
+        staffingArchives,
+      }
+      const { error } = await supabase.from('app_live_state').upsert({
+        id: 'main', state, updated_by_name: updatedByName,
+        updated_by_email: accountEmail.trim().toLowerCase(), updated_at: updatedAt,
+        section: 'programme',
+      }, { onConflict: 'id' })
+      if (error) {
+        setImportMessage(`Programme was cleared locally, but the shared save failed: ${error.message}`)
+        return
+      }
+      setLastSharedUpdate({ updated_by_name: updatedByName, updated_by_email: accountEmail, updated_at: updatedAt, section: 'programme' })
+    }
+    setImportMessage('The current programme, staffing and arrivals were cleared and saved. Programme Files were kept.')
+  }
+
   function flatLabel(flatId: string) {
     const [building, flat] = flatId.split('-')
     return `${accommodationName(Number(building))} · Flat ${flat}`
@@ -4564,7 +4635,7 @@ function ManagerApp({
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v2.0</span></div><small>Norfolk Lakes</small></div></div>
+          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v1.01</span></div><small>Norfolk Lakes</small></div></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -4733,6 +4804,7 @@ function ManagerApp({
                   <div className="programme-toolbar-actions">
                     <button className="secondary-action" onClick={() => setPage('programmeBuilder')}><CalendarRange size={18}/>Edit programme</button>
                     <button className="primary" onClick={() => void downloadPublishedProgrammeExcel()}><FileSpreadsheet size={18}/>Download Excel</button>
+                    <button className="danger-action" onClick={() => void clearCurrentProgramme()}><Trash2 size={18}/>Clear programme</button>
                   </div>
                 </>
               )}
@@ -4777,7 +4849,7 @@ function ManagerApp({
           <Panel title="Programme Files" onBack={() => setPage('dashboard')}>
             <section className="programme-archive-intro">
               <div><p className="eyebrow">Admin programme filing</p><h3>Search every programme by school, year and month</h3><p>Programmes are filed automatically when they are loaded into the app. Download a complete centre programme or an individual school programme.</p></div>
-              <span className="release-pill">v2.0</span>
+              <span className="release-pill">v2.10</span>
             </section>
             <div className="programme-archive-filters">
               <label className="archive-search"><Search size={18}/><input value={archiveSearch} onChange={(event) => setArchiveSearch(event.target.value)} placeholder="Search school or programme"/></label>
@@ -4804,7 +4876,7 @@ function ManagerApp({
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to accommodation, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v2.0</span>
+                  <span className="release-pill">v1.01</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
@@ -4833,7 +4905,10 @@ function ManagerApp({
                         <h3>{arrivalRowsForDay.length} school{arrivalRowsForDay.length === 1 ? '' : 's'} detected from the programme</h3>
                         <p>Choose accommodation and a Party Leader for every school, then fill each school separately or fill all schools at once.</p>
                       </div>
-                      <button className="primary" disabled={arrivalRowsForDay.some((row) => !arrivalAssignment(row).leaderId)} onClick={() => autoFillAllArrivalSchools(activeStaffingDay)}><WandSparkles size={18}/>Auto-fill all schools</button>
+                      <div className="arrival-board-actions">
+                        <button className="primary" disabled={arrivalRowsForDay.some((row) => !arrivalAssignment(row).leaderId)} onClick={() => autoFillAllArrivalSchools(activeStaffingDay)}><WandSparkles size={18}/>Auto-fill all schools</button>
+                        <button className="danger-action" onClick={() => clearAllArrivalSchools(activeStaffingDay)}><Trash2 size={18}/>Clear all schools</button>
+                      </div>
                     </section>
 
                     <div className="arrival-cards-grid">
@@ -4897,7 +4972,10 @@ function ManagerApp({
                             </div>
 
                             <div className="arrival-actions">
-                              <button className="primary" disabled={!assignment.leaderId} onClick={() => autoFillArrivalSchool(row)}><WandSparkles size={18} />Auto-fill school</button>
+                              <div className="arrival-action-buttons">
+                                <button className="primary" disabled={!assignment.leaderId} onClick={() => autoFillArrivalSchool(row)}><WandSparkles size={18} />Auto-fill school</button>
+                                <button className="danger-action" onClick={() => clearArrivalSchool(row)}><Trash2 size={18}/>Clear school</button>
+                              </div>
                               <span>{assignment.leaderId ? 'One instructor per group where possible; maximum two groups from this school.' : 'Select the Party Leader first.'}</span>
                             </div>
                           </section>
@@ -5370,10 +5448,6 @@ function ManagerApp({
           <Panel title="Admin" onBack={() => setPage('dashboard')}>
             <section className="admin-choice-grid">
               <section className="display-manager-card"><div><Monitor size={34}/><div><h3>Display Manager</h3><p>Open or copy the live read-only links for screens around the centre.</p></div></div><div className="display-link-list">{([['Staff room','staff-room'],['Manager','manager'],['Programme','programme']] as const).map(([label,mode]) => { const url = new URL(window.location.href); url.searchParams.set('display',mode); return <article key={mode}><strong>{label}</strong><code>{url.toString()}</code><button onClick={() => window.open(url.toString(),'_blank','noopener,noreferrer')}>Open</button><button onClick={() => { void navigator.clipboard.writeText(url.toString()); setImportMessage(`${label} display link copied.`) }}>Copy link</button></article> })}</div></section>
-              <button className="admin-choice-card programme-files-card" onClick={() => setPage('programmeArchive')}>
-                <Archive size={34} />
-                <div><h3>Programme Files</h3><p>Search programmes by school, year and month, then download complete or school-specific copies.</p></div>
-              </button>
               {canManageStaff && <button className="admin-choice-card programme-builder-card" onClick={() => setPage('programmeBuilder')}>
                 <CalendarRange size={34} />
                 <div><h3>Programme Builder</h3><p>Design Bargain Special or Normal Purchase programmes, preview them and publish them.</p></div>

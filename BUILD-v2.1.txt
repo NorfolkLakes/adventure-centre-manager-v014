@@ -1,0 +1,5 @@
+Adventure Centre Manager v2.1
+- Clear individual arrival school
+- Clear all schools for selected arrival day
+- Clear current programme and linked staffing/arrivals with immediate local and Supabase save
+- Weekly and daily Days Off calendar arrow-key navigation fixed, including when the cell dropdown has focus
