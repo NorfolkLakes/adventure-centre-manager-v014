@@ -1,0 +1,6 @@
+Adventure Centre Manager v6.3.0
+
+- Schools are stacked vertically, one full-width card per school.
+- Land activities display exactly four across.
+- Land activity wording and row order match the supplied paper form.
+- Existing package-specific Canoe/Kayak rules and backup options are retained.

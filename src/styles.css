@@ -1891,3 +1891,12 @@ button { cursor: pointer; }
 
 /* Version 4 programme builder */
 .builder-group-summary{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin:.65rem 0 1rem;padding:.75rem;border:1px solid #d7dde5;border-radius:10px;background:#f8fafc}.builder-group-summary span{padding:.3rem .55rem;border-radius:999px;background:white;border:1px solid #d7dde5;font-weight:700}.builder-group-summary .ratio-warning{border-color:#dc2626;background:#fef2f2;color:#991b1b}.builder-group-summary em{color:#b91c1c;font-weight:800;font-style:normal}.builder-school-actions{flex-wrap:wrap}
+
+
+/* v6.3: schools stacked vertically; exact four-column paper-form order */
+.builder-school-grid{grid-template-columns:minmax(0,1fr)!important;align-items:start}
+.builder-school-card{width:100%;min-width:0}
+.school-activity-grid{grid-template-columns:repeat(4,minmax(0,1fr))!important;overflow:visible!important}
+@media(max-width:900px){
+  .school-activity-grid{grid-template-columns:repeat(4,minmax(155px,1fr))!important;overflow-x:auto!important;padding-bottom:6px}
+}

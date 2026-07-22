@@ -227,34 +227,41 @@ const SCHOOL_WATER_ACTIVITY_LAYOUT = [
   { codes: ['SUP'], label: 'Stand Up Paddle Boarding' },
 ] as const
 const SCHOOL_LAND_ACTIVITY_LAYOUT = [
+  // Keep this row order identical to the paper activity request form.
   { codes: ['ARCH'], label: 'Archery' },
-  { codes: ['RIFLES'], label: 'Rifles' },
-  { codes: ['CLIMB'], label: 'Climbing' },
-  { codes: ['CAVE'], label: 'Caving' },
-  { codes: ['LR'], label: 'Low Ropes' },
-  { codes: ['BIVI'], label: 'Bivouac Exercises' },
-  { codes: ['TOW'], label: 'Tug of War' },
   { codes: ['ORIENT'], label: 'Orienteering' },
-  { codes: ['IES'], label: 'Initiative Exercises' },
-  { codes: ['TG'], label: 'Team Games' },
-  { codes: ['VB'], label: 'Volleyball' },
-  { codes: ['QUIZ'], label: 'Quiz' },
-  { codes: ['SCAV'], label: 'Scavenger Hunt' },
-  { codes: ['CF'], label: 'Camp Fire' },
   { codes: ['AERO'], label: 'Aero Ball' },
+  { codes: ['LAKE WALK'], label: 'Lake Walk' },
+
+  { codes: ['RIFLES'], label: 'Rifles' },
+  { codes: ['IES'], label: 'Initiative Exercises' },
   { codes: ['FENCE'], label: 'Fencing' },
+  { codes: ['MO'], label: 'Manor Olympics' },
+
+  { codes: ['CLIMB'], label: 'Climbing' },
+  { codes: ['TG'], label: 'Team Games' },
   { codes: ['BOULD'], label: 'Bouldering' },
+  { codes: ['WG'], label: 'Wide Games' },
+
+  { codes: ['CAVE'], label: 'Caving' },
+  { codes: ['VB'], label: 'Volleyball' },
   { codes: ['BT'], label: 'Blind Trail' },
+  { codes: ['VIDEO'], label: 'Video Studio' },
+
+  { codes: ['LR'], label: 'Low Ropes' },
+  { codes: ['QUIZ'], label: 'Quiz' },
   { codes: ['OC'], label: 'Obstacle Course' },
+  { codes: ['FILM'], label: 'Film' },
+
+  { codes: ['BIVI'], label: 'Bivouac Exercises' },
+  { codes: ['SCAV'], label: 'Scavenger Hunt' },
   { codes: ['SURV'], label: 'Survival Skills' },
+  { codes: ['LOW WALK'], label: 'Lowland Walk' },
+
+  { codes: ['TOW'], label: 'Tug of War' },
+  { codes: ['CF'], label: 'Camp Fire' },
   { codes: ['DISCO'], label: 'Disco' },
   { codes: ['AXE'], label: 'Axe Throwing' },
-  { codes: ['LAKE WALK'], label: 'Lake Walk' },
-  { codes: ['MO'], label: 'Manor Olympics' },
-  { codes: ['WG'], label: 'Wide Games' },
-  { codes: ['VIDEO'], label: 'Video Studio' },
-  { codes: ['FILM'], label: 'Film' },
-  { codes: ['LOW WALK'], label: 'Lowland Walk' },
 ] as const
 const BUILDER_DAY_NAMES = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']
 const WEEKDAY_ORDER: Record<string, number> = { MON: 1, MONDAY: 1, TUE: 2, TUES: 2, TUESDAY: 2, WED: 3, WEDNESDAY: 3, THU: 4, THUR: 4, THURS: 4, THURSDAY: 4, FRI: 5, FRIDAY: 5, SAT: 6, SATURDAY: 6, SUN: 7, SUNDAY: 7 }
@@ -5108,7 +5115,7 @@ Do you want to build the rota anyway?`
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager v6.2</h1><span className="release-pill">v6.2.0</span></div><small>Norfolk Lakes</small></div></div>
+          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager v6.3</h1><span className="release-pill">v6.3.0</span></div><small>Norfolk Lakes</small></div></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">

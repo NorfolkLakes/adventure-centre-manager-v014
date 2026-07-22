@@ -1872,3 +1872,12 @@ button { cursor: pointer; }
 .builder-backup-grid{display:grid;grid-template-columns:repeat(2,minmax(220px,1fr));gap:12px;padding-top:4px}
 @media(max-width:1200px){.builder-school-details-grid{grid-template-columns:repeat(3,minmax(160px,1fr))}.school-activity-grid{grid-template-columns:repeat(4,minmax(150px,1fr));overflow-x:auto}}
 @media(max-width:760px){.builder-school-details-grid{grid-template-columns:1fr 1fr}.school-activity-grid{grid-template-columns:repeat(2,minmax(145px,1fr))}.builder-backup-grid{grid-template-columns:1fr}}
+
+
+/* v6.3: schools stacked vertically; exact four-column paper-form order */
+.builder-school-grid{grid-template-columns:minmax(0,1fr)!important;align-items:start}
+.builder-school-card{width:100%;min-width:0}
+.school-activity-grid{grid-template-columns:repeat(4,minmax(0,1fr))!important;overflow:visible!important}
+@media(max-width:900px){
+  .school-activity-grid{grid-template-columns:repeat(4,minmax(155px,1fr))!important;overflow-x:auto!important;padding-bottom:6px}
+}
