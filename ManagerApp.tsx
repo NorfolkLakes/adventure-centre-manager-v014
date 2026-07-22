@@ -220,6 +220,42 @@ type ArchivedProgramme = ProgrammeImport & { archiveId: string; archivedAt: stri
 const DEFAULT_BARGAIN_CODES = ['CANOE', 'KAYAK', 'ARCH', 'BT', 'VB', 'MO', 'OC', 'LR', 'AIR', 'CF', 'DISCO']
 const ACTIVITY_CAPACITY: Record<string, number> = { CLIMB: 2, HR: 2, BT: 2, SAIL: 3, 'SAIL PB': 1, CANOE: 3, GCAN: 3, KAYAK: 3, SUP: 3, GSUP: 3, RAFT: 2, ARCH: 2, RIFLES: 2, CF: 30, DISCO: 30 }
 const BUILDER_SESSIONS = ['1', '2', '3', '4', '5']
+const SCHOOL_WATER_ACTIVITY_LAYOUT = [
+  { codes: ['RAFT'], label: 'Raft Build' },
+  { codes: ['GCAN'], label: 'Giant Canoe' },
+  { codes: ['GSUP'], label: 'Giant Stand Up Paddle Boarding' },
+  { codes: ['SUP'], label: 'Stand Up Paddle Boarding' },
+] as const
+const SCHOOL_LAND_ACTIVITY_LAYOUT = [
+  { codes: ['ARCH'], label: 'Archery' },
+  { codes: ['RIFLES'], label: 'Rifles' },
+  { codes: ['CLIMB'], label: 'Climbing' },
+  { codes: ['CAVE'], label: 'Caving' },
+  { codes: ['LR'], label: 'Low Ropes' },
+  { codes: ['BIVI'], label: 'Bivouac Exercises' },
+  { codes: ['TOW'], label: 'Tug of War' },
+  { codes: ['ORIENT'], label: 'Orienteering' },
+  { codes: ['IES'], label: 'Initiative Exercises' },
+  { codes: ['TG'], label: 'Team Games' },
+  { codes: ['VB'], label: 'Volleyball' },
+  { codes: ['QUIZ'], label: 'Quiz' },
+  { codes: ['SCAV'], label: 'Scavenger Hunt' },
+  { codes: ['CF'], label: 'Camp Fire' },
+  { codes: ['AERO'], label: 'Aero Ball' },
+  { codes: ['FENCE'], label: 'Fencing' },
+  { codes: ['BOULD'], label: 'Bouldering' },
+  { codes: ['BT'], label: 'Blind Trail' },
+  { codes: ['OC'], label: 'Obstacle Course' },
+  { codes: ['SURV'], label: 'Survival Skills' },
+  { codes: ['DISCO'], label: 'Disco' },
+  { codes: ['AXE'], label: 'Axe Throwing' },
+  { codes: ['LAKE WALK'], label: 'Lake Walk' },
+  { codes: ['MO'], label: 'Manor Olympics' },
+  { codes: ['WG'], label: 'Wide Games' },
+  { codes: ['VIDEO'], label: 'Video Studio' },
+  { codes: ['FILM'], label: 'Film' },
+  { codes: ['LOW WALK'], label: 'Lowland Walk' },
+] as const
 const BUILDER_DAY_NAMES = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']
 const WEEKDAY_ORDER: Record<string, number> = { MON: 1, MONDAY: 1, TUE: 2, TUES: 2, TUESDAY: 2, WED: 3, WEDNESDAY: 3, THU: 4, THUR: 4, THURS: 4, THURSDAY: 4, FRI: 5, FRIDAY: 5, SAT: 6, SATURDAY: 6, SUN: 7, SUNDAY: 7 }
 function weekdayRank(value: string) { return WEEKDAY_ORDER[value.trim().toUpperCase().replace(/[^A-Z]/g, '')] ?? 99 }
@@ -2066,6 +2102,8 @@ function ManagerApp({
   }
 
   const WATER_ACTIVITY_CODES = new Set(['CANOE', 'KAYAK', 'RAFT', 'SUP', 'GSUP', 'GCAN', 'SAIL'])
+  const EVENING_ONLY_ACTIVITY_CODES = new Set(['CF', 'DISCO'])
+  const PROTECTED_PACKAGE_ACTIVITY_CODES = new Set(['CANOE', 'KAYAK', 'CF', 'DISCO'])
 
   function builderSlotPriority(school: BuilderSchool, date: string, session: string) {
     const day = new Date(`${date}T12:00:00`).getDay()
@@ -2083,17 +2121,19 @@ function ManagerApp({
   }
 
   type ProgrammeTestResult = { passed: boolean; issues: string[]; substitutions: string[] }
+  type ProgrammeGenerationResult = { success: boolean; assignments: Record<string, string>; issues: string[]; substitutions: string[] }
 
   function schoolRequestedActivities(school: BuilderSchool) {
     const requested = school.requestedActivities.length ? school.requestedActivities : enabledActivities.map((item) => item.code)
-    return school.purchaseType === 'bargain'
+    const filtered = school.purchaseType === 'bargain'
       ? requested.filter((code) => programmeBuilder.bargainAllowedActivities.includes(code))
       : requested
+    return Array.from(new Set(filtered.filter((code) => code && code !== 'Z')))
   }
 
   function requiredActivityCounts(school: BuilderSchool, activityCodes: string[]) {
     const counts = new Map<string, number>()
-    for (const code of activityCodes) counts.set(code, Math.max(counts.get(code) ?? 0, 1))
+    for (const code of activityCodes) counts.set(code, 1)
     if (school.purchaseType === 'super' || school.purchaseType === 'outdoor') {
       if (activityCodes.includes('CANOE')) counts.set('CANOE', 2)
       if (activityCodes.includes('KAYAK')) counts.set('KAYAK', 2)
@@ -2101,150 +2141,414 @@ function ManagerApp({
     return counts
   }
 
+  function schoolBuilderActivitySlots(school: BuilderSchool) {
+    return builderDays.flatMap((dayInfo) => BUILDER_SESSIONS
+      .filter((session) => builderSchoolSessionState(school, dayInfo.date, session) === 'activity')
+      .map((session) => ({ ...dayInfo, session, priority: builderSlotPriority(school, dayInfo.date, session) })))
+      .sort((a, b) => a.priority - b.priority || a.date.localeCompare(b.date) || Number(a.session) - Number(b.session))
+  }
+
+  function countGroupActivities(assignments: Record<string, string>, school: BuilderSchool, group: number) {
+    const counts = new Map<string, number>()
+    for (const dayInfo of builderDays) for (const session of BUILDER_SESSIONS) {
+      if (builderSchoolSessionState(school, dayInfo.date, session) !== 'activity') continue
+      const code = assignments[builderAssignmentKey(dayInfo.day, session, group)] ?? ''
+      if (code) counts.set(code, (counts.get(code) ?? 0) + 1)
+    }
+    return counts
+  }
+
+  function assignmentPosition(assignments: Record<string, string>, school: BuilderSchool, group: number, code: string) {
+    const positions: string[] = []
+    for (const dayInfo of builderDays) for (const session of BUILDER_SESSIONS) {
+      if (assignments[builderAssignmentKey(dayInfo.day, session, group)] === code) positions.push(`${dayInfo.day}|${session}`)
+    }
+    return positions.sort().join(',')
+  }
+
   function runProgrammeTest(assignments: Record<string, string>): ProgrammeTestResult {
     const issues: string[] = []
     const substitutions: string[] = []
+
     for (const school of programmeBuilder.schools) {
+      const schoolName = school.name || 'School'
       const schoolGroups = builderGroups.filter((entry) => entry.school.id === school.id)
       const groupCounts = new Map<number, Map<string, number>>()
+
       for (const { group } of schoolGroups) {
         const counts = new Map<string, number>()
         for (const dayInfo of builderDays) for (const session of BUILDER_SESSIONS) {
-          if (builderSchoolSessionState(school, dayInfo.date, session) !== 'activity') continue
-          const code = assignments[builderAssignmentKey(dayInfo.day, session, group)] ?? ''
-          if (!code) issues.push(`${school.name || 'School'} G${group}: ${dayInfo.label} S${session} is blank`)
-          else counts.set(code, (counts.get(code) ?? 0) + 1)
+          const state = builderSchoolSessionState(school, dayInfo.date, session)
+          const key = builderAssignmentKey(dayInfo.day, session, group)
+          const code = assignments[key] ?? ''
+          if (state === 'activity') {
+            if (!code) issues.push(`${schoolName} G${group}: ${dayInfo.label} S${session} is blank`)
+            else {
+              counts.set(code, (counts.get(code) ?? 0) + 1)
+              if (EVENING_ONLY_ACTIVITY_CODES.has(code) && session !== '5') issues.push(`${schoolName} G${group}: ${activities.find((a) => a.code === code)?.name || code} must be in Session 5`)
+            }
+          } else if (code) {
+            issues.push(`${schoolName} G${group}: ${activities.find((a) => a.code === code)?.name || code} is scheduled while the group is ${state === 'offsite' ? 'not on site' : state}`)
+          }
         }
         groupCounts.set(group, counts)
+      }
+
+      const firstGroup = schoolGroups[0]?.group
+      const serialise = (map: Map<string, number>) => [...map.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([code, count]) => `${code}:${count}`).join('|')
+      const baseline = firstGroup == null ? new Map<string, number>() : groupCounts.get(firstGroup) ?? new Map<string, number>()
+      for (const { group } of schoolGroups.slice(1)) {
+        if (serialise(groupCounts.get(group) ?? new Map()) !== serialise(baseline)) issues.push(`${schoolName}: G${group} does not have the same activity set as G${firstGroup}`)
+      }
+
+      const requested = schoolRequestedActivities(school)
+      const expected = requiredActivityCounts(school, requested)
+      const allowedBackups = [school.backupOption1, school.backupOption2]
+        .filter((code): code is string => Boolean(code) && !requested.includes(code))
+      const missing: string[] = []
+      const extraBackups: string[] = []
+
+      for (const [code, required] of expected) {
+        const actual = baseline.get(code) ?? 0
+        if (actual < required) for (let index = actual; index < required; index += 1) missing.push(code)
+        if (actual > required) issues.push(`${schoolName}: ${activities.find((a) => a.code === code)?.name || code} appears ${actual} times but should appear ${required} time${required === 1 ? '' : 's'}`)
+      }
+      for (const [code, actual] of baseline) {
+        if (expected.has(code)) continue
+        if (allowedBackups.includes(code)) {
+          for (let index = 0; index < actual; index += 1) extraBackups.push(code)
+        } else {
+          issues.push(`${schoolName}: ${activities.find((a) => a.code === code)?.name || code} was not requested and is not a selected backup`)
+        }
+      }
+
+      const protectedMissing = missing.filter((code) => PROTECTED_PACKAGE_ACTIVITY_CODES.has(code))
+      for (const code of protectedMissing) issues.push(`${schoolName}: required ${activities.find((a) => a.code === code)?.name || code} is missing`)
+      const replaceableMissing = missing.filter((code) => !PROTECTED_PACKAGE_ACTIVITY_CODES.has(code))
+      const substitutionCount = Math.min(replaceableMissing.length, extraBackups.length)
+      for (let index = 0; index < substitutionCount; index += 1) {
+        const requestedCode = replaceableMissing[index]
+        const backupCode = extraBackups[index]
+        substitutions.push(`${schoolName}: ${activities.find((a) => a.code === backupCode)?.name || backupCode} replaced ${activities.find((a) => a.code === requestedCode)?.name || requestedCode}`)
+      }
+      for (const code of replaceableMissing.slice(substitutionCount)) issues.push(`${schoolName}: requested ${activities.find((a) => a.code === code)?.name || code} is missing`)
+      for (const code of extraBackups.slice(substitutionCount)) issues.push(`${schoolName}: backup ${activities.find((a) => a.code === code)?.name || code} was used without replacing a missing requested activity`)
+
+      for (const { group } of schoolGroups) {
+        const counts = groupCounts.get(group) ?? new Map<string, number>()
         for (const [code, count] of counts) {
-          const waterRepeat = (school.purchaseType === 'super' || school.purchaseType === 'outdoor') && (code === 'CANOE' || code === 'KAYAK') && count === 2
-          if (count > 1 && !waterRepeat) issues.push(`${school.name || 'School'} G${group}: ${activities.find((a) => a.code === code)?.name || code} appears ${count} times`)
+          const expectedCount = expected.get(code) ?? (allowedBackups.includes(code) ? 1 : 0)
+          if (count > Math.max(1, expectedCount)) issues.push(`${schoolName} G${group}: ${activities.find((a) => a.code === code)?.name || code} appears ${count} times`)
         }
 
         const waterBlocks: Array<[string, string]> = [['1', '2'], ['3', '4']]
         if (school.purchaseType === 'super' || school.purchaseType === 'outdoor') {
           for (const code of ['CANOE', 'KAYAK']) {
-            if (!schoolRequestedActivities(school).includes(code)) continue
+            if (!requested.includes(code)) continue
             const valid = builderDays.some((dayInfo) => waterBlocks.some(([a, b]) => assignments[builderAssignmentKey(dayInfo.day, a, group)] === code && assignments[builderAssignmentKey(dayInfo.day, b, group)] === code))
-            if (!valid) issues.push(`${school.name || 'School'} G${group}: ${code} must occupy S1-S2 or S3-S4 on one day`)
+            if (!valid) issues.push(`${schoolName} G${group}: ${code} must occupy S1-S2 or S3-S4 on one day`)
           }
-        } else if (school.purchaseType === 'bargain' && schoolRequestedActivities(school).includes('CANOE') && schoolRequestedActivities(school).includes('KAYAK')) {
+        } else if (school.purchaseType === 'bargain' && requested.includes('CANOE') && requested.includes('KAYAK')) {
           const valid = builderDays.some((dayInfo) => waterBlocks.some(([a, b]) => {
-            const x = assignments[builderAssignmentKey(dayInfo.day, a, group)]
-            const y = assignments[builderAssignmentKey(dayInfo.day, b, group)]
-            return (x === 'CANOE' && y === 'KAYAK') || (x === 'KAYAK' && y === 'CANOE')
+            const first = assignments[builderAssignmentKey(dayInfo.day, a, group)]
+            const second = assignments[builderAssignmentKey(dayInfo.day, b, group)]
+            return (first === 'CANOE' && second === 'KAYAK') || (first === 'KAYAK' && second === 'CANOE')
           }))
-          if (!valid) issues.push(`${school.name || 'School'} G${group}: Bargain Canoe/Kayak must be consecutive in S1-S2 or S3-S4`)
+          if (!valid) issues.push(`${schoolName} G${group}: Bargain Canoe/Kayak must be consecutive in S1-S2 or S3-S4`)
         }
       }
-      const first = schoolGroups[0]?.group
-      if (first != null) {
-        const baseline = groupCounts.get(first) ?? new Map()
-        const serialise = (m: Map<string, number>) => [...m.entries()].sort().map(([code, count]) => `${code}:${count}`).join('|')
-        for (const { group } of schoolGroups.slice(1)) if (serialise(groupCounts.get(group) ?? new Map()) !== serialise(baseline)) {
-          issues.push(`${school.name || 'School'}: G${group} does not have the same activity set as G${first}`)
+
+      for (const code of EVENING_ONLY_ACTIVITY_CODES) {
+        if (!baseline.has(code) || firstGroup == null) continue
+        const baselinePosition = assignmentPosition(assignments, school, firstGroup, code)
+        for (const { group } of schoolGroups.slice(1)) {
+          if (assignmentPosition(assignments, school, group, code) !== baselinePosition) issues.push(`${schoolName}: all groups must do ${activities.find((a) => a.code === code)?.name || code} together in the same Session 5`)
         }
-      }
-      for (const backup of [school.backupOption1, school.backupOption2].filter(Boolean)) {
-        if (schoolGroups.some(({ group }) => Object.entries(assignments).some(([key, code]) => key.endsWith(`|${group}`) && code === backup))) substitutions.push(`${school.name || 'School'} uses backup ${activities.find((a) => a.code === backup)?.name || backup}`)
       }
     }
-    return { passed: issues.length === 0, issues, substitutions }
+
+    const bySlot = new Map<string, string[]>()
+    for (const [key, code] of Object.entries(assignments)) {
+      if (!code) continue
+      const [day, session] = key.split('|')
+      const slot = `${day}|${session}`
+      bySlot.set(slot, [...(bySlot.get(slot) ?? []), code])
+    }
+    for (const [slot, codes] of bySlot) for (const code of new Set(codes)) {
+      const running = codes.filter((item) => item === code).length
+      const capacity = activityCapacity(code)
+      if (running > capacity) issues.push(`${activities.find((a) => a.code === code)?.name || code} exceeds capacity (${running}/${capacity}) at ${slot.replace('|', ' Session ')}`)
+    }
+
+    const uniqueIssues = Array.from(new Set(issues))
+    return { passed: uniqueIssues.length === 0, issues: uniqueIssues, substitutions: Array.from(new Set(substitutions)) }
   }
 
-  function generateSchoolAssignments(schoolId: string, preserveManual: boolean, baseAssignments = programmeBuilder.assignments) {
-    const school = programmeBuilder.schools.find((item) => item.id === schoolId)
-    if (!school || (school.locked && preserveManual)) return baseAssignments
-    const schoolGroups = builderGroups.filter((entry) => entry.school.id === schoolId)
-    const requested = schoolRequestedActivities(school)
-    if (!requested.length) return baseAssignments
-
+  function attemptSchoolSchedule(school: BuilderSchool, activityCodes: string[], preserveManual: boolean, baseAssignments: Record<string, string>): ProgrammeGenerationResult {
+    const schoolName = school.name || 'School'
+    const schoolGroups = builderGroups.filter((entry) => entry.school.id === school.id)
+    const groupNumbers = schoolGroups.map((entry) => entry.group)
     const next = { ...baseAssignments }
-    const activitySlots = builderDays.flatMap((dayInfo) => BUILDER_SESSIONS
-      .filter((session) => builderSchoolSessionState(school, dayInfo.date, session) === 'activity')
-      .map((session) => ({ ...dayInfo, session, priority: builderSlotPriority(school, dayInfo.date, session) })))
-      .sort((a, b) => a.priority - b.priority || a.date.localeCompare(b.date) || Number(a.session) - Number(b.session))
+    const activitySlots = schoolBuilderActivitySlots(school)
+    const requiredCounts = requiredActivityCounts(school, activityCodes)
+    const requiredSessionCount = [...requiredCounts.values()].reduce((total, count) => total + count, 0)
 
-    const activityAtCapacity = (day: string, session: string, code: string, ownKey: string) => {
-      const running = Object.entries(next).filter(([key, value]) => key !== ownKey && key.startsWith(`${day}|${session}|`) && value === code).length
-      return running >= activityCapacity(code)
+    if (!groupNumbers.length) return { success: false, assignments: baseAssignments, issues: [`${schoolName}: add at least one group`], substitutions: [] }
+    if (requiredSessionCount !== activitySlots.length) {
+      const difference = activitySlots.length - requiredSessionCount
+      return {
+        success: false,
+        assignments: baseAssignments,
+        issues: [difference > 0
+          ? `${schoolName}: select ${difference} more activity session${difference === 1 ? '' : 's'} so every on-site slot can be filled without duplicates`
+          : `${schoolName}: remove ${Math.abs(difference)} activity session${Math.abs(difference) === 1 ? '' : 's'} because the selected package does not have enough on-site slots`],
+        substitutions: [],
+      }
     }
 
-    for (const { group } of schoolGroups) for (const slot of activitySlots) {
-      const key = builderAssignmentKey(slot.day, slot.session, group)
+    for (const { group } of schoolGroups) for (const dayInfo of builderDays) for (const session of BUILDER_SESSIONS) {
+      const key = builderAssignmentKey(dayInfo.day, session, group)
       if (!(preserveManual && programmeBuilder.manualLocks[key])) next[key] = ''
     }
 
-    const backups = [school.backupOption1, school.backupOption2].filter((code): code is string => Boolean(code) && !requested.includes(code))
-    const effective = [...requested]
-    const counts = requiredActivityCounts(school, effective)
-    const blockStarts = ['1', '3']
-    const blocks = activitySlots.flatMap((first) => blockStarts.includes(first.session)
-      ? [{ first, second: activitySlots.find((slot) => slot.date === first.date && slot.session === String(Number(first.session) + 1)) }]
-      : []).filter((block): block is { first: (typeof activitySlots)[number]; second: (typeof activitySlots)[number] } => Boolean(block.second))
+    const runningCount = (day: string, session: string, code: string, ignoreKey?: string) => Object.entries(next)
+      .filter(([key, value]) => key !== ignoreKey && key.startsWith(`${day}|${session}|`) && value === code).length
+    const canPlace = (day: string, session: string, group: number, code: string) => {
+      const key = builderAssignmentKey(day, session, group)
+      const current = next[key] ?? ''
+      if (current && current !== code) return false
+      if (current === code) return true
+      return runningCount(day, session, code, key) < activityCapacity(code)
+    }
+    const place = (day: string, session: string, group: number, code: string) => {
+      const key = builderAssignmentKey(day, session, group)
+      if (!canPlace(day, session, group, code)) return false
+      next[key] = code
+      return true
+    }
+    const groupCount = (group: number, code: string) => countGroupActivities(next, school, group).get(code) ?? 0
 
-    const placeBlock = (group: number, codeA: string, codeB: string) => {
-      for (const block of blocks) {
-        const keyA = builderAssignmentKey(block.first.day, block.first.session, group)
-        const keyB = builderAssignmentKey(block.second.day, block.second.session, group)
-        if ((preserveManual && (programmeBuilder.manualLocks[keyA] || programmeBuilder.manualLocks[keyB])) || next[keyA] || next[keyB]) continue
-        if (activityAtCapacity(block.first.day, block.first.session, codeA, keyA) || activityAtCapacity(block.second.day, block.second.session, codeB, keyB)) continue
-        next[keyA] = codeA; next[keyB] = codeB; return true
+    for (const { group } of schoolGroups) {
+      const lockedCounts = new Map<string, number>()
+      for (const dayInfo of builderDays) for (const session of BUILDER_SESSIONS) {
+        const key = builderAssignmentKey(dayInfo.day, session, group)
+        if (!programmeBuilder.manualLocks[key]) continue
+        const code = next[key] ?? ''
+        if (!code) continue
+        const state = builderSchoolSessionState(school, dayInfo.date, session)
+        if (state !== 'activity') return { success: false, assignments: baseAssignments, issues: [`${schoolName} G${group}: a locked activity is outside the school attendance window`], substitutions: [] }
+        if (!requiredCounts.has(code)) return { success: false, assignments: baseAssignments, issues: [`${schoolName} G${group}: locked ${activities.find((a) => a.code === code)?.name || code} is not in the school activity plan`], substitutions: [] }
+        if (EVENING_ONLY_ACTIVITY_CODES.has(code) && session !== '5') return { success: false, assignments: baseAssignments, issues: [`${schoolName} G${group}: locked ${activities.find((a) => a.code === code)?.name || code} must be in Session 5`], substitutions: [] }
+        lockedCounts.set(code, (lockedCounts.get(code) ?? 0) + 1)
       }
-      return false
+      for (const [code, count] of lockedCounts) if (count > (requiredCounts.get(code) ?? 0)) {
+        return { success: false, assignments: baseAssignments, issues: [`${schoolName} G${group}: locked ${activities.find((a) => a.code === code)?.name || code} appears too many times`], substitutions: [] }
+      }
+    }
+
+    const blockStarts = new Set(['1', '3'])
+    const blocks = activitySlots
+      .filter((slot) => blockStarts.has(slot.session))
+      .map((first) => ({ first, second: activitySlots.find((candidate) => candidate.date === first.date && candidate.session === String(Number(first.session) + 1)) }))
+      .filter((block): block is { first: (typeof activitySlots)[number]; second: (typeof activitySlots)[number] } => Boolean(block.second))
+      .sort((a, b) => a.first.priority - b.first.priority || a.first.date.localeCompare(b.first.date) || Number(a.first.session) - Number(b.first.session))
+
+    const sequenceSatisfied = (group: number, sequence: string[]) => blocks.some((block) => sequence.every((code, index) => {
+      const slot = index === 0 ? block.first : block.second
+      return next[builderAssignmentKey(slot.day, slot.session, group)] === code
+    }))
+
+    const placeSequenceForGroups = (sequence: string[], label: string) => {
+      let remaining = groupNumbers.filter((group) => !sequenceSatisfied(group, sequence))
+      for (const block of blocks) {
+        if (!remaining.length) break
+        const stillRemaining: number[] = []
+        for (const group of remaining) {
+          const slots = [block.first, block.second]
+          const compatible = sequence.every((code, index) => {
+            const slot = slots[index]
+            const key = builderAssignmentKey(slot.day, slot.session, group)
+            const current = next[key] ?? ''
+            return (!current || current === code) && canPlace(slot.day, slot.session, group, code)
+          })
+          if (!compatible) { stillRemaining.push(group); continue }
+          sequence.forEach((code, index) => {
+            const slot = slots[index]
+            place(slot.day, slot.session, group, code)
+          })
+        }
+        remaining = stillRemaining
+      }
+      if (remaining.length) return `${schoolName}: could not place ${label} for G${remaining.join(', G')} in a valid consecutive block before departure`
+      return ''
+    }
+
+    const eveningCodes = [...requiredCounts.keys()].filter((code) => EVENING_ONLY_ACTIVITY_CODES.has(code))
+    for (const code of eveningCodes) {
+      const groupsNeeding = groupNumbers.filter((group) => groupCount(group, code) < (requiredCounts.get(code) ?? 0))
+      if (!groupsNeeding.length) continue
+      const eveningSlots = activitySlots.filter((slot) => slot.session === '5').sort((a, b) => b.date.localeCompare(a.date))
+      let placedTogether = false
+      for (const slot of eveningSlots) {
+        const additions = groupsNeeding.filter((group) => next[builderAssignmentKey(slot.day, slot.session, group)] !== code).length
+        if (runningCount(slot.day, slot.session, code) + additions > activityCapacity(code)) continue
+        if (!groupsNeeding.every((group) => canPlace(slot.day, slot.session, group, code))) continue
+        groupsNeeding.forEach((group) => place(slot.day, slot.session, group, code))
+        placedTogether = true
+        break
+      }
+      if (!placedTogether) return { success: false, assignments: baseAssignments, issues: [`${schoolName}: ${activities.find((a) => a.code === code)?.name || code} must be placed for every group together in an available Session 5`], substitutions: [] }
+    }
+
+    if (school.purchaseType === 'super' || school.purchaseType === 'outdoor') {
+      if (requiredCounts.get('CANOE') === 2) {
+        const issue = placeSequenceForGroups(['CANOE', 'CANOE'], 'two-session Canoe')
+        if (issue) return { success: false, assignments: baseAssignments, issues: [issue], substitutions: [] }
+      }
+      if (requiredCounts.get('KAYAK') === 2) {
+        const issue = placeSequenceForGroups(['KAYAK', 'KAYAK'], 'two-session Kayak')
+        if (issue) return { success: false, assignments: baseAssignments, issues: [issue], substitutions: [] }
+      }
+    } else if (school.purchaseType === 'bargain' && requiredCounts.has('CANOE') && requiredCounts.has('KAYAK')) {
+      const issue = placeSequenceForGroups(['CANOE', 'KAYAK'], 'consecutive Canoe/Kayak')
+      if (issue) return { success: false, assignments: baseAssignments, issues: [issue], substitutions: [] }
+    }
+
+    const standardCodes = [...requiredCounts.keys()]
+      .filter((code) => !EVENING_ONLY_ACTIVITY_CODES.has(code) && !(code === 'CANOE' || code === 'KAYAK'))
+      .sort((a, b) => activityCapacity(a) - activityCapacity(b) || activityCodes.indexOf(a) - activityCodes.indexOf(b))
+
+    const placeSingleCodeForGroups = (code: string) => {
+      const required = requiredCounts.get(code) ?? 1
+      const groupsNeeding: number[] = []
+      for (const group of groupNumbers) for (let count = groupCount(group, code); count < required; count += 1) groupsNeeding.push(group)
+      if (!groupsNeeding.length) return true
+
+      const recurse = (remainingGroups: number[]): boolean => {
+        if (!remainingGroups.length) return true
+        const candidateMap = remainingGroups.map((group, index) => ({
+          group,
+          index,
+          slots: activitySlots.filter((slot) => {
+            const key = builderAssignmentKey(slot.day, slot.session, group)
+            return !next[key] && !(preserveManual && programmeBuilder.manualLocks[key]) && canPlace(slot.day, slot.session, group, code)
+          }),
+        })).sort((a, b) => a.slots.length - b.slots.length || a.group - b.group)
+        const selected = candidateMap[0]
+        if (!selected || !selected.slots.length) return false
+        const rest = [...remainingGroups]
+        rest.splice(remainingGroups.indexOf(selected.group), 1)
+        for (const slot of selected.slots) {
+          const key = builderAssignmentKey(slot.day, slot.session, selected.group)
+          next[key] = code
+          if (recurse(rest)) return true
+          next[key] = ''
+        }
+        return false
+      }
+      return recurse(groupsNeeding)
+    }
+
+    for (const code of standardCodes) if (!placeSingleCodeForGroups(code)) {
+      return { success: false, assignments: baseAssignments, issues: [`${schoolName}: could not place ${activities.find((a) => a.code === code)?.name || code} for every group within capacity and locked-session rules`], substitutions: [] }
     }
 
     for (const { group } of schoolGroups) {
-      if ((school.purchaseType === 'super' || school.purchaseType === 'outdoor')) {
-        if (counts.get('CANOE') === 2) placeBlock(group, 'CANOE', 'CANOE')
-        if (counts.get('KAYAK') === 2) placeBlock(group, 'KAYAK', 'KAYAK')
-      } else if (school.purchaseType === 'bargain' && counts.has('CANOE') && counts.has('KAYAK')) {
-        placeBlock(group, 'CANOE', 'KAYAK')
-      }
-
-      const already = new Map<string, number>()
-      for (const slot of activitySlots) {
-        const code = next[builderAssignmentKey(slot.day, slot.session, group)]
-        if (code) already.set(code, (already.get(code) ?? 0) + 1)
-      }
-      const queue: string[] = []
-      for (const [code, required] of counts) for (let i = already.get(code) ?? 0; i < required; i += 1) queue.push(code)
-
       for (const slot of activitySlots) {
         const key = builderAssignmentKey(slot.day, slot.session, group)
-        if (next[key] || (preserveManual && programmeBuilder.manualLocks[key])) continue
-        let index = queue.findIndex((code) => !activityAtCapacity(slot.day, slot.session, code, key))
-        if (index >= 0) {
-          const [code] = queue.splice(index, 1)
-          next[key] = code
-          continue
-        }
-        const backup = backups.find((code) => !activityAtCapacity(slot.day, slot.session, code, key) && !Array.from(already.keys()).includes(code))
-        if (backup) { next[key] = backup; already.set(backup, 1) }
+        if (!next[key]) return { success: false, assignments: baseAssignments, issues: [`${schoolName} G${group}: ${slot.label} S${slot.session} could not be filled without duplicating an activity`], substitutions: [] }
+      }
+      const actual = countGroupActivities(next, school, group)
+      for (const [code, required] of requiredCounts) if ((actual.get(code) ?? 0) !== required) {
+        return { success: false, assignments: baseAssignments, issues: [`${schoolName} G${group}: ${activities.find((a) => a.code === code)?.name || code} was not scheduled the required ${required} time${required === 1 ? '' : 's'}`], substitutions: [] }
       }
     }
-    return next
+
+    return { success: true, assignments: next, issues: [], substitutions: [] }
+  }
+
+  function generateSchoolAssignments(schoolId: string, preserveManual: boolean, baseAssignments = programmeBuilder.assignments): ProgrammeGenerationResult {
+    const school = programmeBuilder.schools.find((item) => item.id === schoolId)
+    if (!school) return { success: false, assignments: baseAssignments, issues: ['School not found'], substitutions: [] }
+    if (school.locked && preserveManual) return { success: true, assignments: baseAssignments, issues: [], substitutions: [] }
+
+    const requested = schoolRequestedActivities(school)
+    if (!requested.length) return { success: false, assignments: baseAssignments, issues: [`${school.name || 'School'}: select the requested activities before using Auto Fill`], substitutions: [] }
+
+    const original = attemptSchoolSchedule(school, requested, preserveManual, baseAssignments)
+    if (original.success) return original
+
+    const backups = [school.backupOption1, school.backupOption2]
+      .filter((code): code is string => Boolean(code) && !requested.includes(code))
+    const replaceable = requested.filter((code) => !PROTECTED_PACKAGE_ACTIVITY_CODES.has(code))
+    const alternatives: Array<{ codes: string[]; substitutions: string[] }> = []
+
+    for (const backup of backups) for (const replaced of replaceable) {
+      alternatives.push({
+        codes: requested.map((code) => code === replaced ? backup : code),
+        substitutions: [`${school.name || 'School'}: ${activities.find((a) => a.code === backup)?.name || backup} replaced ${activities.find((a) => a.code === replaced)?.name || replaced}`],
+      })
+    }
+    if (backups.length >= 2) {
+      for (let first = 0; first < replaceable.length; first += 1) for (let second = first + 1; second < replaceable.length; second += 1) {
+        alternatives.push({
+          codes: requested.map((code) => code === replaceable[first] ? backups[0] : code === replaceable[second] ? backups[1] : code),
+          substitutions: [
+            `${school.name || 'School'}: ${activities.find((a) => a.code === backups[0])?.name || backups[0]} replaced ${activities.find((a) => a.code === replaceable[first])?.name || replaceable[first]}`,
+            `${school.name || 'School'}: ${activities.find((a) => a.code === backups[1])?.name || backups[1]} replaced ${activities.find((a) => a.code === replaceable[second])?.name || replaceable[second]}`,
+          ],
+        })
+      }
+    }
+
+    const seen = new Set<string>()
+    for (const alternative of alternatives) {
+      const key = alternative.codes.join('|')
+      if (seen.has(key) || new Set(alternative.codes).size !== alternative.codes.length) continue
+      seen.add(key)
+      const result = attemptSchoolSchedule(school, alternative.codes, preserveManual, baseAssignments)
+      if (result.success) return { ...result, substitutions: alternative.substitutions }
+    }
+
+    return original
   }
 
   function autoFillProgrammeBuilder(schoolId: string) {
     const school = programmeBuilder.schools.find((item) => item.id === schoolId)
     if (!school) return
-    const next = generateSchoolAssignments(schoolId, true)
-    updateProgrammeBuilder({ assignments: next })
-    const test = runProgrammeTest(next)
-    setProgrammeBuilderMessage(test.passed
-      ? `${school.name || 'School'} auto-filled and Programme Test passed.${test.substitutions.length ? ` ${test.substitutions.join('. ')}.` : ''}`
-      : `Auto Fill completed, but Programme Test found ${test.issues.length} issue${test.issues.length === 1 ? '' : 's'}: ${test.issues.slice(0, 5).join('; ')}${test.issues.length > 5 ? '…' : ''}`)
+    const result = generateSchoolAssignments(schoolId, true)
+    if (!result.success) {
+      setProgrammeBuilderMessage(`Auto Fill stopped: ${result.issues.slice(0, 5).join('; ')}`)
+      return
+    }
+    const test = runProgrammeTest(result.assignments)
+    if (!test.passed) {
+      setProgrammeBuilderMessage(`Auto Fill was not applied because Programme Test found ${test.issues.length} issue${test.issues.length === 1 ? '' : 's'}: ${test.issues.slice(0, 5).join('; ')}${test.issues.length > 5 ? '…' : ''}`)
+      return
+    }
+    updateProgrammeBuilder({ assignments: result.assignments })
+    setProgrammeBuilderMessage(`${school.name || 'School'} auto-filled and Programme Test passed.${result.substitutions.length ? ` ${result.substitutions.join('. ')}.` : ''}`)
   }
 
   function updateWholeProgramme() {
     let next = { ...programmeBuilder.assignments }
-    for (const school of programmeBuilder.schools) next = generateSchoolAssignments(school.id, true, next)
-    updateProgrammeBuilder({ assignments: next })
+    const substitutions: string[] = []
+    for (const school of programmeBuilder.schools) {
+      const result = generateSchoolAssignments(school.id, true, next)
+      if (!result.success) {
+        setProgrammeBuilderMessage(`Auto Fill stopped before changing the programme: ${result.issues.slice(0, 6).join('; ')}`)
+        return
+      }
+      next = result.assignments
+      substitutions.push(...result.substitutions)
+    }
     const test = runProgrammeTest(next)
-    setProgrammeBuilderMessage(test.passed
-      ? `Programme Test passed. Every school group has the same activities, no unintended duplicates were found, and all water blocks are valid.${test.substitutions.length ? ` ${test.substitutions.join('. ')}.` : ''}`
-      : `Programme Test failed with ${test.issues.length} issue${test.issues.length === 1 ? '' : 's'}: ${test.issues.slice(0, 6).join('; ')}${test.issues.length > 6 ? '…' : ''}`)
+    if (!test.passed) {
+      setProgrammeBuilderMessage(`Auto Fill was not applied because Programme Test failed with ${test.issues.length} issue${test.issues.length === 1 ? '' : 's'}: ${test.issues.slice(0, 6).join('; ')}${test.issues.length > 6 ? '…' : ''}`)
+      return
+    }
+    updateProgrammeBuilder({ assignments: next })
+    setProgrammeBuilderMessage(`Programme Test passed. Every school group has the same activities, Campfire and Disco are in Session 5, no unintended duplicates were found, and all water blocks are valid.${substitutions.length ? ` ${substitutions.join('. ')}.` : ''}`)
   }
 
   function resetProgrammeLocks() {
@@ -2336,6 +2640,7 @@ function ManagerApp({
         if (count > capacity) issues.push(`${code} exceeds its capacity (${count}/${capacity}) at ${slot.replace('|', ' Session ')}.`)
       }
     })
+    if (Object.values(programmeBuilder.assignments).some(Boolean)) issues.push(...runProgrammeTest(programmeBuilder.assignments).issues)
     return Array.from(new Set(issues))
   }
 
@@ -4803,7 +5108,7 @@ Do you want to build the rota anyway?`
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager v6</h1><span className="release-pill">v6.0.0</span></div><small>Norfolk Lakes</small></div></div>
+          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager v6.2</h1><span className="release-pill">v6.2.0</span></div><small>Norfolk Lakes</small></div></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -5606,25 +5911,44 @@ Do you want to build the rota anyway?`
 
                 <section className="builder-section">
                   <div className="builder-section-heading"><div><p className="eyebrow">Schools and groups</p><h3>Who is attending?</h3></div><div className="builder-heading-actions"><button className="secondary-action" onClick={updateWholeProgramme}><WandSparkles size={17}/>Auto Fill Whole Programme</button><button className="secondary-action" onClick={addBuilderSchool}><Plus size={17}/>Add school</button></div></div>
-                  <div className="builder-school-grid">{programmeBuilder.schools.map((school, index) => <article className="builder-school-card" key={school.id}>
+                  <div className="builder-school-grid">{programmeBuilder.schools.map((school, index) => {
+                    const canoeKayakCodes = ['CANOE', 'KAYAK']
+                    const canoeKayakActive = canoeKayakCodes.every((code) => school.requestedActivities.includes(code))
+                    const toggleActivityCodes = (codes: readonly string[]) => {
+                      const allSelected = codes.every((code) => school.requestedActivities.includes(code))
+                      const requestedActivities = allSelected
+                        ? school.requestedActivities.filter((code) => !codes.includes(code))
+                        : Array.from(new Set([...school.requestedActivities, ...codes]))
+                      updateBuilderSchool(school.id, { requestedActivities })
+                    }
+                    const canoeKayakLabel = school.purchaseType === 'bargain'
+                      ? 'Canoe/Kayak (2 sessions total)'
+                      : 'Canoe/Kayak (4 sessions total)'
+                    return <article className="builder-school-card" key={school.id}>
                     <div className="builder-section-heading"><strong>School {index + 1}</strong><label className="builder-lock"><input type="checkbox" checked={school.locked} onChange={(event) => updateBuilderSchool(school.id, { locked: event.target.checked })}/>Lock programme</label></div>
-                    <label>School name<input value={school.name} onChange={(event) => updateBuilderSchool(school.id, { name: event.target.value })} placeholder="School name"/></label>
-                    <label>Programme name<input value={school.programmeName} onChange={(event) => updateBuilderSchool(school.id, { programmeName: event.target.value })} placeholder="e.g. Oakwood School – July"/></label>
-                    <div className="builder-form-grid"><label>Purchase type<select value={school.purchaseType} onChange={(event) => updateBuilderSchool(school.id, { purchaseType: event.target.value as ProgrammePurchaseType })}><option value="bargain">Bargain Special</option><option value="super">Super Break</option><option value="outdoor">Outdoor Challenge</option></select></label><label>Arrival date<input type="date" min={programmeBuilder.startDate} max={programmeBuilder.endDate} value={school.arrivalDate} onChange={(event) => updateBuilderSchool(school.id, { arrivalDate: event.target.value })}/></label><label>Departure date<input type="date" min={school.arrivalDate || programmeBuilder.startDate} max={programmeBuilder.endDate} value={school.departureDate} onChange={(event) => updateBuilderSchool(school.id, { departureDate: event.target.value })}/></label></div>
+                    <div className="builder-school-details-grid">
+                      <label>School name<input value={school.name} onChange={(event) => updateBuilderSchool(school.id, { name: event.target.value })} placeholder="School name"/></label>
+                      <label>Package type<select value={school.purchaseType} onChange={(event) => updateBuilderSchool(school.id, { purchaseType: event.target.value as ProgrammePurchaseType })}><option value="bargain">Bargain Special</option><option value="super">Super Break</option><option value="outdoor">Outdoor Challenge</option></select></label>
+                      <label>Arrival date<input type="date" min={programmeBuilder.startDate} max={programmeBuilder.endDate} value={school.arrivalDate} onChange={(event) => updateBuilderSchool(school.id, { arrivalDate: event.target.value })}/></label>
+                      <label>Departure date<input type="date" min={school.arrivalDate || programmeBuilder.startDate} max={programmeBuilder.endDate} value={school.departureDate} onChange={(event) => updateBuilderSchool(school.id, { departureDate: event.target.value })}/></label>
+                      <label>Number of children<input type="number" min="1" max="500" value={school.children ?? 12} onChange={(event) => updateBuilderSchool(school.id, { children: Math.max(1, Number(event.target.value) || 1) })}/></label>
+                      <label>Number of groups<input type="number" min="1" max="30" value={school.groups} onChange={(event) => updateBuilderSchool(school.id, { groups: Math.max(1, Number(event.target.value) || 1), groupingMode: 'override' })}/></label>
+                    </div>
+                    <div className="builder-group-summary"><strong>Group sizes:</strong> {(school.groupSizes?.length ? school.groupSizes : balancedGroupSizes(school.children ?? 12, school.groups)).map((size, groupIndex) => <span key={groupIndex} className={size > 12 ? 'ratio-warning' : ''}>G{groupIndex + 1}: {size}</span>)} {(school.groupSizes ?? []).some((size) => size > 12) && <em>Ratio override required</em>}</div>
+                    <section className="school-activity-section"><h4>Water Activities</h4><div className="school-activity-grid">{SCHOOL_WATER_ACTIVITY_LAYOUT.map((item) => { const active = item.codes.every((code) => school.requestedActivities.includes(code)); return <label key={item.label} className={active ? 'school-activity-option active' : 'school-activity-option'}><input type="checkbox" checked={active} onChange={() => toggleActivityCodes(item.codes)}/><span>{item.label}</span></label> })}<label className={canoeKayakActive ? 'school-activity-option active' : 'school-activity-option'}><input type="checkbox" checked={canoeKayakActive} onChange={() => toggleActivityCodes(canoeKayakCodes)}/><span>{canoeKayakLabel}</span></label></div></section>
+                    <section className="school-activity-section"><h4>Land Based Activities</h4><div className="school-activity-grid">{SCHOOL_LAND_ACTIVITY_LAYOUT.map((item) => { const active = item.codes.every((code) => school.requestedActivities.includes(code)); return <label key={item.label} className={active ? 'school-activity-option active' : 'school-activity-option'}><input type="checkbox" checked={active} onChange={() => toggleActivityCodes(item.codes)}/><span>{item.label}</span></label> })}</div></section>
+                    <div className="builder-backup-grid"><label>Option 1<select value={school.backupOption1} onChange={(event) => updateBuilderSchool(school.id, { backupOption1: event.target.value })}><option value="">No backup selected</option>{activities.filter((activity) => activity.code !== 'Z').map((activity) => <option key={activity.code} value={activity.code}>{activity.name}</option>)}</select></label><label>Option 2<select value={school.backupOption2} onChange={(event) => updateBuilderSchool(school.id, { backupOption2: event.target.value })}><option value="">No backup selected</option>{activities.filter((activity) => activity.code !== 'Z').map((activity) => <option key={activity.code} value={activity.code}>{activity.name}</option>)}</select></label></div>
                     <label>Programme notes<textarea rows={3} value={school.notes} onChange={(event) => updateBuilderSchool(school.id, { notes: event.target.value })} placeholder="Notes for this school only…"/></label>
-                    <div className="builder-form-grid"><label>Number of children<input type="number" min="1" max="500" value={school.children ?? 12} onChange={(event) => updateBuilderSchool(school.id, { children: Math.max(1, Number(event.target.value) || 1) })}/></label><label>Grouping method<select value={school.groupingMode ?? 'balanced'} onChange={(event) => updateBuilderSchool(school.id, { groupingMode: event.target.value as 'balanced' | 'override' })}><option value="balanced">Keep within 1:12</option><option value="override">Manual ratio override</option></select></label><label>Number of groups<input type="number" min="1" max="30" value={school.groups} onChange={(event) => updateBuilderSchool(school.id, { groups: Math.max(1, Number(event.target.value) || 1), groupingMode: 'override' })}/></label></div><div className="builder-group-summary"><strong>Group sizes:</strong> {(school.groupSizes?.length ? school.groupSizes : balancedGroupSizes(school.children ?? 12, school.groups)).map((size, groupIndex) => <span key={groupIndex} className={size > 12 ? 'ratio-warning' : ''}>G{groupIndex + 1}: {size}</span>)} {(school.groupSizes ?? []).some((size) => size > 12) && <em>Ratio override required</em>}</div>
-                    <div><strong>First-choice activities</strong><p className="builder-help">Select the activities requested by the school. There is no separate first-choice field.</p><div className="builder-activity-chips">{activities.filter((activity) => activity.code !== 'Z').map((activity) => { const active = school.requestedActivities.includes(activity.code); return <button type="button" key={activity.code} className={active ? 'chip active' : 'chip'} onClick={() => updateBuilderSchool(school.id, { requestedActivities: active ? school.requestedActivities.filter((code) => code !== activity.code) : [...school.requestedActivities, activity.code] })}>{activity.code}<small>{activity.name}</small></button> })}</div></div>
-                    <div className="builder-form-grid"><label>Backup option 1<select value={school.backupOption1} onChange={(event) => updateBuilderSchool(school.id, { backupOption1: event.target.value })}><option value="">No backup selected</option>{activities.filter((activity) => activity.code !== 'Z').map((activity) => <option key={activity.code} value={activity.code}>{activity.code} – {activity.name}</option>)}</select></label><label>Backup option 2<select value={school.backupOption2} onChange={(event) => updateBuilderSchool(school.id, { backupOption2: event.target.value })}><option value="">No backup selected</option>{activities.filter((activity) => activity.code !== 'Z').map((activity) => <option key={activity.code} value={activity.code}>{activity.code} – {activity.name}</option>)}</select></label></div>
                     <div className="builder-school-actions"><button className="secondary-action" onClick={() => clearSchoolProgramme(school.id)}><Trash2 size={17}/>Clear Programme</button><button className="secondary-action" onClick={() => autoFillProgrammeBuilder(school.id)}><WandSparkles size={17}/>Auto Fill School</button><button className="secondary-action" onClick={() => printSchoolProgramme(school.id)}><Printer size={17}/>School PDF</button><button className="secondary-action" onClick={() => void downloadSchoolProgrammeExcel(school.id)}><FileSpreadsheet size={17}/>School Excel</button></div>
                     {programmeBuilder.schools.length > 1 && <button className="icon-button small" title="Remove school" onClick={() => removeBuilderSchool(school.id)}><Trash2 size={16}/></button>}
-                  </article>)}</div>
+                  </article>})}</div>
                 </section>
 
                 {programmeBuilder.schools.some((school) => school.purchaseType === 'bargain') && <section className="builder-section bargain-rules"><div className="builder-section-heading"><div><p className="eyebrow">Bargain Special rules</p><h3>Package limits</h3></div></div><label className="builder-limit-field">Maximum sessions per group<input type="number" min="1" max="35" value={programmeBuilder.bargainSessionLimit} onChange={(event) => updateProgrammeBuilder({ bargainSessionLimit: Math.max(1, Number(event.target.value) || 1) })}/></label><p>Select the activities included in this package. These can be updated when you provide the Bargain Special reference sheet.</p><div className="builder-activity-chips">{activities.map((activity) => { const active = programmeBuilder.bargainAllowedActivities.includes(activity.code); return <button key={activity.code} className={active ? 'chip active' : 'chip'} onClick={() => updateProgrammeBuilder({ bargainAllowedActivities: active ? programmeBuilder.bargainAllowedActivities.filter((code) => code !== activity.code) : [...programmeBuilder.bargainAllowedActivities, activity.code] })} title={activity.name}>{activity.code}<small>{activity.name}</small></button> })}</div></section>}
 
                 <section className="builder-section">
                   <div className="builder-section-heading"><div><p className="eyebrow">Programme grid</p><h3>Assign activities</h3></div><div className="builder-heading-actions"><button className="primary" onClick={updateWholeProgramme}><WandSparkles size={17}/>Auto Fill Programme</button><span>{builderGroups.length} groups · {builderDays.length} days</span><button className="secondary-action" onClick={clearWholeProgramme}><Trash2 size={17}/>Clear Week</button></div></div>
-                  <div className="builder-grid-wrap"><table className="builder-grid"><thead><tr><th>Day</th><th>Session</th>{builderGroups.map(({ group, school }) => <th key={group}>G{group}<small>{school.name || 'School'}</small></th>)}</tr></thead><tbody>{builderDays.flatMap((dayInfo) => BUILDER_SESSIONS.map((session) => <tr key={`${dayInfo.day}-${session}`}><th>{dayInfo.label}</th><th>S{session}</th>{builderGroups.map(({ group, school }) => { const state = builderSchoolSessionState(school, dayInfo.date, session); const value = programmeBuilder.assignments[builderAssignmentKey(dayInfo.day, session, group)] ?? ''; const options = school.purchaseType === 'bargain' ? activities.filter((activity) => programmeBuilder.bargainAllowedActivities.includes(activity.code)) : activities; return <td key={group} className={`builder-state-${state}`} onDragOver={state === 'activity' ? (event) => event.preventDefault() : undefined} onDrop={state === 'activity' ? () => dropBuilderActivity(dayInfo.day, session, group, school.id) : undefined}>{state === 'arrival' ? <strong>{school.name || 'School'} – Arrival</strong> : state === 'departed' ? <span>Departed</span> : state === 'offsite' ? <span>Not on site</span> : <div className="builder-draggable-cell" draggable={Boolean(value)} onDragStart={() => value && setDraggedBuilderActivity({ key: builderAssignmentKey(dayInfo.day, session, group), code: value, schoolId: school.id })}><select className={programmeBuilder.manualLocks[builderAssignmentKey(dayInfo.day, session, group)] ? 'manual-locked' : ''} title={programmeBuilder.manualLocks[builderAssignmentKey(dayInfo.day, session, group)] ? 'Manual change locked' : 'Automatic activity'} value={value} onChange={(event) => setBuilderActivity(dayInfo.day, session, group, event.target.value)}><option value="">—</option>{options.filter((activity) => school.requestedActivities.includes(activity.code) || activity.code === value).map((activity) => <option key={activity.code} value={activity.code}>{activity.code} – {activity.name}</option>)}</select></div>}</td> })}</tr>))}</tbody></table></div>
+                  <div className="builder-grid-wrap"><table className="builder-grid"><thead><tr><th>Day</th><th>Session</th>{builderGroups.map(({ group, school }) => <th key={group}>G{group}<small>{school.name || 'School'}</small></th>)}</tr></thead><tbody>{builderDays.flatMap((dayInfo) => BUILDER_SESSIONS.map((session) => <tr key={`${dayInfo.day}-${session}`}><th>{dayInfo.label}</th><th>S{session}</th>{builderGroups.map(({ group, school }) => { const state = builderSchoolSessionState(school, dayInfo.date, session); const value = programmeBuilder.assignments[builderAssignmentKey(dayInfo.day, session, group)] ?? ''; const options = school.purchaseType === 'bargain' ? activities.filter((activity) => programmeBuilder.bargainAllowedActivities.includes(activity.code)) : activities; return <td key={group} className={`builder-state-${state}`} onDragOver={state === 'activity' ? (event) => event.preventDefault() : undefined} onDrop={state === 'activity' ? () => dropBuilderActivity(dayInfo.day, session, group, school.id) : undefined}>{state === 'arrival' ? <strong>{school.name || 'School'} – Arrival</strong> : state === 'departed' ? <span>Departed</span> : state === 'offsite' ? <span>Not on site</span> : <div className="builder-draggable-cell" draggable={Boolean(value)} onDragStart={() => value && setDraggedBuilderActivity({ key: builderAssignmentKey(dayInfo.day, session, group), code: value, schoolId: school.id })}><select className={programmeBuilder.manualLocks[builderAssignmentKey(dayInfo.day, session, group)] ? 'manual-locked' : ''} title={programmeBuilder.manualLocks[builderAssignmentKey(dayInfo.day, session, group)] ? 'Manual change locked' : 'Automatic activity'} value={value} onChange={(event) => setBuilderActivity(dayInfo.day, session, group, event.target.value)}><option value="">—</option>{options.filter((activity) => school.requestedActivities.includes(activity.code) || school.backupOption1 === activity.code || school.backupOption2 === activity.code || activity.code === value).map((activity) => <option key={activity.code} value={activity.code}>{activity.code} – {activity.name}</option>)}</select></div>}</td> })}</tr>))}</tbody></table></div>
 
                   <div className="builder-update-actions"><div><strong>Manual changes are protected</strong><p>Any activity you change is locked. Update Programme rearranges only the remaining sessions.</p></div><div><button className="secondary-action" onClick={resetProgrammeLocks}>Reset Locks</button><button className="primary" onClick={updateWholeProgramme}><WandSparkles size={17}/>Update Programme</button></div></div>
                 </section>

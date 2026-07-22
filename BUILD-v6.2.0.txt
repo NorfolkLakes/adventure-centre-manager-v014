@@ -1,0 +1,7 @@
+Adventure Centre Manager v6.2.0
+
+- School setup redesigned as a wide paper-form layout.
+- Six school details shown across the top.
+- Water and land activities displayed four across in the same order as the supplied form.
+- Canoe/Kayak session wording changes by package.
+- Backup Options 1 and 2 retained.

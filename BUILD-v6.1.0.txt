@@ -1,0 +1,11 @@
+Adventure Centre Manager v6.1.0
+
+Programme Builder scheduling-engine correction:
+- Campfire and Disco are restricted to Session 5 and scheduled together for all groups in a school.
+- Auto Fill now builds one school-level activity plan and gives every group the same activity set.
+- Super Break and Outdoor Challenge Canoe and Kayak each occupy valid two-session blocks.
+- Bargain Special Canoe and Kayak use a consecutive S1-S2 or S3-S4 block.
+- Standard activities cannot be duplicated.
+- Backup activities are applied school-wide only when a requested activity cannot be scheduled.
+- Auto Fill is atomic: an invalid programme is not applied.
+- Programme Test checks blanks, duplicates, mismatched group plans, attendance windows, capacities and special activity rules.
