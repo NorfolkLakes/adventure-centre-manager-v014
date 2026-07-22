@@ -1,0 +1,9 @@
+Adventure Centre Manager v2.3.0
+
+Fixes:
+- Daily Staffing selections are no longer reset by automatically adding all staff back to existing days.
+- Dashboard live staff count now uses the real current session and staff_days_off status.
+- Dashboard no longer substitutes another selected programme day when today is outside the loaded programme.
+- Archery is hard-limited by SOP to one group per session, including old saved activity settings.
+- Auto Build continues to plan the full school stay and validates capacity before publishing.
+- Friday-to-Monday builder dates remain chronological.

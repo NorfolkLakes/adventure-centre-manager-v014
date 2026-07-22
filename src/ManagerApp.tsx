@@ -218,7 +218,7 @@ type SavedProgramme = { id: string; title: string; startDate: string; endDate: s
 type ArchivedProgramme = ProgrammeImport & { archiveId: string; archivedAt: string }
 
 const DEFAULT_BARGAIN_CODES = ['CANOE', 'KAYAK', 'ARCH', 'BT', 'VB', 'MO', 'OC', 'LR', 'AIR', 'CF', 'DISCO']
-const ACTIVITY_CAPACITY: Record<string, number> = { CLIMB: 2, HR: 2, BT: 2, SAIL: 3, 'SAIL PB': 1, CANOE: 3, GCAN: 3, KAYAK: 3, SUP: 3, GSUP: 3, RAFT: 2, ARCH: 2, RIFLES: 2, CF: 30, DISCO: 30 }
+const ACTIVITY_CAPACITY: Record<string, number> = { CLIMB: 2, HR: 2, BT: 2, SAIL: 3, 'SAIL PB': 1, CANOE: 3, GCAN: 3, KAYAK: 3, SUP: 3, GSUP: 3, RAFT: 2, ARCH: 1, RIFLES: 2, CF: 30, DISCO: 30 }
 const BUILDER_SESSIONS = ['1', '2', '3', '4', '5']
 const BUILDER_DAY_NAMES = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']
 const WEEKDAY_ORDER: Record<string, number> = { MON: 1, MONDAY: 1, TUE: 2, TUES: 2, TUESDAY: 2, WED: 3, WEDNESDAY: 3, THU: 4, THUR: 4, THURS: 4, THURSDAY: 4, FRI: 5, FRIDAY: 5, SAT: 6, SATURDAY: 6, SUN: 7, SUNDAY: 7 }
@@ -699,7 +699,7 @@ function ManagerApp({
       ...activity,
       colour: activity.colour ?? '#dce8f5',
       equipmentQuantity: activity.equipmentQuantity ?? 0,
-      capacity: Math.max(1, activity.capacity ?? ACTIVITY_CAPACITY[activity.code] ?? 1),
+      capacity: activity.code === 'ARCH' ? 1 : Math.max(1, activity.capacity ?? ACTIVITY_CAPACITY[activity.code] ?? 1),
       enabled: activity.enabled ?? true,
       notes: activity.notes ?? '',
       staffingRuleType: activity.staffingRuleType ?? ({ CF: 'per_x_groups', DISCO: 'per_x_groups', MO: 'per_x_groups', BT: 'per_x_groups' } as Record<string, Activity['staffingRuleType']>)[activity.code] ?? 'per_group',
@@ -720,7 +720,12 @@ function ManagerApp({
     }))
   })
 
-  const activityCapacity = (code: string) => Math.max(1, activities.find((activity) => activity.code === code)?.capacity ?? ACTIVITY_CAPACITY[code] ?? 1)
+  const activityCapacity = (code: string) => {
+    // Hard SOP limits always win over old saved settings. Archery is one group
+    // per session at Norfolk Lakes and may never be auto-built above that limit.
+    if (code === 'ARCH') return 1
+    return Math.max(1, activities.find((activity) => activity.code === code)?.capacity ?? ACTIVITY_CAPACITY[code] ?? 1)
+  }
   const enabledActivities = activities.filter((activity) => activity.enabled !== false && activity.code !== 'Z')
 
   const [programmeBuilder, setProgrammeBuilder] = useState<ProgrammeBuilderDraft>(() => {
@@ -1892,24 +1897,15 @@ function ManagerApp({
       const allStaffIds = staff.map((member) => member.id)
 
       for (const day of days) {
-        if (!next[day]) {
+        // Only initialise a genuinely new day. Never merge everybody back into
+        // an existing day because that silently reverses managers marking staff OFF.
+        if (!Object.prototype.hasOwnProperty.call(next, day)) {
           next[day] = allStaffIds
           changed = true
-          continue
-        }
-
-        // Any newly imported or newly added staff default to working.
-        const merged = Array.from(new Set([...next[day], ...allStaffIds]))
-        if (merged.length !== next[day].length) {
-          next[day] = merged
-          changed = true
         }
       }
 
-      if (changed) {
-        localStorage.setItem(WORKING_KEY, JSON.stringify(next))
-      }
-
+      if (changed) localStorage.setItem(WORKING_KEY, JSON.stringify(next))
       return changed ? next : current
     })
   }
@@ -4649,9 +4645,8 @@ Do you want to build the rota anyway?`
   // weekly calendar and with changes received from Supabase.
   const todayIso = dateKey(new Date())
   const dashboardProgrammeDay = programme
-    ? programmeDays.find((day) => dateForProgrammeDay(programme, day) === todayIso)
-      ?? activeStaffingDay
-    : activeStaffingDay
+    ? programmeDays.find((day) => dateForProgrammeDay(programme, day) === todayIso) ?? ''
+    : todayIso
 
   const dashboardSchools = useMemo(() => {
     if (!programme) return [] as string[]
@@ -4679,10 +4674,15 @@ Do you want to build the rota anyway?`
   }, [programme, dashboardProgrammeDay, todayIso])
 
   const schoolsOnSite = dashboardSchools.length
-  const availableTodayCount = dashboardProgrammeDay
-    ? (workingByDay[dashboardProgrammeDay] ?? staff.map((m) => m.id))
-        .filter((id) => !unavailableStaffIdsForDay(dashboardProgrammeDay).has(id)).length
-    : staff.length
+  const currentMinutes = new Date().getHours() * 60 + new Date().getMinutes()
+  const dashboardSession = currentMinutes < 10 * 60 + 30 ? '1'
+    : currentMinutes < 12 * 60 + 15 ? '2'
+      : currentMinutes < 15 * 60 + 30 ? '3'
+        : currentMinutes < 17 * 60 + 15 ? '4'
+          : '5'
+  const dashboardAvailabilityKey = dashboardProgrammeDay || todayIso
+  const availableTodayCount = (workingByDay[dashboardAvailabilityKey] ?? staff.map((m) => m.id))
+    .filter((id) => !unavailableStaffIdsForSession(dashboardAvailabilityKey, dashboardSession).has(id)).length
   const dailyShortages = programmeDays.map((day) => {
     const required = busiestSessionForDay(day)?.total ?? 0
     const available = (workingByDay[day] ?? staff.map((member) => member.id))

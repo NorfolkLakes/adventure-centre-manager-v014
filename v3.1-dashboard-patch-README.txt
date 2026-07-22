@@ -1,0 +1,19 @@
+Adventure Centre Manager v3.1 dashboard patch
+
+This patch changes the dashboard to show staff currently on site using UK time:
+
+- Working: 08:30–20:30
+- AM OFF: counted from 12:15–20:30
+- PM OFF: counted from 08:30–17:15
+- OFF / HOL / SICK: never counted
+- Outside 08:30–20:30: count is 0
+
+How to use:
+1. Put apply-v3.1-dashboard.py in the main project folder.
+2. Open Terminal in that folder.
+3. Run:
+   python3 apply-v3.1-dashboard.py
+4. Then run:
+   npm run build
+
+The patch creates a backup named ManagerApp.tsx.before-v3.1.

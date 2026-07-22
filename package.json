@@ -1,7 +1,7 @@
 {
   "name": "adventure-centre-manager",
   "private": true,
-  "version": "3.0.2",
+  "version": "2.3.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
