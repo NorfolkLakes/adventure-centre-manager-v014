@@ -199,7 +199,7 @@ const PROGRAMME_BUILDER_KEY = 'acm-programme-builder-draft'
 const PROGRAMME_LIBRARY_KEY = 'acm-programme-library'
 const PROGRAMME_ARCHIVE_KEY = 'acm-programme-archive-v1'
 
-type ProgrammePurchaseType = 'bargain' | 'super' | 'outdoor'
+type ProgrammePurchaseType = 'normal' | 'bargain' | 'super' | 'outdoor'
 type BuilderSchool = { id: string; name: string; programmeName: string; purchaseType: ProgrammePurchaseType; arrivalDate: string; departureDate: string; notes: string; children: number; groups: number; groupingMode: 'balanced' | 'override'; groupSizes: number[]; requestedActivities: string[]; backupOption1: string; backupOption2: string; locked: boolean }
 type ProgrammeBuilderDraft = {
   name: string
@@ -2082,152 +2082,145 @@ function ManagerApp({
     return 2
   }
 
+  type ProgrammeTestResult = { passed: boolean; issues: string[]; substitutions: string[] }
+
+  function schoolRequestedActivities(school: BuilderSchool) {
+    const requested = school.requestedActivities.length ? school.requestedActivities : enabledActivities.map((item) => item.code)
+    return school.purchaseType === 'bargain'
+      ? requested.filter((code) => programmeBuilder.bargainAllowedActivities.includes(code))
+      : requested
+  }
+
+  function requiredActivityCounts(school: BuilderSchool, activityCodes: string[]) {
+    const counts = new Map<string, number>()
+    for (const code of activityCodes) counts.set(code, Math.max(counts.get(code) ?? 0, 1))
+    if (school.purchaseType === 'super' || school.purchaseType === 'outdoor') {
+      if (activityCodes.includes('CANOE')) counts.set('CANOE', 2)
+      if (activityCodes.includes('KAYAK')) counts.set('KAYAK', 2)
+    }
+    return counts
+  }
+
+  function runProgrammeTest(assignments: Record<string, string>): ProgrammeTestResult {
+    const issues: string[] = []
+    const substitutions: string[] = []
+    for (const school of programmeBuilder.schools) {
+      const schoolGroups = builderGroups.filter((entry) => entry.school.id === school.id)
+      const groupCounts = new Map<number, Map<string, number>>()
+      for (const { group } of schoolGroups) {
+        const counts = new Map<string, number>()
+        for (const dayInfo of builderDays) for (const session of BUILDER_SESSIONS) {
+          if (builderSchoolSessionState(school, dayInfo.date, session) !== 'activity') continue
+          const code = assignments[builderAssignmentKey(dayInfo.day, session, group)] ?? ''
+          if (!code) issues.push(`${school.name || 'School'} G${group}: ${dayInfo.label} S${session} is blank`)
+          else counts.set(code, (counts.get(code) ?? 0) + 1)
+        }
+        groupCounts.set(group, counts)
+        for (const [code, count] of counts) {
+          const waterRepeat = (school.purchaseType === 'super' || school.purchaseType === 'outdoor') && (code === 'CANOE' || code === 'KAYAK') && count === 2
+          if (count > 1 && !waterRepeat) issues.push(`${school.name || 'School'} G${group}: ${activities.find((a) => a.code === code)?.name || code} appears ${count} times`)
+        }
+
+        const waterBlocks: Array<[string, string]> = [['1', '2'], ['3', '4']]
+        if (school.purchaseType === 'super' || school.purchaseType === 'outdoor') {
+          for (const code of ['CANOE', 'KAYAK']) {
+            if (!schoolRequestedActivities(school).includes(code)) continue
+            const valid = builderDays.some((dayInfo) => waterBlocks.some(([a, b]) => assignments[builderAssignmentKey(dayInfo.day, a, group)] === code && assignments[builderAssignmentKey(dayInfo.day, b, group)] === code))
+            if (!valid) issues.push(`${school.name || 'School'} G${group}: ${code} must occupy S1-S2 or S3-S4 on one day`)
+          }
+        } else if (school.purchaseType === 'bargain' && schoolRequestedActivities(school).includes('CANOE') && schoolRequestedActivities(school).includes('KAYAK')) {
+          const valid = builderDays.some((dayInfo) => waterBlocks.some(([a, b]) => {
+            const x = assignments[builderAssignmentKey(dayInfo.day, a, group)]
+            const y = assignments[builderAssignmentKey(dayInfo.day, b, group)]
+            return (x === 'CANOE' && y === 'KAYAK') || (x === 'KAYAK' && y === 'CANOE')
+          }))
+          if (!valid) issues.push(`${school.name || 'School'} G${group}: Bargain Canoe/Kayak must be consecutive in S1-S2 or S3-S4`)
+        }
+      }
+      const first = schoolGroups[0]?.group
+      if (first != null) {
+        const baseline = groupCounts.get(first) ?? new Map()
+        const serialise = (m: Map<string, number>) => [...m.entries()].sort().map(([code, count]) => `${code}:${count}`).join('|')
+        for (const { group } of schoolGroups.slice(1)) if (serialise(groupCounts.get(group) ?? new Map()) !== serialise(baseline)) {
+          issues.push(`${school.name || 'School'}: G${group} does not have the same activity set as G${first}`)
+        }
+      }
+      for (const backup of [school.backupOption1, school.backupOption2].filter(Boolean)) {
+        if (schoolGroups.some(({ group }) => Object.entries(assignments).some(([key, code]) => key.endsWith(`|${group}`) && code === backup))) substitutions.push(`${school.name || 'School'} uses backup ${activities.find((a) => a.code === backup)?.name || backup}`)
+      }
+    }
+    return { passed: issues.length === 0, issues, substitutions }
+  }
+
   function generateSchoolAssignments(schoolId: string, preserveManual: boolean, baseAssignments = programmeBuilder.assignments) {
     const school = programmeBuilder.schools.find((item) => item.id === schoolId)
     if (!school || (school.locked && preserveManual)) return baseAssignments
     const schoolGroups = builderGroups.filter((entry) => entry.school.id === schoolId)
-    const requested = school.requestedActivities.length ? school.requestedActivities : enabledActivities.map((item) => item.code)
-    const allowed = school.purchaseType === 'bargain' ? requested.filter((code) => programmeBuilder.bargainAllowedActivities.includes(code)) : requested
-    if (!allowed.length) return baseAssignments
+    const requested = schoolRequestedActivities(school)
+    if (!requested.length) return baseAssignments
 
     const next = { ...baseAssignments }
     const activitySlots = builderDays.flatMap((dayInfo) => BUILDER_SESSIONS
       .filter((session) => builderSchoolSessionState(school, dayInfo.date, session) === 'activity')
       .map((session) => ({ ...dayInfo, session, priority: builderSlotPriority(school, dayInfo.date, session) })))
+      .sort((a, b) => a.priority - b.priority || a.date.localeCompare(b.date) || Number(a.session) - Number(b.session))
 
     const activityAtCapacity = (day: string, session: string, code: string, ownKey: string) => {
-      const capacity = activityCapacity(code)
       const running = Object.entries(next).filter(([key, value]) => key !== ownKey && key.startsWith(`${day}|${session}|`) && value === code).length
-      return running >= capacity
+      return running >= activityCapacity(code)
     }
 
-    // Clear only unlocked cells for this school before rebuilding. Manual cells are preserved.
+    for (const { group } of schoolGroups) for (const slot of activitySlots) {
+      const key = builderAssignmentKey(slot.day, slot.session, group)
+      if (!(preserveManual && programmeBuilder.manualLocks[key])) next[key] = ''
+    }
+
+    const backups = [school.backupOption1, school.backupOption2].filter((code): code is string => Boolean(code) && !requested.includes(code))
+    const effective = [...requested]
+    const counts = requiredActivityCounts(school, effective)
+    const blockStarts = ['1', '3']
+    const blocks = activitySlots.flatMap((first) => blockStarts.includes(first.session)
+      ? [{ first, second: activitySlots.find((slot) => slot.date === first.date && slot.session === String(Number(first.session) + 1)) }]
+      : []).filter((block): block is { first: (typeof activitySlots)[number]; second: (typeof activitySlots)[number] } => Boolean(block.second))
+
+    const placeBlock = (group: number, codeA: string, codeB: string) => {
+      for (const block of blocks) {
+        const keyA = builderAssignmentKey(block.first.day, block.first.session, group)
+        const keyB = builderAssignmentKey(block.second.day, block.second.session, group)
+        if ((preserveManual && (programmeBuilder.manualLocks[keyA] || programmeBuilder.manualLocks[keyB])) || next[keyA] || next[keyB]) continue
+        if (activityAtCapacity(block.first.day, block.first.session, codeA, keyA) || activityAtCapacity(block.second.day, block.second.session, codeB, keyB)) continue
+        next[keyA] = codeA; next[keyB] = codeB; return true
+      }
+      return false
+    }
+
     for (const { group } of schoolGroups) {
+      if ((school.purchaseType === 'super' || school.purchaseType === 'outdoor')) {
+        if (counts.get('CANOE') === 2) placeBlock(group, 'CANOE', 'CANOE')
+        if (counts.get('KAYAK') === 2) placeBlock(group, 'KAYAK', 'KAYAK')
+      } else if (school.purchaseType === 'bargain' && counts.has('CANOE') && counts.has('KAYAK')) {
+        placeBlock(group, 'CANOE', 'KAYAK')
+      }
+
+      const already = new Map<string, number>()
+      for (const slot of activitySlots) {
+        const code = next[builderAssignmentKey(slot.day, slot.session, group)]
+        if (code) already.set(code, (already.get(code) ?? 0) + 1)
+      }
+      const queue: string[] = []
+      for (const [code, required] of counts) for (let i = already.get(code) ?? 0; i < required; i += 1) queue.push(code)
+
       for (const slot of activitySlots) {
         const key = builderAssignmentKey(slot.day, slot.session, group)
-        if (!(preserveManual && programmeBuilder.manualLocks[key])) next[key] = ''
-      }
-    }
-
-    // Real Norfolk Lakes pattern learned from uploaded programmes:
-    // every selected group completes Canoe and Kayak as one consecutive block.
-    // Valid blocks are Sessions 1+2 or Sessions 3+4 only. Groups in the same
-    // batch do the same discipline together, then change discipline together.
-    // The scheduler balances batches over both blocks on a day (for four groups,
-    // normally G1/G2 in 1+2 and G3/G4 in 3+4), while still respecting configured
-    // activity capacities and any manual locks.
-    const pairedWaterGroups = new Set<number>()
-    if (allowed.includes('CANOE') && allowed.includes('KAYAK')) {
-      const blockStarts = new Set(['1', '3'])
-      const availableBlocks = activitySlots
-        .filter((slot) => blockStarts.has(slot.session))
-        .flatMap((first) => {
-          const secondSession = String(Number(first.session) + 1)
-          const second = activitySlots.find((candidate) => candidate.date === first.date && candidate.session === secondSession)
-          return second ? [{ first, second }] : []
-        })
-        .sort((a, b) => a.first.priority - b.first.priority || a.first.date.localeCompare(b.first.date) || Number(a.first.session) - Number(b.first.session))
-
-      const unscheduledGroups = schoolGroups.map((entry) => entry.group).filter((group) => {
-        const manualComplete = availableBlocks.some(({ first, second }) => {
-          const firstValue = next[builderAssignmentKey(first.day, first.session, group)]
-          const secondValue = next[builderAssignmentKey(second.day, second.session, group)]
-          return (firstValue === 'CANOE' && secondValue === 'KAYAK') || (firstValue === 'KAYAK' && secondValue === 'CANOE')
-        })
-        if (manualComplete) pairedWaterGroups.add(group)
-        return !manualComplete
-      })
-
-      const capacityPerBlock = Math.max(1, Math.min(activityCapacity('CANOE'), activityCapacity('KAYAK')))
-      const blocksByDate = new Map<string, typeof availableBlocks>()
-      for (const block of availableBlocks) blocksByDate.set(block.first.date, [...(blocksByDate.get(block.first.date) ?? []), block])
-      const orderedBlocks = Array.from(blocksByDate.values()).flatMap((dayBlocks) => {
-        const sorted = [...dayBlocks].sort((a, b) => Number(a.first.session) - Number(b.first.session))
-        return sorted
-      })
-
-      let remaining = [...unscheduledGroups]
-      for (let blockIndex = 0; blockIndex < orderedBlocks.length && remaining.length; blockIndex += 1) {
-        const block = orderedBlocks[blockIndex]
-        // Fill the earliest preferred block to capacity before moving to a later block.
-        // This keeps groups from the same school together: for four groups, G1/G2
-        // use S1+S2 and G3/G4 use S3+S4 on the same preferred day, instead of
-        // pushing the final group onto departure morning.
-        const targetSize = Math.min(capacityPerBlock, remaining.length)
-        const candidates = remaining.slice(0, targetSize)
-        const firstCode = blockIndex % 2 === 0 ? 'CANOE' : 'KAYAK'
-        const secondCode = firstCode === 'CANOE' ? 'KAYAK' : 'CANOE'
-        const accepted: number[] = []
-
-        for (const group of candidates) {
-          const firstKey = builderAssignmentKey(block.first.day, block.first.session, group)
-          const secondKey = builderAssignmentKey(block.second.day, block.second.session, group)
-          if (preserveManual && (programmeBuilder.manualLocks[firstKey] || programmeBuilder.manualLocks[secondKey])) continue
-          if (activityAtCapacity(block.first.day, block.first.session, firstCode, firstKey)) continue
-          if (activityAtCapacity(block.second.day, block.second.session, secondCode, secondKey)) continue
-          next[firstKey] = firstCode
-          next[secondKey] = secondCode
-          accepted.push(group)
-          pairedWaterGroups.add(group)
-        }
-        remaining = remaining.filter((group) => !accepted.includes(group))
-      }
-    }
-
-    for (const { group } of schoolGroups) {
-      const unlockedSlots = activitySlots.filter((slot) => {
-        const key = builderAssignmentKey(slot.day, slot.session, group)
-        return !(preserveManual && programmeBuilder.manualLocks[key]) && !next[key]
-      })
-      const sortedSlots = [...unlockedSlots].sort((a, b) => a.priority - b.priority || a.date.localeCompare(b.date) || Number(a.session) - Number(b.session))
-      const alreadyAssigned = new Set(
-        activitySlots
-          .map((slot) => next[builderAssignmentKey(slot.day, slot.session, group)])
-          .filter(Boolean),
-      )
-      const queue = [...allowed].filter((code) =>
-        code !== 'CF' &&
-        code !== 'DISCO' &&
-        !alreadyAssigned.has(code) &&
-        !(pairedWaterGroups.has(group) && (code === 'CANOE' || code === 'KAYAK')),
-      )
-
-      for (const slot of sortedSlots) {
-        const key = builderAssignmentKey(slot.day, slot.session, group)
-        let chosenIndex = queue.findIndex((code) => code !== 'CF' && (!WATER_ACTIVITY_CODES.has(code) || slot.priority < 2) && !activityAtCapacity(slot.day, slot.session, code, key))
-        if (chosenIndex < 0) chosenIndex = queue.findIndex((code) => code !== 'CF' && !activityAtCapacity(slot.day, slot.session, code, key))
-        if (chosenIndex >= 0) {
-          const [code] = queue.splice(chosenIndex, 1)
+        if (next[key] || (preserveManual && programmeBuilder.manualLocks[key])) continue
+        let index = queue.findIndex((code) => !activityAtCapacity(slot.day, slot.session, code, key))
+        if (index >= 0) {
+          const [code] = queue.splice(index, 1)
           next[key] = code
           continue
         }
-
-        // Every on-site activity session must be filled. Once each requested activity
-        // has been used, choose the next valid requested activity again, while avoiding
-        // a duplicate for the same group on the same day where another option exists.
-        const usedOnDay = new Set(activitySlots
-          .filter((candidate) => candidate.date === slot.date)
-          .map((candidate) => next[builderAssignmentKey(candidate.day, candidate.session, group)])
-          .filter(Boolean))
-        const repeatCandidates = allowed.filter((code) =>
-          code !== 'CF' &&
-          code !== 'DISCO' &&
-          !(pairedWaterGroups.has(group) && (code === 'CANOE' || code === 'KAYAK')) &&
-          !activityAtCapacity(slot.day, slot.session, code, key),
-        )
-        const preferredRepeat = repeatCandidates.find((code) => !usedOnDay.has(code)) ?? repeatCandidates[0]
-        if (preferredRepeat) next[key] = preferredRepeat
-      }
-    }
-
-    // Campfire and Disco are whole-school evening activities. Put them together in Session 5,
-    // as late in the stay as possible, without overwriting a manager's locked cell.
-    const selectedCollective = allowed.includes('CF') ? 'CF' : allowed.includes('DISCO') ? 'DISCO' : ''
-    if (selectedCollective) {
-      const collectiveSlot = [...activitySlots].filter((slot) => slot.session === '5').sort((a, b) => b.date.localeCompare(a.date))[0]
-      if (collectiveSlot) for (const { group } of schoolGroups) {
-        const key = builderAssignmentKey(collectiveSlot.day, collectiveSlot.session, group)
-        if (!(preserveManual && programmeBuilder.manualLocks[key])) next[key] = selectedCollective
+        const backup = backups.find((code) => !activityAtCapacity(slot.day, slot.session, code, key) && !Array.from(already.keys()).includes(code))
+        if (backup) { next[key] = backup; already.set(backup, 1) }
       }
     }
     return next
@@ -2238,35 +2231,20 @@ function ManagerApp({
     if (!school) return
     const next = generateSchoolAssignments(schoolId, true)
     updateProgrammeBuilder({ assignments: next })
-    setProgrammeBuilderMessage(`${school.name || 'School'} updated around your manually locked sessions.`)
+    const test = runProgrammeTest(next)
+    setProgrammeBuilderMessage(test.passed
+      ? `${school.name || 'School'} auto-filled and Programme Test passed.${test.substitutions.length ? ` ${test.substitutions.join('. ')}.` : ''}`
+      : `Auto Fill completed, but Programme Test found ${test.issues.length} issue${test.issues.length === 1 ? '' : 's'}: ${test.issues.slice(0, 5).join('; ')}${test.issues.length > 5 ? '…' : ''}`)
   }
 
   function updateWholeProgramme() {
     let next = { ...programmeBuilder.assignments }
     for (const school of programmeBuilder.schools) next = generateSchoolAssignments(school.id, true, next)
-
-    const missingSessions: string[] = []
-    for (const school of programmeBuilder.schools) {
-      const schoolGroups = builderGroups.filter((entry) => entry.school.id === school.id)
-      for (const { group } of schoolGroups) {
-        for (const dayInfo of builderDays) {
-          for (const session of BUILDER_SESSIONS) {
-            if (builderSchoolSessionState(school, dayInfo.date, session) !== 'activity') continue
-            const key = builderAssignmentKey(dayInfo.day, session, group)
-            if (!next[key]) missingSessions.push(`G${group} ${dayInfo.day} S${session}`)
-          }
-        }
-      }
-    }
-
     updateProgrammeBuilder({ assignments: next })
-    if (missingSessions.length) {
-      const preview = missingSessions.slice(0, 6).join(', ')
-      setProgrammeBuilderMessage(`Programme updated, but ${missingSessions.length} session${missingSessions.length === 1 ? '' : 's'} could not be filled: ${preview}${missingSessions.length > 6 ? '…' : ''}. Check activity capacity or locked cells.`)
-      return
-    }
-    const backupSchools = programmeBuilder.schools.filter((school) => [school.backupOption1, school.backupOption2].some((code) => code && Object.values(next).includes(code)))
-    setProgrammeBuilderMessage(backupSchools.length ? `Programme updated. Backup activities are in use for: ${backupSchools.map((school) => school.name || 'School').join(', ')}.` : 'Programme updated. All on-site sessions are filled, water blocks were kept together, and your manual changes were preserved.')
+    const test = runProgrammeTest(next)
+    setProgrammeBuilderMessage(test.passed
+      ? `Programme Test passed. Every school group has the same activities, no unintended duplicates were found, and all water blocks are valid.${test.substitutions.length ? ` ${test.substitutions.join('. ')}.` : ''}`
+      : `Programme Test failed with ${test.issues.length} issue${test.issues.length === 1 ? '' : 's'}: ${test.issues.slice(0, 6).join('; ')}${test.issues.length > 6 ? '…' : ''}`)
   }
 
   function resetProgrammeLocks() {
@@ -4825,7 +4803,7 @@ Do you want to build the rota anyway?`
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager v4</h1><span className="release-pill">v5.2</span></div><small>Norfolk Lakes</small></div></div>
+          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager v6</h1><span className="release-pill">v6.0.0</span></div><small>Norfolk Lakes</small></div></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -5645,7 +5623,7 @@ Do you want to build the rota anyway?`
                 {programmeBuilder.schools.some((school) => school.purchaseType === 'bargain') && <section className="builder-section bargain-rules"><div className="builder-section-heading"><div><p className="eyebrow">Bargain Special rules</p><h3>Package limits</h3></div></div><label className="builder-limit-field">Maximum sessions per group<input type="number" min="1" max="35" value={programmeBuilder.bargainSessionLimit} onChange={(event) => updateProgrammeBuilder({ bargainSessionLimit: Math.max(1, Number(event.target.value) || 1) })}/></label><p>Select the activities included in this package. These can be updated when you provide the Bargain Special reference sheet.</p><div className="builder-activity-chips">{activities.map((activity) => { const active = programmeBuilder.bargainAllowedActivities.includes(activity.code); return <button key={activity.code} className={active ? 'chip active' : 'chip'} onClick={() => updateProgrammeBuilder({ bargainAllowedActivities: active ? programmeBuilder.bargainAllowedActivities.filter((code) => code !== activity.code) : [...programmeBuilder.bargainAllowedActivities, activity.code] })} title={activity.name}>{activity.code}<small>{activity.name}</small></button> })}</div></section>}
 
                 <section className="builder-section">
-                  <div className="builder-section-heading"><div><p className="eyebrow">Programme grid</p><h3>Assign activities</h3></div><div className="builder-heading-actions"><span>{builderGroups.length} groups · {builderDays.length} days</span><button className="secondary-action" onClick={clearWholeProgramme}><Trash2 size={17}/>Clear Week</button></div></div>
+                  <div className="builder-section-heading"><div><p className="eyebrow">Programme grid</p><h3>Assign activities</h3></div><div className="builder-heading-actions"><button className="primary" onClick={updateWholeProgramme}><WandSparkles size={17}/>Auto Fill Programme</button><span>{builderGroups.length} groups · {builderDays.length} days</span><button className="secondary-action" onClick={clearWholeProgramme}><Trash2 size={17}/>Clear Week</button></div></div>
                   <div className="builder-grid-wrap"><table className="builder-grid"><thead><tr><th>Day</th><th>Session</th>{builderGroups.map(({ group, school }) => <th key={group}>G{group}<small>{school.name || 'School'}</small></th>)}</tr></thead><tbody>{builderDays.flatMap((dayInfo) => BUILDER_SESSIONS.map((session) => <tr key={`${dayInfo.day}-${session}`}><th>{dayInfo.label}</th><th>S{session}</th>{builderGroups.map(({ group, school }) => { const state = builderSchoolSessionState(school, dayInfo.date, session); const value = programmeBuilder.assignments[builderAssignmentKey(dayInfo.day, session, group)] ?? ''; const options = school.purchaseType === 'bargain' ? activities.filter((activity) => programmeBuilder.bargainAllowedActivities.includes(activity.code)) : activities; return <td key={group} className={`builder-state-${state}`} onDragOver={state === 'activity' ? (event) => event.preventDefault() : undefined} onDrop={state === 'activity' ? () => dropBuilderActivity(dayInfo.day, session, group, school.id) : undefined}>{state === 'arrival' ? <strong>{school.name || 'School'} – Arrival</strong> : state === 'departed' ? <span>Departed</span> : state === 'offsite' ? <span>Not on site</span> : <div className="builder-draggable-cell" draggable={Boolean(value)} onDragStart={() => value && setDraggedBuilderActivity({ key: builderAssignmentKey(dayInfo.day, session, group), code: value, schoolId: school.id })}><select className={programmeBuilder.manualLocks[builderAssignmentKey(dayInfo.day, session, group)] ? 'manual-locked' : ''} title={programmeBuilder.manualLocks[builderAssignmentKey(dayInfo.day, session, group)] ? 'Manual change locked' : 'Automatic activity'} value={value} onChange={(event) => setBuilderActivity(dayInfo.day, session, group, event.target.value)}><option value="">—</option>{options.filter((activity) => school.requestedActivities.includes(activity.code) || activity.code === value).map((activity) => <option key={activity.code} value={activity.code}>{activity.code} – {activity.name}</option>)}</select></div>}</td> })}</tr>))}</tbody></table></div>
 
                   <div className="builder-update-actions"><div><strong>Manual changes are protected</strong><p>Any activity you change is locked. Update Programme rearranges only the remaining sessions.</p></div><div><button className="secondary-action" onClick={resetProgrammeLocks}>Reset Locks</button><button className="primary" onClick={updateWholeProgramme}><WandSparkles size={17}/>Update Programme</button></div></div>

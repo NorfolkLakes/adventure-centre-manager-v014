@@ -1,3 +1,4 @@
+// Adventure Centre Manager v4 v2.2 — live serialized rota synchronisation
 import { ChangeEvent, Fragment, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Building2,
@@ -198,8 +199,8 @@ const PROGRAMME_BUILDER_KEY = 'acm-programme-builder-draft'
 const PROGRAMME_LIBRARY_KEY = 'acm-programme-library'
 const PROGRAMME_ARCHIVE_KEY = 'acm-programme-archive-v1'
 
-type ProgrammePurchaseType = 'bargain' | 'super' | 'outdoor'
-type BuilderSchool = { id: string; name: string; programmeName: string; purchaseType: ProgrammePurchaseType; arrivalDate: string; departureDate: string; notes: string; groups: number; requestedActivities: string[]; backupOption1: string; backupOption2: string; locked: boolean }
+type ProgrammePurchaseType = 'normal' | 'bargain' | 'super' | 'outdoor'
+type BuilderSchool = { id: string; name: string; programmeName: string; purchaseType: ProgrammePurchaseType; arrivalDate: string; departureDate: string; notes: string; children: number; groups: number; groupingMode: 'balanced' | 'override'; groupSizes: number[]; requestedActivities: string[]; backupOption1: string; backupOption2: string; locked: boolean }
 type ProgrammeBuilderDraft = {
   name: string
   startDate: string
@@ -232,9 +233,9 @@ function blankProgrammeBuilderDraft(): ProgrammeBuilderDraft {
   friday.setDate(monday.getDate() + 4)
   const iso = (date: Date) => date.toISOString().slice(0, 10)
   return {
-    name: '', startDate: iso(monday), endDate: iso(friday), purchaseType: 'normal',
+    name: '', startDate: iso(monday), endDate: iso(friday), purchaseType: 'bargain',
     bargainSessionLimit: 15, bargainAllowedActivities: DEFAULT_BARGAIN_CODES,
-    schools: [{ id: `school-${Date.now()}`, name: '', programmeName: '', purchaseType: 'normal', arrivalDate: iso(monday), departureDate: iso(friday), notes: '', groups: 1, requestedActivities: [], backupOption1: '', backupOption2: '', locked: false }], assignments: {}, manualLocks: {}, notes: '',
+    schools: [{ id: `school-${Date.now()}`, name: '', programmeName: '', purchaseType: 'bargain', arrivalDate: iso(monday), departureDate: iso(friday), notes: '', children: 12, groups: 1, groupingMode: 'balanced', groupSizes: [12], requestedActivities: [], backupOption1: '', backupOption2: '', locked: false }], assignments: {}, manualLocks: {}, notes: '',
   }
 }
 
@@ -639,16 +640,13 @@ function ManagerApp({
   accountEmail: string
   displayName?: string | null
   onSignOut: () => void
-  accountRole?: 'centreManager' | 'activityManager' | 'teamLeader' | 'admin'
+  accountRole?: 'centreManager' | 'activityManager' | 'teamLeader'
 }) {
-  const isAdminAccount = accountRole === 'admin'
   const canManageHolidays = accountRole === 'centreManager' || accountRole === 'activityManager'
   const canManageStaff = accountRole === 'centreManager' || accountRole === 'activityManager'
   const canRecordSickness = true
   const canViewLogs = canManageStaff
-  const [page, setPage] = useState<Page>(() => isAdminAccount ? 'admin' : 'dashboard')
-  const [adminAccountEmail, setAdminAccountEmail] = useState('')
-  const [adminAccountBusy, setAdminAccountBusy] = useState(false)
+  const [page, setPage] = useState<Page>('dashboard')
   const [programme, setProgramme] = useState<ProgrammeImport | null>(() =>
     readJson(PROGRAMME_KEY, null),
   )
@@ -841,11 +839,12 @@ function ManagerApp({
       : staffingDayOptions[0] ?? ''
   const [importMessage, setImportMessage] = useState('')
   const [weather, setWeather] = useState<{ temperature: number; wind: number; code: number } | null>(null)
-  const [currentTime, setCurrentTime] = useState(() => new Date())
   const [cloudSyncStatus, setCloudSyncStatus] = useState<
     'idle' | 'syncing' | 'synced' | 'error'
   >('idle')
   const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const rotaSyncPromiseRef = useRef<Promise<void>>(Promise.resolve())
+  const rotaSyncRevisionRef = useRef(0)
   const [showSickPanel, setShowSickPanel] = useState(false)
   const [showWorkingPanel, setShowWorkingPanel] = useState(false)
   const [showActivityManager, setShowActivityManager] = useState(false)
@@ -899,8 +898,6 @@ function ManagerApp({
   const sharedStateReadyRef = useRef(false)
   const applyingRemoteStateRef = useRef(false)
   const sharedSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const sharedSaveInFlightRef = useRef(false)
-  const sharedSaveQueuedRef = useRef(false)
   const [mySessions, setMySessions] = useState<MySessionDuty[]>([])
   const [mySessionsLoading, setMySessionsLoading] = useState(true)
   const [selectedMySessionsDay, setSelectedMySessionsDay] = useState('')
@@ -916,11 +913,6 @@ function ManagerApp({
     )
   }, [programme, staff])
 
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setCurrentTime(new Date()), 60_000)
-    return () => window.clearInterval(timer)
-  }, [])
 
   useEffect(() => {
     fetch('https://api.open-meteo.com/v1/forecast?latitude=52.69&longitude=0.95&current=temperature_2m,weather_code,wind_speed_10m&timezone=Europe%2FLondon')
@@ -1155,7 +1147,7 @@ function ManagerApp({
 
   function handleWeeklyCellKeyDown(event: KeyboardEvent<HTMLDivElement>, member: StaffMember, day: string, row: number, column: number) {
     const target = event.target as HTMLElement
-    if (['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName)) return
+    if (['INPUT', 'TEXTAREA'].includes(target.tagName)) return
     const key = event.key.toLowerCase()
     if (event.key === 'ArrowLeft') { event.preventDefault(); focusWeeklyCell(row, column - 1); return }
     if (event.key === 'ArrowRight') { event.preventDefault(); focusWeeklyCell(row, column + 1); return }
@@ -1177,7 +1169,7 @@ function ManagerApp({
 
   function handleDailyCellKeyDown(event: KeyboardEvent<HTMLDivElement>, member: StaffMember, row: number) {
     const target = event.target as HTMLElement
-    if (['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName)) return
+    if (['INPUT', 'TEXTAREA'].includes(target.tagName)) return
     const key = event.key.toLowerCase()
     if (event.key === 'ArrowUp') { event.preventDefault(); focusDailyCell(row - 1); return }
     if (event.key === 'ArrowDown' || event.key === 'Enter') { event.preventDefault(); focusDailyCell(row + 1); return }
@@ -1567,52 +1559,20 @@ function ManagerApp({
   useEffect(() => {
     if (!sharedStateReadyRef.current || applyingRemoteStateRef.current) return
     if (sharedSaveTimerRef.current) clearTimeout(sharedSaveTimerRef.current)
-
-    const saveSharedState = async () => {
-      if (sharedSaveInFlightRef.current) {
-        sharedSaveQueuedRef.current = true
-        return
-      }
-
-      sharedSaveInFlightRef.current = true
+    sharedSaveTimerRef.current = setTimeout(async () => {
       const updatedAt = new Date().toISOString()
       const updatedByName = displayName?.trim() || accountEmail
-      // Archives are intentionally excluded from the live row. They can become very
-      // large and were causing Supabase statement timeouts on every small rota edit.
-      const state = { programme, staff, activities, assignments, waterSupportAssignments, workingByDay, sicknessByDay, arrivalAssignments }
-      let lastError: { message: string } | null = null
-
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        const { error } = await supabase.from('app_live_state').upsert({
-          id: 'main', state, updated_by_name: updatedByName,
-          updated_by_email: accountEmail.trim().toLowerCase(), updated_at: updatedAt,
-          section: page,
-        }, { onConflict: 'id' })
-        if (!error) {
-          lastError = null
-          break
-        }
-        lastError = error
-        if (attempt === 0) await new Promise((resolve) => window.setTimeout(resolve, 1200))
-      }
-
-      sharedSaveInFlightRef.current = false
-      if (lastError) {
-        setImportMessage(`Live update failed: ${lastError.message}`)
-      } else {
-        setImportMessage((message) => message.startsWith('Live update failed:') ? '' : message)
-        setLastSharedUpdate({ updated_by_name: updatedByName, updated_by_email: accountEmail, updated_at: updatedAt, section: page })
-      }
-
-      if (sharedSaveQueuedRef.current) {
-        sharedSaveQueuedRef.current = false
-        window.setTimeout(saveSharedState, 500)
-      }
-    }
-
-    sharedSaveTimerRef.current = setTimeout(saveSharedState, 2500)
+      const state = { programme, staff, activities, assignments, waterSupportAssignments, workingByDay, sicknessByDay, arrivalAssignments, staffingArchives }
+      const { error } = await supabase.from('app_live_state').upsert({
+        id: 'main', state, updated_by_name: updatedByName,
+        updated_by_email: accountEmail.trim().toLowerCase(), updated_at: updatedAt,
+        section: page,
+      }, { onConflict: 'id' })
+      if (error) setImportMessage(`Live update failed: ${error.message}`)
+      else setLastSharedUpdate({ updated_by_name: updatedByName, updated_by_email: accountEmail, updated_at: updatedAt, section: page })
+    }, 700)
     return () => { if (sharedSaveTimerRef.current) clearTimeout(sharedSaveTimerRef.current) }
-  }, [programme, staff, activities, assignments, waterSupportAssignments, workingByDay, sicknessByDay, arrivalAssignments, accountEmail, displayName, page])
+  }, [programme, staff, activities, assignments, waterSupportAssignments, workingByDay, sicknessByDay, arrivalAssignments, staffingArchives, accountEmail, displayName, page])
 
   async function addHoliday() {
     if (!canManageHolidays) {
@@ -2028,11 +1988,42 @@ function ManagerApp({
   }
 
   function addBuilderSchool() {
-    updateProgrammeBuilder({ schools: [...programmeBuilder.schools, { id: `school-${Date.now()}`, name: '', programmeName: '', purchaseType: 'normal', arrivalDate: programmeBuilder.startDate, departureDate: programmeBuilder.endDate, notes: '', groups: 1, requestedActivities: [], backupOption1: '', backupOption2: '', locked: false }] })
+    updateProgrammeBuilder({ schools: [...programmeBuilder.schools, { id: `school-${Date.now()}`, name: '', programmeName: '', purchaseType: 'bargain', arrivalDate: programmeBuilder.startDate, departureDate: programmeBuilder.endDate, notes: '', children: 12, groups: 1, groupingMode: 'balanced', groupSizes: [12], requestedActivities: [], backupOption1: '', backupOption2: '', locked: false }] })
+  }
+
+  function balancedGroupSizes(children: number, groups: number) {
+    const safeChildren = Math.max(0, Math.floor(children || 0))
+    const safeGroups = Math.max(1, Math.floor(groups || 1))
+    const base = Math.floor(safeChildren / safeGroups)
+    const remainder = safeChildren % safeGroups
+    return Array.from({ length: safeGroups }, (_, index) => base + (index < remainder ? 1 : 0))
+  }
+
+  function suggestedGroups(children: number) { return Math.max(1, Math.ceil(Math.max(0, children || 0) / 12)) }
+
+  function clearSchoolProgramme(schoolId: string) {
+    const groups = builderGroups.filter((entry) => entry.school.id === schoolId).map((entry) => entry.group)
+    const assignments = Object.fromEntries(Object.entries(programmeBuilder.assignments).filter(([key]) => !groups.includes(Number(key.split('|')[2]))))
+    const manualLocks = Object.fromEntries(Object.entries(programmeBuilder.manualLocks).filter(([key]) => !groups.includes(Number(key.split('|')[2]))))
+    updateProgrammeBuilder({ assignments, manualLocks })
+    setProgrammeBuilderMessage('School programme grid cleared. School details and activity choices were kept.')
+  }
+
+  function clearWholeProgramme() {
+    if (!window.confirm('Clear every activity from the programme grid? School details will be kept.')) return
+    updateProgrammeBuilder({ assignments: {}, manualLocks: {} })
+    setProgrammeBuilderMessage('Programme grid cleared.')
   }
 
   function updateBuilderSchool(id: string, patch: Partial<BuilderSchool>) {
-    updateProgrammeBuilder({ schools: programmeBuilder.schools.map((school) => school.id === id ? { ...school, ...patch } : school) })
+    updateProgrammeBuilder({ schools: programmeBuilder.schools.map((school) => {
+      if (school.id !== id) return school
+      const next = { ...school, ...patch }
+      if (patch.children !== undefined && patch.groups === undefined && next.groupingMode === 'balanced') next.groups = suggestedGroups(next.children)
+      if (patch.groupingMode === 'balanced') next.groups = suggestedGroups(next.children)
+      next.groupSizes = balancedGroupSizes(next.children, next.groups)
+      return next
+    }) })
   }
 
   function removeBuilderSchool(id: string) {
@@ -2091,152 +2082,145 @@ function ManagerApp({
     return 2
   }
 
+  type ProgrammeTestResult = { passed: boolean; issues: string[]; substitutions: string[] }
+
+  function schoolRequestedActivities(school: BuilderSchool) {
+    const requested = school.requestedActivities.length ? school.requestedActivities : enabledActivities.map((item) => item.code)
+    return school.purchaseType === 'bargain'
+      ? requested.filter((code) => programmeBuilder.bargainAllowedActivities.includes(code))
+      : requested
+  }
+
+  function requiredActivityCounts(school: BuilderSchool, activityCodes: string[]) {
+    const counts = new Map<string, number>()
+    for (const code of activityCodes) counts.set(code, Math.max(counts.get(code) ?? 0, 1))
+    if (school.purchaseType === 'super' || school.purchaseType === 'outdoor') {
+      if (activityCodes.includes('CANOE')) counts.set('CANOE', 2)
+      if (activityCodes.includes('KAYAK')) counts.set('KAYAK', 2)
+    }
+    return counts
+  }
+
+  function runProgrammeTest(assignments: Record<string, string>): ProgrammeTestResult {
+    const issues: string[] = []
+    const substitutions: string[] = []
+    for (const school of programmeBuilder.schools) {
+      const schoolGroups = builderGroups.filter((entry) => entry.school.id === school.id)
+      const groupCounts = new Map<number, Map<string, number>>()
+      for (const { group } of schoolGroups) {
+        const counts = new Map<string, number>()
+        for (const dayInfo of builderDays) for (const session of BUILDER_SESSIONS) {
+          if (builderSchoolSessionState(school, dayInfo.date, session) !== 'activity') continue
+          const code = assignments[builderAssignmentKey(dayInfo.day, session, group)] ?? ''
+          if (!code) issues.push(`${school.name || 'School'} G${group}: ${dayInfo.label} S${session} is blank`)
+          else counts.set(code, (counts.get(code) ?? 0) + 1)
+        }
+        groupCounts.set(group, counts)
+        for (const [code, count] of counts) {
+          const waterRepeat = (school.purchaseType === 'super' || school.purchaseType === 'outdoor') && (code === 'CANOE' || code === 'KAYAK') && count === 2
+          if (count > 1 && !waterRepeat) issues.push(`${school.name || 'School'} G${group}: ${activities.find((a) => a.code === code)?.name || code} appears ${count} times`)
+        }
+
+        const waterBlocks: Array<[string, string]> = [['1', '2'], ['3', '4']]
+        if (school.purchaseType === 'super' || school.purchaseType === 'outdoor') {
+          for (const code of ['CANOE', 'KAYAK']) {
+            if (!schoolRequestedActivities(school).includes(code)) continue
+            const valid = builderDays.some((dayInfo) => waterBlocks.some(([a, b]) => assignments[builderAssignmentKey(dayInfo.day, a, group)] === code && assignments[builderAssignmentKey(dayInfo.day, b, group)] === code))
+            if (!valid) issues.push(`${school.name || 'School'} G${group}: ${code} must occupy S1-S2 or S3-S4 on one day`)
+          }
+        } else if (school.purchaseType === 'bargain' && schoolRequestedActivities(school).includes('CANOE') && schoolRequestedActivities(school).includes('KAYAK')) {
+          const valid = builderDays.some((dayInfo) => waterBlocks.some(([a, b]) => {
+            const x = assignments[builderAssignmentKey(dayInfo.day, a, group)]
+            const y = assignments[builderAssignmentKey(dayInfo.day, b, group)]
+            return (x === 'CANOE' && y === 'KAYAK') || (x === 'KAYAK' && y === 'CANOE')
+          }))
+          if (!valid) issues.push(`${school.name || 'School'} G${group}: Bargain Canoe/Kayak must be consecutive in S1-S2 or S3-S4`)
+        }
+      }
+      const first = schoolGroups[0]?.group
+      if (first != null) {
+        const baseline = groupCounts.get(first) ?? new Map()
+        const serialise = (m: Map<string, number>) => [...m.entries()].sort().map(([code, count]) => `${code}:${count}`).join('|')
+        for (const { group } of schoolGroups.slice(1)) if (serialise(groupCounts.get(group) ?? new Map()) !== serialise(baseline)) {
+          issues.push(`${school.name || 'School'}: G${group} does not have the same activity set as G${first}`)
+        }
+      }
+      for (const backup of [school.backupOption1, school.backupOption2].filter(Boolean)) {
+        if (schoolGroups.some(({ group }) => Object.entries(assignments).some(([key, code]) => key.endsWith(`|${group}`) && code === backup))) substitutions.push(`${school.name || 'School'} uses backup ${activities.find((a) => a.code === backup)?.name || backup}`)
+      }
+    }
+    return { passed: issues.length === 0, issues, substitutions }
+  }
+
   function generateSchoolAssignments(schoolId: string, preserveManual: boolean, baseAssignments = programmeBuilder.assignments) {
     const school = programmeBuilder.schools.find((item) => item.id === schoolId)
     if (!school || (school.locked && preserveManual)) return baseAssignments
     const schoolGroups = builderGroups.filter((entry) => entry.school.id === schoolId)
-    const requested = school.requestedActivities.length ? school.requestedActivities : enabledActivities.map((item) => item.code)
-    const allowed = school.purchaseType === 'bargain' ? requested.filter((code) => programmeBuilder.bargainAllowedActivities.includes(code)) : requested
-    if (!allowed.length) return baseAssignments
+    const requested = schoolRequestedActivities(school)
+    if (!requested.length) return baseAssignments
 
     const next = { ...baseAssignments }
     const activitySlots = builderDays.flatMap((dayInfo) => BUILDER_SESSIONS
       .filter((session) => builderSchoolSessionState(school, dayInfo.date, session) === 'activity')
       .map((session) => ({ ...dayInfo, session, priority: builderSlotPriority(school, dayInfo.date, session) })))
+      .sort((a, b) => a.priority - b.priority || a.date.localeCompare(b.date) || Number(a.session) - Number(b.session))
 
     const activityAtCapacity = (day: string, session: string, code: string, ownKey: string) => {
-      const capacity = activityCapacity(code)
       const running = Object.entries(next).filter(([key, value]) => key !== ownKey && key.startsWith(`${day}|${session}|`) && value === code).length
-      return running >= capacity
+      return running >= activityCapacity(code)
     }
 
-    // Clear only unlocked cells for this school before rebuilding. Manual cells are preserved.
+    for (const { group } of schoolGroups) for (const slot of activitySlots) {
+      const key = builderAssignmentKey(slot.day, slot.session, group)
+      if (!(preserveManual && programmeBuilder.manualLocks[key])) next[key] = ''
+    }
+
+    const backups = [school.backupOption1, school.backupOption2].filter((code): code is string => Boolean(code) && !requested.includes(code))
+    const effective = [...requested]
+    const counts = requiredActivityCounts(school, effective)
+    const blockStarts = ['1', '3']
+    const blocks = activitySlots.flatMap((first) => blockStarts.includes(first.session)
+      ? [{ first, second: activitySlots.find((slot) => slot.date === first.date && slot.session === String(Number(first.session) + 1)) }]
+      : []).filter((block): block is { first: (typeof activitySlots)[number]; second: (typeof activitySlots)[number] } => Boolean(block.second))
+
+    const placeBlock = (group: number, codeA: string, codeB: string) => {
+      for (const block of blocks) {
+        const keyA = builderAssignmentKey(block.first.day, block.first.session, group)
+        const keyB = builderAssignmentKey(block.second.day, block.second.session, group)
+        if ((preserveManual && (programmeBuilder.manualLocks[keyA] || programmeBuilder.manualLocks[keyB])) || next[keyA] || next[keyB]) continue
+        if (activityAtCapacity(block.first.day, block.first.session, codeA, keyA) || activityAtCapacity(block.second.day, block.second.session, codeB, keyB)) continue
+        next[keyA] = codeA; next[keyB] = codeB; return true
+      }
+      return false
+    }
+
     for (const { group } of schoolGroups) {
+      if ((school.purchaseType === 'super' || school.purchaseType === 'outdoor')) {
+        if (counts.get('CANOE') === 2) placeBlock(group, 'CANOE', 'CANOE')
+        if (counts.get('KAYAK') === 2) placeBlock(group, 'KAYAK', 'KAYAK')
+      } else if (school.purchaseType === 'bargain' && counts.has('CANOE') && counts.has('KAYAK')) {
+        placeBlock(group, 'CANOE', 'KAYAK')
+      }
+
+      const already = new Map<string, number>()
+      for (const slot of activitySlots) {
+        const code = next[builderAssignmentKey(slot.day, slot.session, group)]
+        if (code) already.set(code, (already.get(code) ?? 0) + 1)
+      }
+      const queue: string[] = []
+      for (const [code, required] of counts) for (let i = already.get(code) ?? 0; i < required; i += 1) queue.push(code)
+
       for (const slot of activitySlots) {
         const key = builderAssignmentKey(slot.day, slot.session, group)
-        if (!(preserveManual && programmeBuilder.manualLocks[key])) next[key] = ''
-      }
-    }
-
-    // Real Norfolk Lakes pattern learned from uploaded programmes:
-    // every selected group completes Canoe and Kayak as one consecutive block.
-    // Valid blocks are Sessions 1+2 or Sessions 3+4 only. Groups in the same
-    // batch do the same discipline together, then change discipline together.
-    // The scheduler balances batches over both blocks on a day (for four groups,
-    // normally G1/G2 in 1+2 and G3/G4 in 3+4), while still respecting configured
-    // activity capacities and any manual locks.
-    const pairedWaterGroups = new Set<number>()
-    if (allowed.includes('CANOE') && allowed.includes('KAYAK')) {
-      const blockStarts = new Set(['1', '3'])
-      const availableBlocks = activitySlots
-        .filter((slot) => blockStarts.has(slot.session))
-        .flatMap((first) => {
-          const secondSession = String(Number(first.session) + 1)
-          const second = activitySlots.find((candidate) => candidate.date === first.date && candidate.session === secondSession)
-          return second ? [{ first, second }] : []
-        })
-        .sort((a, b) => a.first.priority - b.first.priority || a.first.date.localeCompare(b.first.date) || Number(a.first.session) - Number(b.first.session))
-
-      const unscheduledGroups = schoolGroups.map((entry) => entry.group).filter((group) => {
-        const manualComplete = availableBlocks.some(({ first, second }) => {
-          const firstValue = next[builderAssignmentKey(first.day, first.session, group)]
-          const secondValue = next[builderAssignmentKey(second.day, second.session, group)]
-          return (firstValue === 'CANOE' && secondValue === 'KAYAK') || (firstValue === 'KAYAK' && secondValue === 'CANOE')
-        })
-        if (manualComplete) pairedWaterGroups.add(group)
-        return !manualComplete
-      })
-
-      const capacityPerBlock = Math.max(1, Math.min(activityCapacity('CANOE'), activityCapacity('KAYAK')))
-      const blocksByDate = new Map<string, typeof availableBlocks>()
-      for (const block of availableBlocks) blocksByDate.set(block.first.date, [...(blocksByDate.get(block.first.date) ?? []), block])
-      const orderedBlocks = Array.from(blocksByDate.values()).flatMap((dayBlocks) => {
-        const sorted = [...dayBlocks].sort((a, b) => Number(a.first.session) - Number(b.first.session))
-        return sorted
-      })
-
-      let remaining = [...unscheduledGroups]
-      for (let blockIndex = 0; blockIndex < orderedBlocks.length && remaining.length; blockIndex += 1) {
-        const block = orderedBlocks[blockIndex]
-        // Fill the earliest preferred block to capacity before moving to a later block.
-        // This keeps groups from the same school together: for four groups, G1/G2
-        // use S1+S2 and G3/G4 use S3+S4 on the same preferred day, instead of
-        // pushing the final group onto departure morning.
-        const targetSize = Math.min(capacityPerBlock, remaining.length)
-        const candidates = remaining.slice(0, targetSize)
-        const firstCode = blockIndex % 2 === 0 ? 'CANOE' : 'KAYAK'
-        const secondCode = firstCode === 'CANOE' ? 'KAYAK' : 'CANOE'
-        const accepted: number[] = []
-
-        for (const group of candidates) {
-          const firstKey = builderAssignmentKey(block.first.day, block.first.session, group)
-          const secondKey = builderAssignmentKey(block.second.day, block.second.session, group)
-          if (preserveManual && (programmeBuilder.manualLocks[firstKey] || programmeBuilder.manualLocks[secondKey])) continue
-          if (activityAtCapacity(block.first.day, block.first.session, firstCode, firstKey)) continue
-          if (activityAtCapacity(block.second.day, block.second.session, secondCode, secondKey)) continue
-          next[firstKey] = firstCode
-          next[secondKey] = secondCode
-          accepted.push(group)
-          pairedWaterGroups.add(group)
-        }
-        remaining = remaining.filter((group) => !accepted.includes(group))
-      }
-    }
-
-    for (const { group } of schoolGroups) {
-      const unlockedSlots = activitySlots.filter((slot) => {
-        const key = builderAssignmentKey(slot.day, slot.session, group)
-        return !(preserveManual && programmeBuilder.manualLocks[key]) && !next[key]
-      })
-      const sortedSlots = [...unlockedSlots].sort((a, b) => a.priority - b.priority || a.date.localeCompare(b.date) || Number(a.session) - Number(b.session))
-      const alreadyAssigned = new Set(
-        activitySlots
-          .map((slot) => next[builderAssignmentKey(slot.day, slot.session, group)])
-          .filter(Boolean),
-      )
-      const queue = [...allowed].filter((code) =>
-        code !== 'CF' &&
-        code !== 'DISCO' &&
-        !alreadyAssigned.has(code) &&
-        !(pairedWaterGroups.has(group) && (code === 'CANOE' || code === 'KAYAK')),
-      )
-
-      for (const slot of sortedSlots) {
-        const key = builderAssignmentKey(slot.day, slot.session, group)
-        let chosenIndex = queue.findIndex((code) => code !== 'CF' && (!WATER_ACTIVITY_CODES.has(code) || slot.priority < 2) && !activityAtCapacity(slot.day, slot.session, code, key))
-        if (chosenIndex < 0) chosenIndex = queue.findIndex((code) => code !== 'CF' && !activityAtCapacity(slot.day, slot.session, code, key))
-        if (chosenIndex >= 0) {
-          const [code] = queue.splice(chosenIndex, 1)
+        if (next[key] || (preserveManual && programmeBuilder.manualLocks[key])) continue
+        let index = queue.findIndex((code) => !activityAtCapacity(slot.day, slot.session, code, key))
+        if (index >= 0) {
+          const [code] = queue.splice(index, 1)
           next[key] = code
           continue
         }
-
-        // Every on-site activity session must be filled. Once each requested activity
-        // has been used, choose the next valid requested activity again, while avoiding
-        // a duplicate for the same group on the same day where another option exists.
-        const usedOnDay = new Set(activitySlots
-          .filter((candidate) => candidate.date === slot.date)
-          .map((candidate) => next[builderAssignmentKey(candidate.day, candidate.session, group)])
-          .filter(Boolean))
-        const repeatCandidates = allowed.filter((code) =>
-          code !== 'CF' &&
-          code !== 'DISCO' &&
-          !(pairedWaterGroups.has(group) && (code === 'CANOE' || code === 'KAYAK')) &&
-          !activityAtCapacity(slot.day, slot.session, code, key),
-        )
-        const preferredRepeat = repeatCandidates.find((code) => !usedOnDay.has(code)) ?? repeatCandidates[0]
-        if (preferredRepeat) next[key] = preferredRepeat
-      }
-    }
-
-    // Campfire and Disco are whole-school evening activities. Put them together in Session 5,
-    // as late in the stay as possible, without overwriting a manager's locked cell.
-    const selectedCollective = allowed.includes('CF') ? 'CF' : allowed.includes('DISCO') ? 'DISCO' : ''
-    if (selectedCollective) {
-      const collectiveSlot = [...activitySlots].filter((slot) => slot.session === '5').sort((a, b) => b.date.localeCompare(a.date))[0]
-      if (collectiveSlot) for (const { group } of schoolGroups) {
-        const key = builderAssignmentKey(collectiveSlot.day, collectiveSlot.session, group)
-        if (!(preserveManual && programmeBuilder.manualLocks[key])) next[key] = selectedCollective
+        const backup = backups.find((code) => !activityAtCapacity(slot.day, slot.session, code, key) && !Array.from(already.keys()).includes(code))
+        if (backup) { next[key] = backup; already.set(backup, 1) }
       }
     }
     return next
@@ -2247,35 +2231,20 @@ function ManagerApp({
     if (!school) return
     const next = generateSchoolAssignments(schoolId, true)
     updateProgrammeBuilder({ assignments: next })
-    setProgrammeBuilderMessage(`${school.name || 'School'} updated around your manually locked sessions.`)
+    const test = runProgrammeTest(next)
+    setProgrammeBuilderMessage(test.passed
+      ? `${school.name || 'School'} auto-filled and Programme Test passed.${test.substitutions.length ? ` ${test.substitutions.join('. ')}.` : ''}`
+      : `Auto Fill completed, but Programme Test found ${test.issues.length} issue${test.issues.length === 1 ? '' : 's'}: ${test.issues.slice(0, 5).join('; ')}${test.issues.length > 5 ? '…' : ''}`)
   }
 
   function updateWholeProgramme() {
     let next = { ...programmeBuilder.assignments }
     for (const school of programmeBuilder.schools) next = generateSchoolAssignments(school.id, true, next)
-
-    const missingSessions: string[] = []
-    for (const school of programmeBuilder.schools) {
-      const schoolGroups = builderGroups.filter((entry) => entry.school.id === school.id)
-      for (const { group } of schoolGroups) {
-        for (const dayInfo of builderDays) {
-          for (const session of BUILDER_SESSIONS) {
-            if (builderSchoolSessionState(school, dayInfo.date, session) !== 'activity') continue
-            const key = builderAssignmentKey(dayInfo.day, session, group)
-            if (!next[key]) missingSessions.push(`G${group} ${dayInfo.day} S${session}`)
-          }
-        }
-      }
-    }
-
     updateProgrammeBuilder({ assignments: next })
-    if (missingSessions.length) {
-      const preview = missingSessions.slice(0, 6).join(', ')
-      setProgrammeBuilderMessage(`Programme updated, but ${missingSessions.length} session${missingSessions.length === 1 ? '' : 's'} could not be filled: ${preview}${missingSessions.length > 6 ? '…' : ''}. Check activity capacity or locked cells.`)
-      return
-    }
-    const backupSchools = programmeBuilder.schools.filter((school) => [school.backupOption1, school.backupOption2].some((code) => code && Object.values(next).includes(code)))
-    setProgrammeBuilderMessage(backupSchools.length ? `Programme updated. Backup activities are in use for: ${backupSchools.map((school) => school.name || 'School').join(', ')}.` : 'Programme updated. All on-site sessions are filled, water blocks were kept together, and your manual changes were preserved.')
+    const test = runProgrammeTest(next)
+    setProgrammeBuilderMessage(test.passed
+      ? `Programme Test passed. Every school group has the same activities, no unintended duplicates were found, and all water blocks are valid.${test.substitutions.length ? ` ${test.substitutions.join('. ')}.` : ''}`
+      : `Programme Test failed with ${test.issues.length} issue${test.issues.length === 1 ? '' : 's'}: ${test.issues.slice(0, 6).join('; ')}${test.issues.length > 6 ? '…' : ''}`)
   }
 
   function resetProgrammeLocks() {
@@ -2609,7 +2578,7 @@ function ManagerApp({
       const data = await file.arrayBuffer()
       const workbook = XLSX.read(data, { type: 'array' })
       const stateSheet = workbook.Sheets['_ACM_DATA']
-      if (!stateSheet) throw new Error('This is not an Adventure Centre Manager app programme. Use Upload Excel programme for ordinary spreadsheets.')
+      if (!stateSheet) throw new Error('This is not an Adventure Centre Manager v4 app programme. Use Upload Excel programme for ordinary spreadsheets.')
       const raw = String(stateSheet.A1?.v ?? '')
       const payload = JSON.parse(raw) as { programme?: ProgrammeImport; draft?: ProgrammeBuilderDraft }
       if (!payload.programme?.rows?.length) throw new Error('The app programme data is incomplete.')
@@ -2677,7 +2646,7 @@ function ManagerApp({
     }, new Map<string, ProgrammeRow>()).values()).sort((a, b) => weekdayRank(a.day) - weekdayRank(b.day) || Number(a.session) - Number(b.session))
 
     const workbook = new ExcelJS.Workbook()
-    workbook.creator = 'Adventure Centre Manager'
+    workbook.creator = 'Adventure Centre Manager v4'
     workbook.company = 'Manor Adventure – Norfolk Lakes'
     workbook.title = title
     workbook.subject = 'Centre Programme'
@@ -3110,29 +3079,6 @@ function ManagerApp({
     setImportMessage(`Payroll synced with ${permanentCount} permanent staff. Existing template order will be retained and new staff will be added to the bottom of their role group.`)
   }
 
-  async function makeAdminAccount() {
-    const email = adminAccountEmail.trim().toLowerCase()
-    if (!email) return
-    setAdminAccountBusy(true)
-    const { data, error } = await supabase
-      .from('profiles')
-      .update({ role: 'admin' })
-      .eq('email', email)
-      .select('id,email')
-
-    setAdminAccountBusy(false)
-    if (error) {
-      setImportMessage(`Could not give admin access: ${error.message}`)
-      return
-    }
-    if (!data?.length) {
-      setImportMessage('No account was found with that email. Ask the admin person to create an account on the login screen first, then try again.')
-      return
-    }
-    setAdminAccountEmail('')
-    setImportMessage(`${email} now has access to Admin → Programme Files only.`)
-  }
-
   async function setStaffRole(staffId: string, role: StaffRole) {
     const member = staff.find((item) => item.id === staffId)
     const next = staff.map((item) =>
@@ -3395,78 +3341,44 @@ function ManagerApp({
   }
 
   function aiBuildEntireRota() {
-    if (!programme) {
-      window.alert('No programme is loaded. Load or build a programme before building the rota.')
-      return
-    }
+    if (!programme) return
+    const faults: string[] = []
+    const unfilledProgrammeCells = programme.rows.reduce(
+      (total, row) => total + activityCellsForRow(row).filter((cell) => !cell.activityCode.trim()).length,
+      0,
+    )
+    if (unfilledProgrammeCells > 0) faults.push(`${unfilledProgrammeCells} programme session${unfilledProgrammeCells === 1 ? '' : 's'} have no activity.`)
+    if (dailyShortages.length > 0) faults.push(`${dailyShortages.length} day${dailyShortages.length === 1 ? '' : 's'} have staffing shortages.`)
+    const qualificationFaults = programmeDays.flatMap((day) => qualificationShortagesForDay(day))
+    if (qualificationFaults.length > 0) faults.push(`${qualificationFaults.length} activity session${qualificationFaults.length === 1 ? '' : 's'} do not have enough correctly signed-off staff.`)
+    const arrivalFaults = arrivalRows.filter((row) => !arrivalAssignment(row).leaderId)
+    if (arrivalFaults.length > 0) faults.push(`${arrivalFaults.length} school arrival${arrivalFaults.length === 1 ? '' : 's'} do not have a Party Leader.`)
+    const message = faults.length
+      ? `Faults found before building the rota:
 
+• ${faults.join('\n• ')}
+
+Do you want to build the rota anyway?`
+      : 'No faults were found. Build the entire rota now?'
+    if (!window.confirm(message)) return
     let next: StaffingAssignment = { ...assignments }
     const workload = new Map<string, number>()
-    const unresolved: string[] = []
     const sortedRows = [...programme.rows].sort((a,b) => a.day.localeCompare(b.day) || Number(a.session)-Number(b.session))
-
     for (const row of sortedRows) {
       const workingIds = new Set(workingByDay[row.day] ?? staff.map((m) => m.id))
-      const unavailableIds = unavailableStaffIdsForSession(row.day, row.session)
-      const arrivalIds = arrivalStaffForDaySession(row.day, row.session)
-
+      const sickIds = unavailableStaffIdsForSession(row.day, row.session)
       for (const cell of activityCellsForRow(row)) {
         const key = cellKey(row.id, cell.group)
-        if (next[key]) {
-          workload.set(next[key], (workload.get(next[key]) ?? 0) + 1)
-          continue
-        }
-
-        const candidates = staff
-          .filter((member) => workingIds.has(member.id))
-          .filter((member) => !unavailableIds.has(member.id))
-          .filter((member) => qualificationIsValid(member, cell.activityCode))
-          .filter((member) => !arrivalIds.has(member.id))
-          .filter((member) => !sortedRows.some((other) =>
-            other.day === row.day &&
-            other.session === row.session &&
-            other.cells.some((otherCell) => next[cellKey(other.id, otherCell.group)] === member.id),
-          ))
-          .sort((a,b) =>
-            (rolePriority(resolvedRole(a)) - rolePriority(resolvedRole(b))) ||
-            ((workload.get(a.id) ?? 0) - (workload.get(b.id) ?? 0)) ||
-            a.name.localeCompare(b.name),
-          )
-
-        if (candidates[0]) {
-          next[key] = candidates[0].id
-          workload.set(candidates[0].id, (workload.get(candidates[0].id) ?? 0) + 1)
-        } else {
-          unresolved.push(`${row.day}, Session ${row.session}, Group ${cell.group}: ${activityName(cell.activityCode)}`)
-        }
+        if (next[key]) { workload.set(next[key], (workload.get(next[key]) ?? 0) + 1); continue }
+        const candidates = staff.filter((m) => workingIds.has(m.id) && !sickIds.has(m.id) && qualificationIsValid(m, cell.activityCode) && !arrivalStaffForDaySession(row.day, row.session).has(m.id))
+          .filter((m) => !sortedRows.some((other) => other.day === row.day && other.session === row.session && other.cells.some((c) => next[cellKey(other.id,c.group)] === m.id)))
+          .sort((a,b) => (rolePriority(resolvedRole(a))-rolePriority(resolvedRole(b))) || ((workload.get(a.id)??0)-(workload.get(b.id)??0)) || a.name.localeCompare(b.name))
+        if (candidates[0]) { next[key]=candidates[0].id; workload.set(candidates[0].id,(workload.get(candidates[0].id)??0)+1) }
       }
     }
-
-    const faultLines: string[] = []
-    if (unresolved.length) {
-      faultLines.push(`${unresolved.length} activity assignment${unresolved.length === 1 ? '' : 's'} could not be filled.`)
-      unresolved.slice(0, 8).forEach((line) => faultLines.push(`• ${line}`))
-      if (unresolved.length > 8) faultLines.push(`• Plus ${unresolved.length - 8} more.`)
-    }
-
-    const qualificationDays = programmeDays.filter((day) => qualificationShortagesForDay(day).length > 0)
-    if (qualificationDays.length) faultLines.push(`Qualification/sign-off shortages detected on: ${qualificationDays.join(', ')}.`)
-
-    const message = faultLines.length
-      ? `Faults were found before building the rota:
-
-${faultLines.join('\n')}
-
-Build the rota anyway?`
-      : 'No faults were found. Build the entire rota now?'
-
-    if (!window.confirm(message)) return
-
     setAssignments(next)
     localStorage.setItem(ASSIGNMENT_KEY, JSON.stringify(next))
-    setImportMessage(faultLines.length
-      ? `Rota built with ${unresolved.length} unfilled activity assignment${unresolved.length === 1 ? '' : 's'}. Review the warnings in Daily Staffing.`
-      : 'Entire rota built successfully using availability, qualifications, workload balancing and conflict prevention.')
+    setImportMessage('AI rota builder completed the programme using availability, valid qualifications, workload balancing and conflict prevention.')
   }
 
   function isWaterActivity(code: string) {
@@ -3870,6 +3782,86 @@ Build the rota anyway?`
     localStorage.setItem(ARRIVAL_ASSIGNMENTS_KEY, JSON.stringify(next))
   }
 
+
+  function clearArrivalSchool(row: ProgrammeRow) {
+    const schoolName = arrivalSchoolName(row)
+    if (!window.confirm(`Clear all arrival details for ${schoolName}? This removes accommodation, Party Leader and group instructors.`)) return
+    const next = { ...arrivalAssignments }
+    delete next[arrivalKey(row)]
+    setArrivalAssignments(next)
+    localStorage.setItem(ARRIVAL_ASSIGNMENTS_KEY, JSON.stringify(next))
+    setImportMessage(`${schoolName} arrival details were cleared and saved.`)
+  }
+
+  function clearAllArrivalSchools(day: string) {
+    const rows = arrivalRows.filter((row) => row.day === day)
+    if (!rows.length) return
+    if (!window.confirm(`Clear all ${rows.length} school arrivals for ${day}? This removes accommodation, Party Leaders and group instructors.`)) return
+    const keys = new Set(rows.map(arrivalKey))
+    const next = Object.fromEntries(Object.entries(arrivalAssignments).filter(([key]) => !keys.has(key)))
+    setArrivalAssignments(next)
+    localStorage.setItem(ARRIVAL_ASSIGNMENTS_KEY, JSON.stringify(next))
+    setImportMessage(`All ${day} school arrival details were cleared and saved.`)
+  }
+
+  async function clearCurrentProgramme() {
+    if (!programme) return
+    if (!window.confirm('Clear the current programme and all staffing and arrivals linked to it? The saved Programme Files archive will not be deleted.')) return
+
+    const clearedAssignments: Record<string, string> = {}
+    const clearedWaterSupport: Record<string, string> = {}
+    const clearedArrivals: Record<string, ArrivalAssignment> = {}
+
+    setProgramme(null)
+    setAssignments(clearedAssignments)
+    setWaterSupportAssignments(clearedWaterSupport)
+    setArrivalAssignments(clearedArrivals)
+    setSelectedCell(null)
+    setSelectedStaffingCell(null)
+
+    localStorage.removeItem(PROGRAMME_KEY)
+    localStorage.setItem(ASSIGNMENT_KEY, JSON.stringify(clearedAssignments))
+    localStorage.setItem(WATER_SUPPORT_KEY, JSON.stringify(clearedWaterSupport))
+    localStorage.setItem(ARRIVAL_ASSIGNMENTS_KEY, JSON.stringify(clearedArrivals))
+
+    try {
+      await clearCloudRotaAssignments()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setImportMessage(`Programme was cleared locally, but staff duties could not be cleared from the cloud: ${message}`)
+      return
+    }
+
+    // Save immediately as well as through the normal live-state autosave, so a
+    // refresh or another logged-in computer cannot restore the cleared week.
+    if (sharedStateReadyRef.current && accountEmail.trim()) {
+      const updatedAt = new Date().toISOString()
+      const updatedByName = displayName?.trim() || accountEmail
+      const state = {
+        programme: null,
+        staff,
+        activities,
+        assignments: clearedAssignments,
+        waterSupportAssignments: clearedWaterSupport,
+        workingByDay,
+        sicknessByDay,
+        arrivalAssignments: clearedArrivals,
+        staffingArchives,
+      }
+      const { error } = await supabase.from('app_live_state').upsert({
+        id: 'main', state, updated_by_name: updatedByName,
+        updated_by_email: accountEmail.trim().toLowerCase(), updated_at: updatedAt,
+        section: 'programme',
+      }, { onConflict: 'id' })
+      if (error) {
+        setImportMessage(`Programme was cleared locally, but the shared save failed: ${error.message}`)
+        return
+      }
+      setLastSharedUpdate({ updated_by_name: updatedByName, updated_by_email: accountEmail, updated_at: updatedAt, section: 'programme' })
+    }
+    setImportMessage('The current programme, staffing and arrivals were cleared and saved. Programme Files were kept.')
+  }
+
   function flatLabel(flatId: string) {
     const [building, flat] = flatId.split('-')
     return `${accommodationName(Number(building))} · Flat ${flat}`
@@ -4089,8 +4081,9 @@ Build the rota anyway?`
     : []
 
 
-  async function syncRotaToStaff(showMessage = false) {
+  async function performRotaSync(showMessage = false) {
     if (!programme) return
+    const requestedRevision = ++rotaSyncRevisionRef.current
     setCloudSyncStatus('syncing')
 
     const emailByStaffId = new Map(
@@ -4246,7 +4239,12 @@ Build the rota anyway?`
       }
     }
 
-    setCloudSyncStatus('synced')
+    // A newer staffing edit may have been queued while this network request
+    // was running. The queued request will write the newest state; only the
+    // newest completed revision should report the rota as fully synced.
+    if (requestedRevision === rotaSyncRevisionRef.current) {
+      setCloudSyncStatus('synced')
+    }
     if (showMessage) {
       setImportMessage(
         `Synced ${publishedRows.length} duties to staff accounts.${
@@ -4256,6 +4254,35 @@ Build the rota anyway?`
         }`,
       )
     }
+  }
+
+  function syncRotaToStaff(showMessage = false) {
+    // Serialize delete-and-insert cycles. Without this queue, two rapid edits
+    // could overlap: the older request might delete rows after the newer one
+    // inserted them, briefly leaving staff accounts empty or out of date.
+    rotaSyncPromiseRef.current = rotaSyncPromiseRef.current
+      .catch(() => undefined)
+      .then(() => performRotaSync(showMessage))
+    return rotaSyncPromiseRef.current
+  }
+
+  async function clearCloudRotaAssignments() {
+    rotaSyncRevisionRef.current += 1
+    rotaSyncPromiseRef.current = rotaSyncPromiseRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        setCloudSyncStatus('syncing')
+        const { error } = await supabase
+          .from('rota_assignments')
+          .delete()
+          .neq('id', '00000000-0000-0000-0000-000000000000')
+        if (error) {
+          setCloudSyncStatus('error')
+          throw error
+        }
+        setCloudSyncStatus('synced')
+      })
+    return rotaSyncPromiseRef.current
   }
 
   useEffect(() => {
@@ -4663,42 +4690,45 @@ Build the rota anyway?`
     })
   })
 
-  const hasProgramme = Boolean(programme && programme.rows.length > 0)
-  const schoolsOnSite = hasProgramme ? new Set(programme?.rows.map(arrivalSchoolName).filter(Boolean) ?? []).size : 0
-  const todayAvailabilityDay = new Date().toISOString().slice(0, 10)
-  const todayWorkingIds = workingByDay[todayAvailabilityDay]
-  const todayUnavailableIds = unavailableStaffIdsForDay(todayAvailabilityDay)
-  const availableTodayCount = staff.filter((member) =>
-    (!todayWorkingIds || todayWorkingIds.includes(member.id)) && !todayUnavailableIds.has(member.id),
-  ).length
+  // The dashboard must describe the real calendar date, not whichever day is
+  // currently selected on the Staffing page. This keeps Home in step with the
+  // weekly calendar and with changes received from Supabase.
+  const todayIso = dateKey(new Date())
+  const dashboardProgrammeDay = programme
+    ? programmeDays.find((day) => dateForProgrammeDay(programme, day) === todayIso)
+      ?? activeStaffingDay
+    : activeStaffingDay
 
-  // Live dashboard count based on each staff member's individual status.
-  // Working: 08:30–20:30, AM OFF: 12:15–20:30, PM OFF: 08:30–17:15.
-  // OFF, holiday and sick are never counted.
-  const staffCurrentlyOnSiteCount = (() => {
-    const today = dateKey(currentTime)
-    const minutesNow = currentTime.getHours() * 60 + currentTime.getMinutes()
-    const centreOpen = 8 * 60 + 30
-    const amOffStart = 12 * 60 + 15
-    const pmOffEnd = 17 * 60 + 15
-    const centreClose = 20 * 60 + 30
+  const dashboardSchools = useMemo(() => {
+    if (!programme) return [] as string[]
 
-    if (minutesNow < centreOpen || minutesNow > centreClose) return 0
+    const datedSchools = (programme.schoolDetails ?? [])
+      .filter((school) => {
+        const arrival = school.arrivalDate || programme.startDate || ''
+        const departure = school.departureDate || programme.endDate || ''
+        return Boolean(arrival && departure && arrival <= todayIso && departure >= todayIso)
+      })
+      .map((school) => school.schoolName.trim())
+      .filter(Boolean)
 
-    const workingIds = workingByDay[today]
-    const sickIds = new Set(sicknessByDay[today] ?? [])
+    if (datedSchools.length) return Array.from(new Set(datedSchools))
 
-    return staff.filter((member) => {
-      if (workingIds && !workingIds.includes(member.id)) return false
-      if (sickIds.has(member.id)) return false
+    // Older imported programmes do not always have schoolDetails. In that case
+    // use the school labels attached to today's programme rows.
+    return Array.from(new Set(
+      programme.rows
+        .filter((row) => row.day === dashboardProgrammeDay)
+        .map((row) => row.schoolLabel || arrivalSchoolName(row))
+        .map((name) => name.trim())
+        .filter(Boolean),
+    ))
+  }, [programme, dashboardProgrammeDay, todayIso])
 
-      const status = daysOff.find((entry) => entry.staff_id === member.id && entry.day === today)?.status
-      if (status === 'off' || status === 'hol' || status === 'sick') return false
-      if (status === 'am_off') return minutesNow >= amOffStart && minutesNow <= centreClose
-      if (status === 'pm_off') return minutesNow >= centreOpen && minutesNow <= pmOffEnd
-      return minutesNow >= centreOpen && minutesNow <= centreClose
-    }).length
-  })()
+  const schoolsOnSite = dashboardSchools.length
+  const availableTodayCount = dashboardProgrammeDay
+    ? (workingByDay[dashboardProgrammeDay] ?? staff.map((m) => m.id))
+        .filter((id) => !unavailableStaffIdsForDay(dashboardProgrammeDay).has(id)).length
+    : staff.length
   const dailyShortages = programmeDays.map((day) => {
     const required = busiestSessionForDay(day)?.total ?? 0
     const available = (workingByDay[day] ?? staff.map((member) => member.id))
@@ -4773,7 +4803,7 @@ Build the rota anyway?`
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v5.2</span></div><small>Norfolk Lakes</small></div></div>
+          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager v6</h1><span className="release-pill">v6.0.0</span></div><small>Norfolk Lakes</small></div></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -4805,7 +4835,7 @@ Build the rota anyway?`
         </div>
       </header>
 
-      <Nav page={page} setPage={setPage} accountRole={accountRole} />
+      <Nav page={page} setPage={setPage} />
 
       <main className="page-content">
         {importMessage && (
@@ -4817,7 +4847,7 @@ Build the rota anyway?`
             <section className="hero command-hero">
               <div className="hero-copy">
                 <div className="hero-kicker"><ShieldCheck size={17}/><span>Live operations command centre</span></div>
-                <p className="eyebrow">Today at Norfolk Lakes</p>
+                <p className="eyebrow">Today at Norfolk Lakes · {new Date(`${todayIso}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
                 <h2>{programme?.title ?? 'Upload today’s programme'}</h2>
                 <p>
                   Control programme changes, staffing, availability, qualifications
@@ -4835,10 +4865,10 @@ Build the rota anyway?`
               </div>
               <div className="hero-live-card">
                 <span className="live-indicator"><span/>LIVE</span>
-                <strong>{staffCurrentlyOnSiteCount}</strong>
-                <small>staff currently on site</small>
-                <div className={!hasProgramme ? 'hero-alert' : staffingShortages ? 'hero-alert warning' : 'hero-alert ready'}>
-                  {!hasProgramme ? 'No programme loaded' : staffingShortages ? `${staffingShortages} staffing gaps need attention` : 'Programme fully staffed'}
+                <strong>{availableTodayCount}</strong>
+                <small>staff available today{dashboardProgrammeDay ? ` · ${dashboardProgrammeDay}` : ''}</small>
+                <div className={staffingShortages ? 'hero-alert warning' : 'hero-alert ready'}>
+                  {staffingShortages ? `${staffingShortages} staffing gaps need attention` : 'Programme fully staffed'}
                 </div>
               </div>
             </section>
@@ -4856,7 +4886,7 @@ Build the rota anyway?`
                 label="Activity places"
               />
               <Stat icon={<Users />} value={schoolsOnSite} label="Schools on site" />
-              <Stat icon={<UserRoundCheck />} value={staffCurrentlyOnSiteCount} label="Staff currently on site" />
+              <Stat icon={<UserRoundCheck />} value={availableTodayCount} label="Staff available" />
               <Stat icon={<CircleAlert />} value={staffingShortages} label="Staffing shortages" />
               <article className="stat-card busiest-card">
                 <span><CircleAlert /></span>
@@ -4942,58 +4972,14 @@ Build the rota anyway?`
                   <div className="programme-toolbar-actions">
                     <button className="secondary-action" onClick={() => setPage('programmeBuilder')}><CalendarRange size={18}/>Edit programme</button>
                     <button className="primary" onClick={() => void downloadPublishedProgrammeExcel()}><FileSpreadsheet size={18}/>Download Excel</button>
+                    <button className="danger-action" onClick={() => void clearCurrentProgramme()}><Trash2 size={18}/>Clear programme</button>
                   </div>
                 </>
               )}
             </div>
 
             {!programme ? (
-              <>
-                <section className="staffing-no-programme-banner">
-                  <div>
-                    <p className="eyebrow">Availability mode</p>
-                    <h3>No programme loaded</h3>
-                    <p>You can still view and edit this week's staff days off, holidays and sickness. Uploading a programme will restore the normal activity staffing tools.</p>
-                  </div>
-                  <button className="secondary-action" onClick={() => fileInputRef.current?.click()}><Upload size={18}/>Upload programme</button>
-                </section>
-                <div className="day-tabs staffing-day-tabs" role="tablist" aria-label="Availability day">
-                  {availabilityWeekDays.map((day) => (
-                    <button key={day} className={activeStaffingDay === day ? 'active' : ''} onClick={() => setSelectedStaffingDay(day)}>
-                      {new Date(`${day}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
-                    </button>
-                  ))}
-                </div>
-                <section className="staffing-availability-panel">
-                  <div className="staffing-availability-heading">
-                    <div><p className="eyebrow">Staff availability</p><h3>Days Off &amp; Sickness</h3><p>{new Date(`${activeStaffingDay}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p></div>
-                    <button className="secondary-action" onClick={() => setPage('holidays')}>Open full calendar</button>
-                  </div>
-                  <div className="staffing-availability-table">
-                    <div className="availability-table-head">Staff member</div>
-                    <div className="availability-table-head">Role</div>
-                    <div className="availability-table-head">Status</div>
-                    {sortedDaysOffStaff().map((member) => {
-                      const existing = daysOff.find((entry) => memberIdForDayOff(entry) === member.id && entry.day === activeStaffingDay)
-                      const value: DayOffStatus | 'working' = existing?.status ?? 'working'
-                      return <Fragment key={`no-programme-availability-${member.id}`}>
-                        <div className="availability-staff-name"><strong>{member.name}</strong></div>
-                        <div><span className="role-pill">{roleLabel(resolvedRole(member))}</span></div>
-                        <div className={`availability-status status-${value}`}>
-                          <select value={value} disabled={!canManageHolidays && accountRole !== 'teamLeader'} onChange={(event) => void setSingleDayOff(member, activeStaffingDay, event.target.value as DayOffStatus | 'working')}>
-                            <option value="working">Working</option>
-                            {canManageHolidays && <option value="off">OFF</option>}
-                            {canManageHolidays && <option value="hol">HOL</option>}
-                            <option value="sick">SICK</option>
-                            {canManageHolidays && <option value="am_off">AM OFF</option>}
-                            {canManageHolidays && <option value="pm_off">PM OFF</option>}
-                          </select>
-                        </div>
-                      </Fragment>
-                    })}
-                  </div>
-                </section>
-              </>
+              <EmptyProgramme onUpload={() => fileInputRef.current?.click()} />
             ) : (
               <>
                 <ProgrammeGrid
@@ -5028,7 +5014,7 @@ Build the rota anyway?`
         )}
 
         {page === 'programmeArchive' && (
-          <Panel title="Programme Files" onBack={() => setPage('admin')}>
+          <Panel title="Programme Files" onBack={() => setPage('dashboard')}>
             <section className="programme-archive-intro">
               <div><p className="eyebrow">Admin programme filing</p><h3>Search every programme by school, year and month</h3><p>Programmes are filed automatically when they are loaded into the app. Download a complete centre programme or an individual school programme.</p></div>
               <span className="release-pill">v2.10</span>
@@ -5049,38 +5035,7 @@ Build the rota anyway?`
         {page === 'arrivals' && (
           <Panel title="Arrivals" onBack={() => setPage('dashboard')}>
             {!programme ? (
-              <>
-                <section className="staffing-no-programme-banner">
-                  <div>
-                    <p className="eyebrow">Calendar mode</p>
-                    <h3>No programme loaded for these dates</h3>
-                    <p>The staffing calendar remains available so days off, holidays and sickness can still be viewed and managed.</p>
-                  </div>
-                  <button className="secondary-action" onClick={() => fileInputRef.current?.click()}><Upload size={18}/>Upload programme</button>
-                </section>
-                <div className="day-tabs staffing-day-tabs" role="tablist" aria-label="Staffing calendar dates">
-                  {availabilityWeekDays.map((day) => (
-                    <button key={day} className={activeStaffingDay === day ? 'active' : ''} onClick={() => setSelectedStaffingDay(day)}>
-                      {new Date(`${day}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
-                    </button>
-                  ))}
-                </div>
-                <section className="staffing-availability-panel">
-                  <div className="staffing-availability-heading">
-                    <div>
-                      <p className="eyebrow">Daily staffing calendar</p>
-                      <h3>{new Date(`${activeStaffingDay}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</h3>
-                      <p>No programme is loaded for this date. Staff availability can still be managed.</p>
-                    </div>
-                    <button className="primary" onClick={() => setPage('holidays')}><CalendarDays size={18}/>Open full calendar</button>
-                  </div>
-                  <div className="staffing-availability-summary" aria-label="Staff availability summary">
-                    <article><span>Staff total</span><strong>{staff.length}</strong></article>
-                    <article><span>Available</span><strong>{staff.length - unavailableStaffIdsForDay(activeStaffingDay).size}</strong></article>
-                    <article><span>Unavailable</span><strong>{unavailableStaffIdsForDay(activeStaffingDay).size}</strong></article>
-                  </div>
-                </section>
-              </>
+              <EmptyProgramme onUpload={() => fileInputRef.current?.click()} />
             ) : (
               <>
                 <section className="arrivals-module-intro">
@@ -5089,7 +5044,7 @@ Build the rota anyway?`
                     <h3>Monday, Wednesday and Friday · Session 3</h3>
                     <p>School names are taken directly from the uploaded programme. Allocate each school to accommodation, choose its Party Leader and staff the groups here.</p>
                   </div>
-                  <span className="release-pill">v3.01</span>
+                  <span className="release-pill">v1.01</span>
                 </section>
 
                 <div className="day-tabs" role="tablist" aria-label="Arrival day">
@@ -5118,7 +5073,10 @@ Build the rota anyway?`
                         <h3>{arrivalRowsForDay.length} school{arrivalRowsForDay.length === 1 ? '' : 's'} detected from the programme</h3>
                         <p>Choose accommodation and a Party Leader for every school, then fill each school separately or fill all schools at once.</p>
                       </div>
-                      <button className="primary" disabled={arrivalRowsForDay.some((row) => !arrivalAssignment(row).leaderId)} onClick={() => autoFillAllArrivalSchools(activeStaffingDay)}><WandSparkles size={18}/>Auto-fill all schools</button>
+                      <div className="arrival-board-actions">
+                        <button className="primary" disabled={arrivalRowsForDay.some((row) => !arrivalAssignment(row).leaderId)} onClick={() => autoFillAllArrivalSchools(activeStaffingDay)}><WandSparkles size={18}/>Auto-fill all schools</button>
+                        <button className="danger-action" onClick={() => clearAllArrivalSchools(activeStaffingDay)}><Trash2 size={18}/>Clear all schools</button>
+                      </div>
                     </section>
 
                     <div className="arrival-cards-grid">
@@ -5182,7 +5140,10 @@ Build the rota anyway?`
                             </div>
 
                             <div className="arrival-actions">
-                              <button className="primary" disabled={!assignment.leaderId} onClick={() => autoFillArrivalSchool(row)}><WandSparkles size={18} />Auto-fill school</button>
+                              <div className="arrival-action-buttons">
+                                <button className="primary" disabled={!assignment.leaderId} onClick={() => autoFillArrivalSchool(row)}><WandSparkles size={18} />Auto-fill school</button>
+                                <button className="danger-action" onClick={() => clearArrivalSchool(row)}><Trash2 size={18}/>Clear school</button>
+                              </div>
                               <span>{assignment.leaderId ? 'One instructor per group where possible; maximum two groups from this school.' : 'Select the Party Leader first.'}</span>
                             </div>
                           </section>
@@ -5200,7 +5161,37 @@ Build the rota anyway?`
           <Panel title="Daily staffing" onBack={() => setPage('dashboard')}>
             {programme && <div className="staffing-date-context"><article><span>Programme</span><strong>{programme.title}</strong><small>{programmeDays.length ? friendlyProgrammeDateRange(dateForProgrammeDay(programme, programmeDays[0]), dateForProgrammeDay(programme, programmeDays[programmeDays.length - 1])) : programme.title}</small></article><article className="today-card"><span>Selected programme date</span><strong>{new Date(`${dateForProgrammeDay(programme, activeStaffingDay)}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</strong></article></div>}
             {!programme ? (
-              <EmptyProgramme onUpload={() => fileInputRef.current?.click()} />
+              <>
+                <section className="staffing-no-programme-banner">
+                  <div>
+                    <p className="eyebrow">Daily staffing calendar</p>
+                    <h3>No programme loaded for this date</h3>
+                    <p>The calendar remains available so you can review staff availability before loading a programme.</p>
+                  </div>
+                  <button className="primary" onClick={() => fileInputRef.current?.click()}>Upload programme</button>
+                </section>
+                <div className="staffing-controls">
+                  <div className="day-tabs staffing-day-tabs" role="tablist" aria-label="Staffing date">
+                    {availabilityWeekDays.map((day) => (
+                      <button key={day} className={activeStaffingDay === day ? 'active' : ''} onClick={() => setSelectedStaffingDay(day)}>
+                        {new Date(`${day}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <section className="staffing-calendar-wrap" aria-label="Availability calendar">
+                  <div className="staffing-calendar" style={{ gridTemplateColumns: 'minmax(220px, 1fr) minmax(180px, 0.5fr)' }}>
+                    <div className="staffing-calendar-corner">Staff member</div>
+                    <div className="staffing-calendar-corner">Status</div>
+                    {staff.map((member) => {
+                      const status = daysOff.find((entry) => memberIdForDayOff(entry) === member.id && entry.day === activeStaffingDay)?.status
+                      const label = status === 'hol' ? 'Holiday' : status === 'sick' ? 'Sick' : status === 'am_off' ? 'AM off' : status === 'pm_off' ? 'PM off' : status === 'off' ? 'Off' : 'Working'
+                      return <Fragment key={member.id}><div className="staffing-calendar-cell"><strong>{member.name}</strong><small>{roleLabel(resolvedRole(member))}</small></div><div className="staffing-calendar-cell"><strong>{label}</strong></div></Fragment>
+                    })}
+                  </div>
+                </section>
+                <div className="staffing-actions"><button className="primary" onClick={() => setPage('holidays')}>Manage Days Off &amp; Sickness</button></div>
+              </>
             ) : (
               <>
                 <div className="staffing-view-toolbar">
@@ -5619,12 +5610,12 @@ Build the rota anyway?`
                     <div className="builder-section-heading"><strong>School {index + 1}</strong><label className="builder-lock"><input type="checkbox" checked={school.locked} onChange={(event) => updateBuilderSchool(school.id, { locked: event.target.checked })}/>Lock programme</label></div>
                     <label>School name<input value={school.name} onChange={(event) => updateBuilderSchool(school.id, { name: event.target.value })} placeholder="School name"/></label>
                     <label>Programme name<input value={school.programmeName} onChange={(event) => updateBuilderSchool(school.id, { programmeName: event.target.value })} placeholder="e.g. Oakwood School – July"/></label>
-                    <div className="builder-form-grid"><label>Purchase type<select value={school.purchaseType} onChange={(event) => updateBuilderSchool(school.id, { purchaseType: event.target.value as ProgrammePurchaseType })}><option value="normal">Normal Package</option><option value="bargain">Bargain Special</option></select></label><label>Arrival date<input type="date" min={programmeBuilder.startDate} max={programmeBuilder.endDate} value={school.arrivalDate} onChange={(event) => updateBuilderSchool(school.id, { arrivalDate: event.target.value })}/></label><label>Departure date<input type="date" min={school.arrivalDate || programmeBuilder.startDate} max={programmeBuilder.endDate} value={school.departureDate} onChange={(event) => updateBuilderSchool(school.id, { departureDate: event.target.value })}/></label></div>
+                    <div className="builder-form-grid"><label>Purchase type<select value={school.purchaseType} onChange={(event) => updateBuilderSchool(school.id, { purchaseType: event.target.value as ProgrammePurchaseType })}><option value="bargain">Bargain Special</option><option value="super">Super Break</option><option value="outdoor">Outdoor Challenge</option></select></label><label>Arrival date<input type="date" min={programmeBuilder.startDate} max={programmeBuilder.endDate} value={school.arrivalDate} onChange={(event) => updateBuilderSchool(school.id, { arrivalDate: event.target.value })}/></label><label>Departure date<input type="date" min={school.arrivalDate || programmeBuilder.startDate} max={programmeBuilder.endDate} value={school.departureDate} onChange={(event) => updateBuilderSchool(school.id, { departureDate: event.target.value })}/></label></div>
                     <label>Programme notes<textarea rows={3} value={school.notes} onChange={(event) => updateBuilderSchool(school.id, { notes: event.target.value })} placeholder="Notes for this school only…"/></label>
-                    <label>Number of groups<input type="number" min="1" max="30" value={school.groups} onChange={(event) => updateBuilderSchool(school.id, { groups: Math.max(1, Number(event.target.value) || 1) })}/></label>
+                    <div className="builder-form-grid"><label>Number of children<input type="number" min="1" max="500" value={school.children ?? 12} onChange={(event) => updateBuilderSchool(school.id, { children: Math.max(1, Number(event.target.value) || 1) })}/></label><label>Grouping method<select value={school.groupingMode ?? 'balanced'} onChange={(event) => updateBuilderSchool(school.id, { groupingMode: event.target.value as 'balanced' | 'override' })}><option value="balanced">Keep within 1:12</option><option value="override">Manual ratio override</option></select></label><label>Number of groups<input type="number" min="1" max="30" value={school.groups} onChange={(event) => updateBuilderSchool(school.id, { groups: Math.max(1, Number(event.target.value) || 1), groupingMode: 'override' })}/></label></div><div className="builder-group-summary"><strong>Group sizes:</strong> {(school.groupSizes?.length ? school.groupSizes : balancedGroupSizes(school.children ?? 12, school.groups)).map((size, groupIndex) => <span key={groupIndex} className={size > 12 ? 'ratio-warning' : ''}>G{groupIndex + 1}: {size}</span>)} {(school.groupSizes ?? []).some((size) => size > 12) && <em>Ratio override required</em>}</div>
                     <div><strong>First-choice activities</strong><p className="builder-help">Select the activities requested by the school. There is no separate first-choice field.</p><div className="builder-activity-chips">{activities.filter((activity) => activity.code !== 'Z').map((activity) => { const active = school.requestedActivities.includes(activity.code); return <button type="button" key={activity.code} className={active ? 'chip active' : 'chip'} onClick={() => updateBuilderSchool(school.id, { requestedActivities: active ? school.requestedActivities.filter((code) => code !== activity.code) : [...school.requestedActivities, activity.code] })}>{activity.code}<small>{activity.name}</small></button> })}</div></div>
                     <div className="builder-form-grid"><label>Backup option 1<select value={school.backupOption1} onChange={(event) => updateBuilderSchool(school.id, { backupOption1: event.target.value })}><option value="">No backup selected</option>{activities.filter((activity) => activity.code !== 'Z').map((activity) => <option key={activity.code} value={activity.code}>{activity.code} – {activity.name}</option>)}</select></label><label>Backup option 2<select value={school.backupOption2} onChange={(event) => updateBuilderSchool(school.id, { backupOption2: event.target.value })}><option value="">No backup selected</option>{activities.filter((activity) => activity.code !== 'Z').map((activity) => <option key={activity.code} value={activity.code}>{activity.code} – {activity.name}</option>)}</select></label></div>
-                    <div className="builder-school-actions"><button className="secondary-action" onClick={() => autoFillProgrammeBuilder(school.id)}><WandSparkles size={17}/>Auto Fill School</button><button className="secondary-action" onClick={() => printSchoolProgramme(school.id)}><Printer size={17}/>School PDF</button><button className="secondary-action" onClick={() => void downloadSchoolProgrammeExcel(school.id)}><FileSpreadsheet size={17}/>School Excel</button></div>
+                    <div className="builder-school-actions"><button className="secondary-action" onClick={() => clearSchoolProgramme(school.id)}><Trash2 size={17}/>Clear Programme</button><button className="secondary-action" onClick={() => autoFillProgrammeBuilder(school.id)}><WandSparkles size={17}/>Auto Fill School</button><button className="secondary-action" onClick={() => printSchoolProgramme(school.id)}><Printer size={17}/>School PDF</button><button className="secondary-action" onClick={() => void downloadSchoolProgrammeExcel(school.id)}><FileSpreadsheet size={17}/>School Excel</button></div>
                     {programmeBuilder.schools.length > 1 && <button className="icon-button small" title="Remove school" onClick={() => removeBuilderSchool(school.id)}><Trash2 size={16}/></button>}
                   </article>)}</div>
                 </section>
@@ -5632,7 +5623,7 @@ Build the rota anyway?`
                 {programmeBuilder.schools.some((school) => school.purchaseType === 'bargain') && <section className="builder-section bargain-rules"><div className="builder-section-heading"><div><p className="eyebrow">Bargain Special rules</p><h3>Package limits</h3></div></div><label className="builder-limit-field">Maximum sessions per group<input type="number" min="1" max="35" value={programmeBuilder.bargainSessionLimit} onChange={(event) => updateProgrammeBuilder({ bargainSessionLimit: Math.max(1, Number(event.target.value) || 1) })}/></label><p>Select the activities included in this package. These can be updated when you provide the Bargain Special reference sheet.</p><div className="builder-activity-chips">{activities.map((activity) => { const active = programmeBuilder.bargainAllowedActivities.includes(activity.code); return <button key={activity.code} className={active ? 'chip active' : 'chip'} onClick={() => updateProgrammeBuilder({ bargainAllowedActivities: active ? programmeBuilder.bargainAllowedActivities.filter((code) => code !== activity.code) : [...programmeBuilder.bargainAllowedActivities, activity.code] })} title={activity.name}>{activity.code}<small>{activity.name}</small></button> })}</div></section>}
 
                 <section className="builder-section">
-                  <div className="builder-section-heading"><div><p className="eyebrow">Programme grid</p><h3>Assign activities</h3></div><span>{builderGroups.length} groups · {builderDays.length} days</span></div>
+                  <div className="builder-section-heading"><div><p className="eyebrow">Programme grid</p><h3>Assign activities</h3></div><div className="builder-heading-actions"><button className="primary" onClick={updateWholeProgramme}><WandSparkles size={17}/>Auto Fill Programme</button><span>{builderGroups.length} groups · {builderDays.length} days</span><button className="secondary-action" onClick={clearWholeProgramme}><Trash2 size={17}/>Clear Week</button></div></div>
                   <div className="builder-grid-wrap"><table className="builder-grid"><thead><tr><th>Day</th><th>Session</th>{builderGroups.map(({ group, school }) => <th key={group}>G{group}<small>{school.name || 'School'}</small></th>)}</tr></thead><tbody>{builderDays.flatMap((dayInfo) => BUILDER_SESSIONS.map((session) => <tr key={`${dayInfo.day}-${session}`}><th>{dayInfo.label}</th><th>S{session}</th>{builderGroups.map(({ group, school }) => { const state = builderSchoolSessionState(school, dayInfo.date, session); const value = programmeBuilder.assignments[builderAssignmentKey(dayInfo.day, session, group)] ?? ''; const options = school.purchaseType === 'bargain' ? activities.filter((activity) => programmeBuilder.bargainAllowedActivities.includes(activity.code)) : activities; return <td key={group} className={`builder-state-${state}`} onDragOver={state === 'activity' ? (event) => event.preventDefault() : undefined} onDrop={state === 'activity' ? () => dropBuilderActivity(dayInfo.day, session, group, school.id) : undefined}>{state === 'arrival' ? <strong>{school.name || 'School'} – Arrival</strong> : state === 'departed' ? <span>Departed</span> : state === 'offsite' ? <span>Not on site</span> : <div className="builder-draggable-cell" draggable={Boolean(value)} onDragStart={() => value && setDraggedBuilderActivity({ key: builderAssignmentKey(dayInfo.day, session, group), code: value, schoolId: school.id })}><select className={programmeBuilder.manualLocks[builderAssignmentKey(dayInfo.day, session, group)] ? 'manual-locked' : ''} title={programmeBuilder.manualLocks[builderAssignmentKey(dayInfo.day, session, group)] ? 'Manual change locked' : 'Automatic activity'} value={value} onChange={(event) => setBuilderActivity(dayInfo.day, session, group, event.target.value)}><option value="">—</option>{options.filter((activity) => school.requestedActivities.includes(activity.code) || activity.code === value).map((activity) => <option key={activity.code} value={activity.code}>{activity.code} – {activity.name}</option>)}</select></div>}</td> })}</tr>))}</tbody></table></div>
 
                   <div className="builder-update-actions"><div><strong>Manual changes are protected</strong><p>Any activity you change is locked. Update Programme rearranges only the remaining sessions.</p></div><div><button className="secondary-action" onClick={resetProgrammeLocks}>Reset Locks</button><button className="primary" onClick={updateWholeProgramme}><WandSparkles size={17}/>Update Programme</button></div></div>
@@ -5652,16 +5643,12 @@ Build the rota anyway?`
         )}
 
         {page === 'admin' && (
-          <Panel title="Admin" onBack={isAdminAccount ? undefined : () => setPage('dashboard')}>
+          <Panel title="Admin" onBack={() => setPage('dashboard')}>
             <section className="admin-choice-grid">
-              <button className="admin-choice-card programme-builder-card" onClick={() => setPage('programmeArchive')}>
-                <Archive size={34} />
-                <div><h3>Programme Files</h3><p>Search programmes by school, year and month, then download school or complete centre files.</p></div>
-              </button>
-              {!isAdminAccount && <section className="display-manager-card"><div><Monitor size={34}/><div><h3>Display Manager</h3><p>Open or copy the live read-only links for screens around the centre.</p></div></div><div className="display-link-list">{([['Staff room','staff-room'],['Manager','manager'],['Programme','programme']] as const).map(([label,mode]) => { const url = new URL(window.location.href); url.searchParams.set('display',mode); return <article key={mode}><strong>{label}</strong><code>{url.toString()}</code><button onClick={() => window.open(url.toString(),'_blank','noopener,noreferrer')}>Open</button><button onClick={() => { void navigator.clipboard.writeText(url.toString()); setImportMessage(`${label} display link copied.`) }}>Copy link</button></article> })}</div></section>}
+              <section className="display-manager-card"><div><Monitor size={34}/><div><h3>Display Manager</h3><p>Open or copy the live read-only links for screens around the centre.</p></div></div><div className="display-link-list">{([['Staff room','staff-room'],['Manager','manager'],['Programme','programme']] as const).map(([label,mode]) => { const url = new URL(window.location.href); url.searchParams.set('display',mode); return <article key={mode}><strong>{label}</strong><code>{url.toString()}</code><button onClick={() => window.open(url.toString(),'_blank','noopener,noreferrer')}>Open</button><button onClick={() => { void navigator.clipboard.writeText(url.toString()); setImportMessage(`${label} display link copied.`) }}>Copy link</button></article> })}</div></section>
               {canManageStaff && <button className="admin-choice-card programme-builder-card" onClick={() => setPage('programmeBuilder')}>
                 <CalendarRange size={34} />
-                <div><h3>Programme Builder</h3><p>Design Bargain Special or Normal Purchase programmes, preview them and publish them.</p></div>
+                <div><h3>Programme Builder</h3><p>Design Bargain Special, Super Break or Outdoor Challenge programmes with SOP checks, group ratios and water balancing.</p></div>
               </button>}
               {canManageStaff && <button className="admin-choice-card" onClick={() => setPage('activitiesEquipment')}>
                 <ClipboardList size={34} />
@@ -5671,16 +5658,15 @@ Build the rota anyway?`
                 <Users size={34} />
                 <div><h3>Staff</h3><p>Manage staff accounts, roles and availability.</p></div>
               </button>}
-              {!isAdminAccount && <button className="admin-choice-card" onClick={() => setPage('signoffs')}>
+              <button className="admin-choice-card" onClick={() => setPage('signoffs')}>
                 <ShieldCheck size={34} />
                 <div><h3>Sign-off</h3><p>Search staff and manage activity sign-offs.</p></div>
-              </button>}
+              </button>
               {canViewLogs && <button className="admin-choice-card" onClick={() => setPage('logs')}>
                 <ClipboardList size={34} />
                 <div><h3>Logs</h3><p>Review water-lead permission confirmations.</p></div>
               </button>}
               {canViewLogs && <button className="admin-choice-card" onClick={() => setPage('staffingLogs')}><FileSpreadsheet size={34}/><div><h3>Staffing Logs</h3><p>Locked weekly staffing records and historical downloads.</p></div></button>}
-              {canManageStaff && <section className="display-manager-card admin-account-card"><div><Users size={34}/><div><h3>Admin Account</h3><p>Give an existing signed-up account access to Admin → Programme Files only.</p></div></div><div className="admin-account-form"><input type="email" value={adminAccountEmail} onChange={(event) => setAdminAccountEmail(event.target.value)} placeholder="admin@school.co.uk"/><button className="primary" disabled={adminAccountBusy || !adminAccountEmail.trim()} onClick={() => void makeAdminAccount()}>{adminAccountBusy ? 'Saving…' : 'Give Admin Access'}</button></div></section>}
               {canManageStaff && <button className="admin-choice-card" onClick={() => setPage('formerStaff')}><History size={34}/><div><h3>Former Staff</h3><p>Employment start and leaving records.</p></div></button>}
               {canManageStaff && <button className="admin-choice-card" onClick={() => setPage('loanHistory')}><Users size={34}/><div><h3>Loan Staff History</h3><p>Reactivate loan staff or add them permanently.</p></div></button>}
             </section>
@@ -6357,15 +6343,15 @@ function Panel({
   children,
 }: {
   title: string
-  onBack?: () => void
+  onBack: () => void
   children: React.ReactNode
 }) {
   return (
     <section className="panel">
-      {onBack && <button className="back" onClick={onBack}>
+      <button className="back" onClick={onBack}>
         <ChevronLeft size={18} />
         Back
-      </button>}
+      </button>
       <h2>{title}</h2>
       {children}
     </section>

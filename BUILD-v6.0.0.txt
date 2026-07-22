@@ -1,0 +1,10 @@
+Adventure Centre Manager v6.0.0
+
+Programme Builder changes:
+- Auto Fill Programme button added above the programme grid.
+- Programme Test runs after Auto Fill and Update Programme.
+- Groups in the same school are checked for matching activity sets.
+- Standard activities are checked for unintended duplicates.
+- Super Break and Outdoor Challenge Canoe/Kayak use two-session blocks.
+- Bargain Special Canoe/Kayak use one consecutive paired block.
+- Backup activities remain available and are used only when requested activities cannot be placed.
