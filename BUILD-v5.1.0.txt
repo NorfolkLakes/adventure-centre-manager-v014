@@ -1,0 +1,9 @@
+Adventure Centre Manager v5.1.0
+
+Programme Builder water scheduling update based on uploaded Norfolk Lakes programmes:
+- Canoe and Kayak are scheduled as consecutive 1+2 or 3+4 session blocks.
+- Groups in a batch complete the same discipline together, then change together.
+- Four groups are balanced as G1/G2 in one block and G3/G4 in the other where possible.
+- Uses configured activity capacities, so more than two groups may run when allowed.
+- Manual programme locks are preserved.
+- Fixed an ordering bug that could clear automatically placed Canoe/Kayak cells.

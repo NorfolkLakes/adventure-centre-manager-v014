@@ -2101,71 +2101,83 @@ function ManagerApp({
       return running >= capacity
     }
 
-    // Canoeing and kayaking are one linked two-session rotation. Two groups
-    // swap activities in the immediately following session. Existing manual rotations
-    // are recognised as complete so Update Programme never adds an extra canoe/kayak.
+    // Clear only unlocked cells for this school before rebuilding. Manual cells are preserved.
+    for (const { group } of schoolGroups) {
+      for (const slot of activitySlots) {
+        const key = builderAssignmentKey(slot.day, slot.session, group)
+        if (!(preserveManual && programmeBuilder.manualLocks[key])) next[key] = ''
+      }
+    }
+
+    // Real Norfolk Lakes pattern learned from uploaded programmes:
+    // every selected group completes Canoe and Kayak as one consecutive block.
+    // Valid blocks are Sessions 1+2 or Sessions 3+4 only. Groups in the same
+    // batch do the same discipline together, then change discipline together.
+    // The scheduler balances batches over both blocks on a day (for four groups,
+    // normally G1/G2 in 1+2 and G3/G4 in 3+4), while still respecting configured
+    // activity capacities and any manual locks.
     const pairedWaterGroups = new Set<number>()
     if (allowed.includes('CANOE') && allowed.includes('KAYAK')) {
-      const availablePairs = [...activitySlots]
-        .sort((a, b) => a.priority - b.priority || a.date.localeCompare(b.date) || Number(a.session) - Number(b.session))
+      const blockStarts = new Set(['1', '3'])
+      const availableBlocks = activitySlots
+        .filter((slot) => blockStarts.has(slot.session))
         .flatMap((first) => {
-          const second = activitySlots.find((candidate) => candidate.day === first.day && Number(candidate.session) === Number(first.session) + 1)
+          const secondSession = String(Number(first.session) + 1)
+          const second = activitySlots.find((candidate) => candidate.date === first.date && candidate.session === secondSession)
           return second ? [{ first, second }] : []
         })
+        .sort((a, b) => a.first.priority - b.first.priority || a.first.date.localeCompare(b.first.date) || Number(a.first.session) - Number(b.first.session))
 
-      for (let index = 0; index + 1 < schoolGroups.length; index += 2) {
-        const firstGroup = schoolGroups[index].group
-        const secondGroup = schoolGroups[index + 1].group
-
-        const completedManualPair = availablePairs.find(({ first, second }) => {
-          const values = [
-            next[builderAssignmentKey(first.day, first.session, firstGroup)],
-            next[builderAssignmentKey(first.day, first.session, secondGroup)],
-            next[builderAssignmentKey(second.day, second.session, firstGroup)],
-            next[builderAssignmentKey(second.day, second.session, secondGroup)],
-          ]
-          const forward = values[0] === 'KAYAK' && values[1] === 'CANOE' && values[2] === 'CANOE' && values[3] === 'KAYAK'
-          const reverse = values[0] === 'CANOE' && values[1] === 'KAYAK' && values[2] === 'KAYAK' && values[3] === 'CANOE'
-          return forward || reverse
+      const unscheduledGroups = schoolGroups.map((entry) => entry.group).filter((group) => {
+        const manualComplete = availableBlocks.some(({ first, second }) => {
+          const firstValue = next[builderAssignmentKey(first.day, first.session, group)]
+          const secondValue = next[builderAssignmentKey(second.day, second.session, group)]
+          return (firstValue === 'CANOE' && secondValue === 'KAYAK') || (firstValue === 'KAYAK' && secondValue === 'CANOE')
         })
-        if (completedManualPair) {
-          pairedWaterGroups.add(firstGroup)
-          pairedWaterGroups.add(secondGroup)
-          availablePairs.splice(availablePairs.indexOf(completedManualPair), 1)
-          continue
+        if (manualComplete) pairedWaterGroups.add(group)
+        return !manualComplete
+      })
+
+      const capacityPerBlock = Math.max(1, Math.min(activityCapacity('CANOE'), activityCapacity('KAYAK')))
+      const blocksByDate = new Map<string, typeof availableBlocks>()
+      for (const block of availableBlocks) blocksByDate.set(block.first.date, [...(blocksByDate.get(block.first.date) ?? []), block])
+      const orderedBlocks = Array.from(blocksByDate.values()).flatMap((dayBlocks) => {
+        const sorted = [...dayBlocks].sort((a, b) => Number(a.first.session) - Number(b.first.session))
+        return sorted
+      })
+
+      let remaining = [...unscheduledGroups]
+      for (let blockIndex = 0; blockIndex < orderedBlocks.length && remaining.length; blockIndex += 1) {
+        const block = orderedBlocks[blockIndex]
+        const remainingBlocks = orderedBlocks.length - blockIndex
+        // Balance groups across remaining blocks rather than filling the first block to capacity.
+        const balancedSize = Math.ceil(remaining.length / remainingBlocks)
+        const targetSize = Math.min(capacityPerBlock, Math.max(1, balancedSize))
+        const candidates = remaining.slice(0, targetSize)
+        const firstCode = blockIndex % 2 === 0 ? 'CANOE' : 'KAYAK'
+        const secondCode = firstCode === 'CANOE' ? 'KAYAK' : 'CANOE'
+        const accepted: number[] = []
+
+        for (const group of candidates) {
+          const firstKey = builderAssignmentKey(block.first.day, block.first.session, group)
+          const secondKey = builderAssignmentKey(block.second.day, block.second.session, group)
+          if (preserveManual && (programmeBuilder.manualLocks[firstKey] || programmeBuilder.manualLocks[secondKey])) continue
+          if (activityAtCapacity(block.first.day, block.first.session, firstCode, firstKey)) continue
+          if (activityAtCapacity(block.second.day, block.second.session, secondCode, secondKey)) continue
+          next[firstKey] = firstCode
+          next[secondKey] = secondCode
+          accepted.push(group)
+          pairedWaterGroups.add(group)
         }
-
-        const pair = availablePairs.find(({ first, second }) => {
-          const keys = [
-            builderAssignmentKey(first.day, first.session, firstGroup),
-            builderAssignmentKey(first.day, first.session, secondGroup),
-            builderAssignmentKey(second.day, second.session, firstGroup),
-            builderAssignmentKey(second.day, second.session, secondGroup),
-          ]
-          if (preserveManual && keys.some((key) => programmeBuilder.manualLocks[key])) return false
-          return !activityAtCapacity(first.day, first.session, 'KAYAK', keys[0])
-            && !activityAtCapacity(first.day, first.session, 'CANOE', keys[1])
-            && !activityAtCapacity(second.day, second.session, 'CANOE', keys[2])
-            && !activityAtCapacity(second.day, second.session, 'KAYAK', keys[3])
-        })
-        if (!pair) continue
-        next[builderAssignmentKey(pair.first.day, pair.first.session, firstGroup)] = 'KAYAK'
-        next[builderAssignmentKey(pair.first.day, pair.first.session, secondGroup)] = 'CANOE'
-        next[builderAssignmentKey(pair.second.day, pair.second.session, firstGroup)] = 'CANOE'
-        next[builderAssignmentKey(pair.second.day, pair.second.session, secondGroup)] = 'KAYAK'
-        pairedWaterGroups.add(firstGroup)
-        pairedWaterGroups.add(secondGroup)
-        availablePairs.splice(availablePairs.indexOf(pair), 1)
+        remaining = remaining.filter((group) => !accepted.includes(group))
       }
     }
 
     for (const { group } of schoolGroups) {
       const unlockedSlots = activitySlots.filter((slot) => {
         const key = builderAssignmentKey(slot.day, slot.session, group)
-        return !(preserveManual && programmeBuilder.manualLocks[key])
+        return !(preserveManual && programmeBuilder.manualLocks[key]) && !next[key]
       })
-      for (const slot of unlockedSlots) next[builderAssignmentKey(slot.day, slot.session, group)] = ''
-
       const sortedSlots = [...unlockedSlots].sort((a, b) => a.priority - b.priority || a.date.localeCompare(b.date) || Number(a.session) - Number(b.session))
       const alreadyAssigned = new Set(
         activitySlots
@@ -2178,20 +2190,6 @@ function ManagerApp({
         !alreadyAssigned.has(code) &&
         !(pairedWaterGroups.has(group) && (code === 'CANOE' || code === 'KAYAK')),
       )
-      const campfireIndex = queue.indexOf('CF')
-      if (campfireIndex >= 0) {
-        queue.splice(campfireIndex, 1)
-        const campfireSlot = [...sortedSlots].filter((slot) => slot.session === '5').sort((a, b) => b.date.localeCompare(a.date))[0]
-        if (campfireSlot) {
-          const key = builderAssignmentKey(campfireSlot.day, campfireSlot.session, group)
-          if (!activityAtCapacity(campfireSlot.day, campfireSlot.session, 'CF', key)) {
-            next[key] = 'CF'
-            sortedSlots.splice(sortedSlots.indexOf(campfireSlot), 1)
-          } else queue.push('CF')
-        }
-      }
-
-
 
       for (const slot of sortedSlots) {
         if (!queue.length) break
@@ -2203,6 +2201,7 @@ function ManagerApp({
         next[key] = code
       }
     }
+
     // Campfire and Disco are whole-school evening activities. Put them together in Session 5,
     // as late in the stay as possible, without overwriting a manager's locked cell.
     const selectedCollective = allowed.includes('CF') ? 'CF' : allowed.includes('DISCO') ? 'DISCO' : ''
@@ -4788,7 +4787,7 @@ Do you want to build the rota anyway?`
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v5.0.0</span></div><small>Norfolk Lakes</small></div></div>
+          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager v4</h1><span className="release-pill">v5.1</span></div><small>Norfolk Lakes</small></div></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -4941,11 +4940,11 @@ Do you want to build the rota anyway?`
           <Panel title="Programme grid" onBack={() => setPage('dashboard')}>
             <div className="programme-toolbar">
               <div className="programme-upload-actions">
-                <button className="primary" onClick={() => { setProgrammeBuilderScreen('library'); setPage('programmeBuilder') }}>
-                  <CalendarRange size={18} /> Programme Library
+                <button className="primary" onClick={() => fileInputRef.current?.click()}>
+                  <Upload size={18} /> Upload Excel programme
                 </button>
-                <button className="secondary-action" onClick={() => fileInputRef.current?.click()}>
-                  <Upload size={18} /> Upload Programme
+                <button className="secondary-action" onClick={() => appProgrammeInputRef.current?.click()}>
+                  <Upload size={18} /> Upload app programme
                 </button>
               </div>
               {programme && (
