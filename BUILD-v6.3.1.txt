@@ -1,0 +1,8 @@
+Adventure Centre Manager v6.3.1
+
+Fixes the school activity request layout:
+- schools stack vertically
+- each school uses full width
+- land activities display exactly four across
+- checkboxes sit beside labels
+- paper-form order is preserved

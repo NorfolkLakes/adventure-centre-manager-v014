@@ -5115,7 +5115,7 @@ Do you want to build the rota anyway?`
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager v6.3</h1><span className="release-pill">v6.3.0</span></div><small>Norfolk Lakes</small></div></div>
+          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager v6.3.1</h1><span className="release-pill">v6.3.1</span></div><small>Norfolk Lakes</small></div></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">

@@ -1893,10 +1893,64 @@ button { cursor: pointer; }
 .builder-group-summary{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin:.65rem 0 1rem;padding:.75rem;border:1px solid #d7dde5;border-radius:10px;background:#f8fafc}.builder-group-summary span{padding:.3rem .55rem;border-radius:999px;background:white;border:1px solid #d7dde5;font-weight:700}.builder-group-summary .ratio-warning{border-color:#dc2626;background:#fef2f2;color:#991b1b}.builder-group-summary em{color:#b91c1c;font-weight:800;font-style:normal}.builder-school-actions{flex-wrap:wrap}
 
 
-/* v6.3: schools stacked vertically; exact four-column paper-form order */
-.builder-school-grid{grid-template-columns:minmax(0,1fr)!important;align-items:start}
-.builder-school-card{width:100%;min-width:0}
-.school-activity-grid{grid-template-columns:repeat(4,minmax(0,1fr))!important;overflow:visible!important}
+/* v6.3.1: schools stacked vertically; paper-form activity grid */
+.builder-school-grid{
+  display:grid;
+  grid-template-columns:minmax(0,1fr)!important;
+  align-items:start;
+  gap:18px;
+}
+.builder-school-card{
+  width:100%;
+  min-width:0;
+}
+.school-activity-section{
+  display:grid;
+  gap:10px;
+  margin-top:4px;
+}
+.school-activity-section h4{
+  margin:0;
+}
+.school-activity-grid{
+  display:grid!important;
+  grid-template-columns:repeat(4,minmax(0,1fr))!important;
+  gap:8px 14px;
+  width:100%;
+  overflow:visible!important;
+}
+.school-activity-option{
+  display:flex!important;
+  flex-direction:row!important;
+  align-items:center;
+  gap:9px;
+  min-width:0;
+  padding:9px 10px;
+  border:1px solid #d7e1dd;
+  border-radius:10px;
+  background:#fff;
+  cursor:pointer;
+  font-weight:700;
+  line-height:1.2;
+}
+.school-activity-option input{
+  flex:0 0 auto;
+  width:17px;
+  height:17px;
+  margin:0;
+}
+.school-activity-option span{
+  min-width:0;
+}
+.school-activity-option.active{
+  border-color:#16745f;
+  background:#eaf7f1;
+  color:#0f5848;
+}
 @media(max-width:900px){
-  .school-activity-grid{grid-template-columns:repeat(4,minmax(155px,1fr))!important;overflow-x:auto!important;padding-bottom:6px}
+  .school-activity-grid{
+    grid-template-columns:repeat(4,minmax(155px,1fr))!important;
+    overflow-x:auto!important;
+    padding-bottom:6px;
+  }
 }
