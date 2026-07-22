@@ -1888,3 +1888,6 @@ button { cursor: pointer; }
 @media (max-width: 720px) {
   .staffing-no-programme-banner { align-items: stretch; flex-direction: column; }
 }
+
+/* Version 4 programme builder */
+.builder-group-summary{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin:.65rem 0 1rem;padding:.75rem;border:1px solid #d7dde5;border-radius:10px;background:#f8fafc}.builder-group-summary span{padding:.3rem .55rem;border-radius:999px;background:white;border:1px solid #d7dde5;font-weight:700}.builder-group-summary .ratio-warning{border-color:#dc2626;background:#fef2f2;color:#991b1b}.builder-group-summary em{color:#b91c1c;font-weight:800;font-style:normal}.builder-school-actions{flex-wrap:wrap}

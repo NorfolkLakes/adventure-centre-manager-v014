@@ -1,4 +1,4 @@
-// Adventure Centre Manager v2.2 — live serialized rota synchronisation
+// Adventure Centre Manager v4 v2.2 — live serialized rota synchronisation
 import { ChangeEvent, Fragment, KeyboardEvent, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Building2,
@@ -199,8 +199,8 @@ const PROGRAMME_BUILDER_KEY = 'acm-programme-builder-draft'
 const PROGRAMME_LIBRARY_KEY = 'acm-programme-library'
 const PROGRAMME_ARCHIVE_KEY = 'acm-programme-archive-v1'
 
-type ProgrammePurchaseType = 'bargain' | 'normal'
-type BuilderSchool = { id: string; name: string; programmeName: string; purchaseType: ProgrammePurchaseType; arrivalDate: string; departureDate: string; notes: string; groups: number; requestedActivities: string[]; backupOption1: string; backupOption2: string; locked: boolean }
+type ProgrammePurchaseType = 'bargain' | 'super' | 'outdoor'
+type BuilderSchool = { id: string; name: string; programmeName: string; purchaseType: ProgrammePurchaseType; arrivalDate: string; departureDate: string; notes: string; children: number; groups: number; groupingMode: 'balanced' | 'override'; groupSizes: number[]; requestedActivities: string[]; backupOption1: string; backupOption2: string; locked: boolean }
 type ProgrammeBuilderDraft = {
   name: string
   startDate: string
@@ -218,7 +218,7 @@ type SavedProgramme = { id: string; title: string; startDate: string; endDate: s
 type ArchivedProgramme = ProgrammeImport & { archiveId: string; archivedAt: string }
 
 const DEFAULT_BARGAIN_CODES = ['CANOE', 'KAYAK', 'ARCH', 'BT', 'VB', 'MO', 'OC', 'LR', 'AIR', 'CF', 'DISCO']
-const ACTIVITY_CAPACITY: Record<string, number> = { CLIMB: 2, HR: 2, BT: 2, SAIL: 3, 'SAIL PB': 1, CANOE: 3, GCAN: 3, KAYAK: 3, SUP: 3, GSUP: 3, RAFT: 2, ARCH: 1, RIFLES: 2, CF: 30, DISCO: 30 }
+const ACTIVITY_CAPACITY: Record<string, number> = { CLIMB: 2, HR: 2, BT: 2, SAIL: 3, 'SAIL PB': 1, CANOE: 3, GCAN: 3, KAYAK: 3, SUP: 3, GSUP: 3, RAFT: 2, ARCH: 2, RIFLES: 2, CF: 30, DISCO: 30 }
 const BUILDER_SESSIONS = ['1', '2', '3', '4', '5']
 const BUILDER_DAY_NAMES = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']
 const WEEKDAY_ORDER: Record<string, number> = { MON: 1, MONDAY: 1, TUE: 2, TUES: 2, TUESDAY: 2, WED: 3, WEDNESDAY: 3, THU: 4, THUR: 4, THURS: 4, THURSDAY: 4, FRI: 5, FRIDAY: 5, SAT: 6, SATURDAY: 6, SUN: 7, SUNDAY: 7 }
@@ -233,9 +233,9 @@ function blankProgrammeBuilderDraft(): ProgrammeBuilderDraft {
   friday.setDate(monday.getDate() + 4)
   const iso = (date: Date) => date.toISOString().slice(0, 10)
   return {
-    name: '', startDate: iso(monday), endDate: iso(friday), purchaseType: 'normal',
+    name: '', startDate: iso(monday), endDate: iso(friday), purchaseType: 'bargain',
     bargainSessionLimit: 15, bargainAllowedActivities: DEFAULT_BARGAIN_CODES,
-    schools: [{ id: `school-${Date.now()}`, name: '', programmeName: '', purchaseType: 'normal', arrivalDate: iso(monday), departureDate: iso(friday), notes: '', groups: 1, requestedActivities: [], backupOption1: '', backupOption2: '', locked: false }], assignments: {}, manualLocks: {}, notes: '',
+    schools: [{ id: `school-${Date.now()}`, name: '', programmeName: '', purchaseType: 'bargain', arrivalDate: iso(monday), departureDate: iso(friday), notes: '', children: 12, groups: 1, groupingMode: 'balanced', groupSizes: [12], requestedActivities: [], backupOption1: '', backupOption2: '', locked: false }], assignments: {}, manualLocks: {}, notes: '',
   }
 }
 
@@ -699,7 +699,7 @@ function ManagerApp({
       ...activity,
       colour: activity.colour ?? '#dce8f5',
       equipmentQuantity: activity.equipmentQuantity ?? 0,
-      capacity: activity.code === 'ARCH' ? 1 : Math.max(1, activity.capacity ?? ACTIVITY_CAPACITY[activity.code] ?? 1),
+      capacity: Math.max(1, activity.capacity ?? ACTIVITY_CAPACITY[activity.code] ?? 1),
       enabled: activity.enabled ?? true,
       notes: activity.notes ?? '',
       staffingRuleType: activity.staffingRuleType ?? ({ CF: 'per_x_groups', DISCO: 'per_x_groups', MO: 'per_x_groups', BT: 'per_x_groups' } as Record<string, Activity['staffingRuleType']>)[activity.code] ?? 'per_group',
@@ -720,12 +720,7 @@ function ManagerApp({
     }))
   })
 
-  const activityCapacity = (code: string) => {
-    // Hard SOP limits always win over old saved settings. Archery is one group
-    // per session at Norfolk Lakes and may never be auto-built above that limit.
-    if (code === 'ARCH') return 1
-    return Math.max(1, activities.find((activity) => activity.code === code)?.capacity ?? ACTIVITY_CAPACITY[code] ?? 1)
-  }
+  const activityCapacity = (code: string) => Math.max(1, activities.find((activity) => activity.code === code)?.capacity ?? ACTIVITY_CAPACITY[code] ?? 1)
   const enabledActivities = activities.filter((activity) => activity.enabled !== false && activity.code !== 'Z')
 
   const [programmeBuilder, setProgrammeBuilder] = useState<ProgrammeBuilderDraft>(() => {
@@ -1897,15 +1892,24 @@ function ManagerApp({
       const allStaffIds = staff.map((member) => member.id)
 
       for (const day of days) {
-        // Only initialise a genuinely new day. Never merge everybody back into
-        // an existing day because that silently reverses managers marking staff OFF.
-        if (!Object.prototype.hasOwnProperty.call(next, day)) {
+        if (!next[day]) {
           next[day] = allStaffIds
+          changed = true
+          continue
+        }
+
+        // Any newly imported or newly added staff default to working.
+        const merged = Array.from(new Set([...next[day], ...allStaffIds]))
+        if (merged.length !== next[day].length) {
+          next[day] = merged
           changed = true
         }
       }
 
-      if (changed) localStorage.setItem(WORKING_KEY, JSON.stringify(next))
+      if (changed) {
+        localStorage.setItem(WORKING_KEY, JSON.stringify(next))
+      }
+
       return changed ? next : current
     })
   }
@@ -1984,11 +1988,42 @@ function ManagerApp({
   }
 
   function addBuilderSchool() {
-    updateProgrammeBuilder({ schools: [...programmeBuilder.schools, { id: `school-${Date.now()}`, name: '', programmeName: '', purchaseType: 'normal', arrivalDate: programmeBuilder.startDate, departureDate: programmeBuilder.endDate, notes: '', groups: 1, requestedActivities: [], backupOption1: '', backupOption2: '', locked: false }] })
+    updateProgrammeBuilder({ schools: [...programmeBuilder.schools, { id: `school-${Date.now()}`, name: '', programmeName: '', purchaseType: 'bargain', arrivalDate: programmeBuilder.startDate, departureDate: programmeBuilder.endDate, notes: '', children: 12, groups: 1, groupingMode: 'balanced', groupSizes: [12], requestedActivities: [], backupOption1: '', backupOption2: '', locked: false }] })
+  }
+
+  function balancedGroupSizes(children: number, groups: number) {
+    const safeChildren = Math.max(0, Math.floor(children || 0))
+    const safeGroups = Math.max(1, Math.floor(groups || 1))
+    const base = Math.floor(safeChildren / safeGroups)
+    const remainder = safeChildren % safeGroups
+    return Array.from({ length: safeGroups }, (_, index) => base + (index < remainder ? 1 : 0))
+  }
+
+  function suggestedGroups(children: number) { return Math.max(1, Math.ceil(Math.max(0, children || 0) / 12)) }
+
+  function clearSchoolProgramme(schoolId: string) {
+    const groups = builderGroups.filter((entry) => entry.school.id === schoolId).map((entry) => entry.group)
+    const assignments = Object.fromEntries(Object.entries(programmeBuilder.assignments).filter(([key]) => !groups.includes(Number(key.split('|')[2]))))
+    const manualLocks = Object.fromEntries(Object.entries(programmeBuilder.manualLocks).filter(([key]) => !groups.includes(Number(key.split('|')[2]))))
+    updateProgrammeBuilder({ assignments, manualLocks })
+    setProgrammeBuilderMessage('School programme grid cleared. School details and activity choices were kept.')
+  }
+
+  function clearWholeProgramme() {
+    if (!window.confirm('Clear every activity from the programme grid? School details will be kept.')) return
+    updateProgrammeBuilder({ assignments: {}, manualLocks: {} })
+    setProgrammeBuilderMessage('Programme grid cleared.')
   }
 
   function updateBuilderSchool(id: string, patch: Partial<BuilderSchool>) {
-    updateProgrammeBuilder({ schools: programmeBuilder.schools.map((school) => school.id === id ? { ...school, ...patch } : school) })
+    updateProgrammeBuilder({ schools: programmeBuilder.schools.map((school) => {
+      if (school.id !== id) return school
+      const next = { ...school, ...patch }
+      if (patch.children !== undefined && patch.groups === undefined && next.groupingMode === 'balanced') next.groups = suggestedGroups(next.children)
+      if (patch.groupingMode === 'balanced') next.groups = suggestedGroups(next.children)
+      next.groupSizes = balancedGroupSizes(next.children, next.groups)
+      return next
+    }) })
   }
 
   function removeBuilderSchool(id: string) {
@@ -2528,7 +2563,7 @@ function ManagerApp({
       const data = await file.arrayBuffer()
       const workbook = XLSX.read(data, { type: 'array' })
       const stateSheet = workbook.Sheets['_ACM_DATA']
-      if (!stateSheet) throw new Error('This is not an Adventure Centre Manager app programme. Use Upload Excel programme for ordinary spreadsheets.')
+      if (!stateSheet) throw new Error('This is not an Adventure Centre Manager v4 app programme. Use Upload Excel programme for ordinary spreadsheets.')
       const raw = String(stateSheet.A1?.v ?? '')
       const payload = JSON.parse(raw) as { programme?: ProgrammeImport; draft?: ProgrammeBuilderDraft }
       if (!payload.programme?.rows?.length) throw new Error('The app programme data is incomplete.')
@@ -2596,7 +2631,7 @@ function ManagerApp({
     }, new Map<string, ProgrammeRow>()).values()).sort((a, b) => weekdayRank(a.day) - weekdayRank(b.day) || Number(a.session) - Number(b.session))
 
     const workbook = new ExcelJS.Workbook()
-    workbook.creator = 'Adventure Centre Manager'
+    workbook.creator = 'Adventure Centre Manager v4'
     workbook.company = 'Manor Adventure – Norfolk Lakes'
     workbook.title = title
     workbook.subject = 'Centre Programme'
@@ -4645,8 +4680,9 @@ Do you want to build the rota anyway?`
   // weekly calendar and with changes received from Supabase.
   const todayIso = dateKey(new Date())
   const dashboardProgrammeDay = programme
-    ? programmeDays.find((day) => dateForProgrammeDay(programme, day) === todayIso) ?? ''
-    : todayIso
+    ? programmeDays.find((day) => dateForProgrammeDay(programme, day) === todayIso)
+      ?? activeStaffingDay
+    : activeStaffingDay
 
   const dashboardSchools = useMemo(() => {
     if (!programme) return [] as string[]
@@ -4674,15 +4710,10 @@ Do you want to build the rota anyway?`
   }, [programme, dashboardProgrammeDay, todayIso])
 
   const schoolsOnSite = dashboardSchools.length
-  const currentMinutes = new Date().getHours() * 60 + new Date().getMinutes()
-  const dashboardSession = currentMinutes < 10 * 60 + 30 ? '1'
-    : currentMinutes < 12 * 60 + 15 ? '2'
-      : currentMinutes < 15 * 60 + 30 ? '3'
-        : currentMinutes < 17 * 60 + 15 ? '4'
-          : '5'
-  const dashboardAvailabilityKey = dashboardProgrammeDay || todayIso
-  const availableTodayCount = (workingByDay[dashboardAvailabilityKey] ?? staff.map((m) => m.id))
-    .filter((id) => !unavailableStaffIdsForSession(dashboardAvailabilityKey, dashboardSession).has(id)).length
+  const availableTodayCount = dashboardProgrammeDay
+    ? (workingByDay[dashboardProgrammeDay] ?? staff.map((m) => m.id))
+        .filter((id) => !unavailableStaffIdsForDay(dashboardProgrammeDay).has(id)).length
+    : staff.length
   const dailyShortages = programmeDays.map((day) => {
     const required = busiestSessionForDay(day)?.total ?? 0
     const available = (workingByDay[day] ?? staff.map((member) => member.id))
@@ -4757,7 +4788,7 @@ Do you want to build the rota anyway?`
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v3.2</span></div><small>Norfolk Lakes</small></div></div>
+          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v5.0.0</span></div><small>Norfolk Lakes</small></div></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -4910,11 +4941,11 @@ Do you want to build the rota anyway?`
           <Panel title="Programme grid" onBack={() => setPage('dashboard')}>
             <div className="programme-toolbar">
               <div className="programme-upload-actions">
-                <button className="primary" onClick={() => fileInputRef.current?.click()}>
-                  <Upload size={18} /> Upload Excel programme
+                <button className="primary" onClick={() => { setProgrammeBuilderScreen('library'); setPage('programmeBuilder') }}>
+                  <CalendarRange size={18} /> Programme Library
                 </button>
-                <button className="secondary-action" onClick={() => appProgrammeInputRef.current?.click()}>
-                  <Upload size={18} /> Upload app programme
+                <button className="secondary-action" onClick={() => fileInputRef.current?.click()}>
+                  <Upload size={18} /> Upload Programme
                 </button>
               </div>
               {programme && (
@@ -5564,12 +5595,12 @@ Do you want to build the rota anyway?`
                     <div className="builder-section-heading"><strong>School {index + 1}</strong><label className="builder-lock"><input type="checkbox" checked={school.locked} onChange={(event) => updateBuilderSchool(school.id, { locked: event.target.checked })}/>Lock programme</label></div>
                     <label>School name<input value={school.name} onChange={(event) => updateBuilderSchool(school.id, { name: event.target.value })} placeholder="School name"/></label>
                     <label>Programme name<input value={school.programmeName} onChange={(event) => updateBuilderSchool(school.id, { programmeName: event.target.value })} placeholder="e.g. Oakwood School – July"/></label>
-                    <div className="builder-form-grid"><label>Purchase type<select value={school.purchaseType} onChange={(event) => updateBuilderSchool(school.id, { purchaseType: event.target.value as ProgrammePurchaseType })}><option value="normal">Normal Package</option><option value="bargain">Bargain Special</option></select></label><label>Arrival date<input type="date" min={programmeBuilder.startDate} max={programmeBuilder.endDate} value={school.arrivalDate} onChange={(event) => updateBuilderSchool(school.id, { arrivalDate: event.target.value })}/></label><label>Departure date<input type="date" min={school.arrivalDate || programmeBuilder.startDate} max={programmeBuilder.endDate} value={school.departureDate} onChange={(event) => updateBuilderSchool(school.id, { departureDate: event.target.value })}/></label></div>
+                    <div className="builder-form-grid"><label>Purchase type<select value={school.purchaseType} onChange={(event) => updateBuilderSchool(school.id, { purchaseType: event.target.value as ProgrammePurchaseType })}><option value="bargain">Bargain Special</option><option value="super">Super Break</option><option value="outdoor">Outdoor Challenge</option></select></label><label>Arrival date<input type="date" min={programmeBuilder.startDate} max={programmeBuilder.endDate} value={school.arrivalDate} onChange={(event) => updateBuilderSchool(school.id, { arrivalDate: event.target.value })}/></label><label>Departure date<input type="date" min={school.arrivalDate || programmeBuilder.startDate} max={programmeBuilder.endDate} value={school.departureDate} onChange={(event) => updateBuilderSchool(school.id, { departureDate: event.target.value })}/></label></div>
                     <label>Programme notes<textarea rows={3} value={school.notes} onChange={(event) => updateBuilderSchool(school.id, { notes: event.target.value })} placeholder="Notes for this school only…"/></label>
-                    <label>Number of groups<input type="number" min="1" max="30" value={school.groups} onChange={(event) => updateBuilderSchool(school.id, { groups: Math.max(1, Number(event.target.value) || 1) })}/></label>
+                    <div className="builder-form-grid"><label>Number of children<input type="number" min="1" max="500" value={school.children ?? 12} onChange={(event) => updateBuilderSchool(school.id, { children: Math.max(1, Number(event.target.value) || 1) })}/></label><label>Grouping method<select value={school.groupingMode ?? 'balanced'} onChange={(event) => updateBuilderSchool(school.id, { groupingMode: event.target.value as 'balanced' | 'override' })}><option value="balanced">Keep within 1:12</option><option value="override">Manual ratio override</option></select></label><label>Number of groups<input type="number" min="1" max="30" value={school.groups} onChange={(event) => updateBuilderSchool(school.id, { groups: Math.max(1, Number(event.target.value) || 1), groupingMode: 'override' })}/></label></div><div className="builder-group-summary"><strong>Group sizes:</strong> {(school.groupSizes?.length ? school.groupSizes : balancedGroupSizes(school.children ?? 12, school.groups)).map((size, groupIndex) => <span key={groupIndex} className={size > 12 ? 'ratio-warning' : ''}>G{groupIndex + 1}: {size}</span>)} {(school.groupSizes ?? []).some((size) => size > 12) && <em>Ratio override required</em>}</div>
                     <div><strong>First-choice activities</strong><p className="builder-help">Select the activities requested by the school. There is no separate first-choice field.</p><div className="builder-activity-chips">{activities.filter((activity) => activity.code !== 'Z').map((activity) => { const active = school.requestedActivities.includes(activity.code); return <button type="button" key={activity.code} className={active ? 'chip active' : 'chip'} onClick={() => updateBuilderSchool(school.id, { requestedActivities: active ? school.requestedActivities.filter((code) => code !== activity.code) : [...school.requestedActivities, activity.code] })}>{activity.code}<small>{activity.name}</small></button> })}</div></div>
                     <div className="builder-form-grid"><label>Backup option 1<select value={school.backupOption1} onChange={(event) => updateBuilderSchool(school.id, { backupOption1: event.target.value })}><option value="">No backup selected</option>{activities.filter((activity) => activity.code !== 'Z').map((activity) => <option key={activity.code} value={activity.code}>{activity.code} – {activity.name}</option>)}</select></label><label>Backup option 2<select value={school.backupOption2} onChange={(event) => updateBuilderSchool(school.id, { backupOption2: event.target.value })}><option value="">No backup selected</option>{activities.filter((activity) => activity.code !== 'Z').map((activity) => <option key={activity.code} value={activity.code}>{activity.code} – {activity.name}</option>)}</select></label></div>
-                    <div className="builder-school-actions"><button className="secondary-action" onClick={() => autoFillProgrammeBuilder(school.id)}><WandSparkles size={17}/>Auto Fill School</button><button className="secondary-action" onClick={() => printSchoolProgramme(school.id)}><Printer size={17}/>School PDF</button><button className="secondary-action" onClick={() => void downloadSchoolProgrammeExcel(school.id)}><FileSpreadsheet size={17}/>School Excel</button></div>
+                    <div className="builder-school-actions"><button className="secondary-action" onClick={() => clearSchoolProgramme(school.id)}><Trash2 size={17}/>Clear Programme</button><button className="secondary-action" onClick={() => autoFillProgrammeBuilder(school.id)}><WandSparkles size={17}/>Auto Fill School</button><button className="secondary-action" onClick={() => printSchoolProgramme(school.id)}><Printer size={17}/>School PDF</button><button className="secondary-action" onClick={() => void downloadSchoolProgrammeExcel(school.id)}><FileSpreadsheet size={17}/>School Excel</button></div>
                     {programmeBuilder.schools.length > 1 && <button className="icon-button small" title="Remove school" onClick={() => removeBuilderSchool(school.id)}><Trash2 size={16}/></button>}
                   </article>)}</div>
                 </section>
@@ -5577,7 +5608,7 @@ Do you want to build the rota anyway?`
                 {programmeBuilder.schools.some((school) => school.purchaseType === 'bargain') && <section className="builder-section bargain-rules"><div className="builder-section-heading"><div><p className="eyebrow">Bargain Special rules</p><h3>Package limits</h3></div></div><label className="builder-limit-field">Maximum sessions per group<input type="number" min="1" max="35" value={programmeBuilder.bargainSessionLimit} onChange={(event) => updateProgrammeBuilder({ bargainSessionLimit: Math.max(1, Number(event.target.value) || 1) })}/></label><p>Select the activities included in this package. These can be updated when you provide the Bargain Special reference sheet.</p><div className="builder-activity-chips">{activities.map((activity) => { const active = programmeBuilder.bargainAllowedActivities.includes(activity.code); return <button key={activity.code} className={active ? 'chip active' : 'chip'} onClick={() => updateProgrammeBuilder({ bargainAllowedActivities: active ? programmeBuilder.bargainAllowedActivities.filter((code) => code !== activity.code) : [...programmeBuilder.bargainAllowedActivities, activity.code] })} title={activity.name}>{activity.code}<small>{activity.name}</small></button> })}</div></section>}
 
                 <section className="builder-section">
-                  <div className="builder-section-heading"><div><p className="eyebrow">Programme grid</p><h3>Assign activities</h3></div><span>{builderGroups.length} groups · {builderDays.length} days</span></div>
+                  <div className="builder-section-heading"><div><p className="eyebrow">Programme grid</p><h3>Assign activities</h3></div><div className="builder-heading-actions"><span>{builderGroups.length} groups · {builderDays.length} days</span><button className="secondary-action" onClick={clearWholeProgramme}><Trash2 size={17}/>Clear Week</button></div></div>
                   <div className="builder-grid-wrap"><table className="builder-grid"><thead><tr><th>Day</th><th>Session</th>{builderGroups.map(({ group, school }) => <th key={group}>G{group}<small>{school.name || 'School'}</small></th>)}</tr></thead><tbody>{builderDays.flatMap((dayInfo) => BUILDER_SESSIONS.map((session) => <tr key={`${dayInfo.day}-${session}`}><th>{dayInfo.label}</th><th>S{session}</th>{builderGroups.map(({ group, school }) => { const state = builderSchoolSessionState(school, dayInfo.date, session); const value = programmeBuilder.assignments[builderAssignmentKey(dayInfo.day, session, group)] ?? ''; const options = school.purchaseType === 'bargain' ? activities.filter((activity) => programmeBuilder.bargainAllowedActivities.includes(activity.code)) : activities; return <td key={group} className={`builder-state-${state}`} onDragOver={state === 'activity' ? (event) => event.preventDefault() : undefined} onDrop={state === 'activity' ? () => dropBuilderActivity(dayInfo.day, session, group, school.id) : undefined}>{state === 'arrival' ? <strong>{school.name || 'School'} – Arrival</strong> : state === 'departed' ? <span>Departed</span> : state === 'offsite' ? <span>Not on site</span> : <div className="builder-draggable-cell" draggable={Boolean(value)} onDragStart={() => value && setDraggedBuilderActivity({ key: builderAssignmentKey(dayInfo.day, session, group), code: value, schoolId: school.id })}><select className={programmeBuilder.manualLocks[builderAssignmentKey(dayInfo.day, session, group)] ? 'manual-locked' : ''} title={programmeBuilder.manualLocks[builderAssignmentKey(dayInfo.day, session, group)] ? 'Manual change locked' : 'Automatic activity'} value={value} onChange={(event) => setBuilderActivity(dayInfo.day, session, group, event.target.value)}><option value="">—</option>{options.filter((activity) => school.requestedActivities.includes(activity.code) || activity.code === value).map((activity) => <option key={activity.code} value={activity.code}>{activity.code} – {activity.name}</option>)}</select></div>}</td> })}</tr>))}</tbody></table></div>
 
                   <div className="builder-update-actions"><div><strong>Manual changes are protected</strong><p>Any activity you change is locked. Update Programme rearranges only the remaining sessions.</p></div><div><button className="secondary-action" onClick={resetProgrammeLocks}>Reset Locks</button><button className="primary" onClick={updateWholeProgramme}><WandSparkles size={17}/>Update Programme</button></div></div>
@@ -5602,7 +5633,7 @@ Do you want to build the rota anyway?`
               <section className="display-manager-card"><div><Monitor size={34}/><div><h3>Display Manager</h3><p>Open or copy the live read-only links for screens around the centre.</p></div></div><div className="display-link-list">{([['Staff room','staff-room'],['Manager','manager'],['Programme','programme']] as const).map(([label,mode]) => { const url = new URL(window.location.href); url.searchParams.set('display',mode); return <article key={mode}><strong>{label}</strong><code>{url.toString()}</code><button onClick={() => window.open(url.toString(),'_blank','noopener,noreferrer')}>Open</button><button onClick={() => { void navigator.clipboard.writeText(url.toString()); setImportMessage(`${label} display link copied.`) }}>Copy link</button></article> })}</div></section>
               {canManageStaff && <button className="admin-choice-card programme-builder-card" onClick={() => setPage('programmeBuilder')}>
                 <CalendarRange size={34} />
-                <div><h3>Programme Builder</h3><p>Design Bargain Special or Normal Purchase programmes, preview them and publish them.</p></div>
+                <div><h3>Programme Builder</h3><p>Design Bargain Special, Super Break or Outdoor Challenge programmes with SOP checks, group ratios and water balancing.</p></div>
               </button>}
               {canManageStaff && <button className="admin-choice-card" onClick={() => setPage('activitiesEquipment')}>
                 <ClipboardList size={34} />

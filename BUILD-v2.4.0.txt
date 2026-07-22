@@ -1,0 +1,11 @@
+Adventure Centre Manager v2.4.0
+
+Fixes:
+- Programme days now remain chronological from the selected start date, including Friday to Monday.
+- Programme screen and Excel export use the programme start date rather than Monday-first sorting.
+- Canoe Lead + Canoe is a linked two-session block: Sessions 1-2 or 3-4 only.
+- Kayak Lead + Kayak is a linked two-session block: Sessions 1-2 or 3-4 only.
+- Selecting either half of a pair automatically fills and locks both sessions.
+- Auto Build recognises requested lead/activity pairs and places them together.
+- Publishing validates incomplete or incorrectly positioned paired water sessions.
+- Archery capacity remains limited to one group per session.

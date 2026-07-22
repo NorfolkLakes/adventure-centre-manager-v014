@@ -1,0 +1,8 @@
+Adventure Centre Manager Version 4
+- Bargain Special, Super Break and Outdoor Challenge purchase types
+- Children count with automatic 1:12 suggested groups
+- Balanced group sizes and editable manual override
+- Ratio warnings for groups over 12
+- Clear Programme per school and Clear Week
+- Existing SOP capacities, qualifications and programme validation retained
+- Water activities continue to be capacity checked across the whole programme

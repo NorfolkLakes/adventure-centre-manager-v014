@@ -199,7 +199,7 @@ const PROGRAMME_BUILDER_KEY = 'acm-programme-builder-draft'
 const PROGRAMME_LIBRARY_KEY = 'acm-programme-library'
 const PROGRAMME_ARCHIVE_KEY = 'acm-programme-archive-v1'
 
-type ProgrammePurchaseType = 'bargain' | 'normal'
+type ProgrammePurchaseType = 'bargain' | 'super' | 'outdoor'
 type BuilderSchool = { id: string; name: string; programmeName: string; purchaseType: ProgrammePurchaseType; arrivalDate: string; departureDate: string; notes: string; groups: number; requestedActivities: string[]; backupOption1: string; backupOption2: string; locked: boolean }
 type ProgrammeBuilderDraft = {
   name: string

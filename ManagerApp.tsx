@@ -198,7 +198,7 @@ const PROGRAMME_BUILDER_KEY = 'acm-programme-builder-draft'
 const PROGRAMME_LIBRARY_KEY = 'acm-programme-library'
 const PROGRAMME_ARCHIVE_KEY = 'acm-programme-archive-v1'
 
-type ProgrammePurchaseType = 'bargain' | 'normal'
+type ProgrammePurchaseType = 'bargain' | 'super' | 'outdoor'
 type BuilderSchool = { id: string; name: string; programmeName: string; purchaseType: ProgrammePurchaseType; arrivalDate: string; departureDate: string; notes: string; groups: number; requestedActivities: string[]; backupOption1: string; backupOption2: string; locked: boolean }
 type ProgrammeBuilderDraft = {
   name: string
@@ -4739,7 +4739,7 @@ Build the rota anyway?`
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v3.2</span></div><small>Norfolk Lakes</small></div></div>
+          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager</h1><span className="release-pill">v5.0.0</span></div><small>Norfolk Lakes</small></div></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">
@@ -4892,11 +4892,11 @@ Build the rota anyway?`
           <Panel title="Programme grid" onBack={() => setPage('dashboard')}>
             <div className="programme-toolbar">
               <div className="programme-upload-actions">
-                <button className="primary" onClick={() => fileInputRef.current?.click()}>
-                  <Upload size={18} /> Upload Excel programme
+                <button className="primary" onClick={() => { setProgrammeBuilderScreen('library'); setPage('programmeBuilder') }}>
+                  <CalendarRange size={18} /> Programme Library
                 </button>
-                <button className="secondary-action" onClick={() => appProgrammeInputRef.current?.click()}>
-                  <Upload size={18} /> Upload app programme
+                <button className="secondary-action" onClick={() => fileInputRef.current?.click()}>
+                  <Upload size={18} /> Upload Programme
                 </button>
               </div>
               {programme && (

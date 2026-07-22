@@ -1,0 +1,7 @@
+Adventure Centre Manager v5.0.0
+
+Changes:
+- Home header release badge updated to v5.0.0.
+- Programme page now has two clear actions: Programme Library and Upload Programme.
+- Programme Library opens the saved in-app programme library.
+- Upload Programme opens the existing Excel programme importer.

@@ -49,7 +49,7 @@ export type ProgrammeImport = {
   sourceFileName: string
   startDate?: string
   endDate?: string
-  schoolDetails?: { id: string; schoolName: string; programmeName: string; purchaseType: 'bargain' | 'normal'; arrivalDate: string; departureDate: string; notes: string; groupNumbers?: number[] }[]
+  schoolDetails?: { id: string; schoolName: string; programmeName: string; purchaseType: 'bargain' | 'super' | 'outdoor'; arrivalDate: string; departureDate: string; notes: string; groupNumbers?: number[] }[]
 }
 
 export type StaffRole =
