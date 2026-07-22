@@ -2149,10 +2149,11 @@ function ManagerApp({
       let remaining = [...unscheduledGroups]
       for (let blockIndex = 0; blockIndex < orderedBlocks.length && remaining.length; blockIndex += 1) {
         const block = orderedBlocks[blockIndex]
-        const remainingBlocks = orderedBlocks.length - blockIndex
-        // Balance groups across remaining blocks rather than filling the first block to capacity.
-        const balancedSize = Math.ceil(remaining.length / remainingBlocks)
-        const targetSize = Math.min(capacityPerBlock, Math.max(1, balancedSize))
+        // Fill the earliest preferred block to capacity before moving to a later block.
+        // This keeps groups from the same school together: for four groups, G1/G2
+        // use S1+S2 and G3/G4 use S3+S4 on the same preferred day, instead of
+        // pushing the final group onto departure morning.
+        const targetSize = Math.min(capacityPerBlock, remaining.length)
         const candidates = remaining.slice(0, targetSize)
         const firstCode = blockIndex % 2 === 0 ? 'CANOE' : 'KAYAK'
         const secondCode = firstCode === 'CANOE' ? 'KAYAK' : 'CANOE'
@@ -2192,13 +2193,30 @@ function ManagerApp({
       )
 
       for (const slot of sortedSlots) {
-        if (!queue.length) break
         const key = builderAssignmentKey(slot.day, slot.session, group)
         let chosenIndex = queue.findIndex((code) => code !== 'CF' && (!WATER_ACTIVITY_CODES.has(code) || slot.priority < 2) && !activityAtCapacity(slot.day, slot.session, code, key))
         if (chosenIndex < 0) chosenIndex = queue.findIndex((code) => code !== 'CF' && !activityAtCapacity(slot.day, slot.session, code, key))
-        if (chosenIndex < 0) continue
-        const [code] = queue.splice(chosenIndex, 1)
-        next[key] = code
+        if (chosenIndex >= 0) {
+          const [code] = queue.splice(chosenIndex, 1)
+          next[key] = code
+          continue
+        }
+
+        // Every on-site activity session must be filled. Once each requested activity
+        // has been used, choose the next valid requested activity again, while avoiding
+        // a duplicate for the same group on the same day where another option exists.
+        const usedOnDay = new Set(activitySlots
+          .filter((candidate) => candidate.date === slot.date)
+          .map((candidate) => next[builderAssignmentKey(candidate.day, candidate.session, group)])
+          .filter(Boolean))
+        const repeatCandidates = allowed.filter((code) =>
+          code !== 'CF' &&
+          code !== 'DISCO' &&
+          !(pairedWaterGroups.has(group) && (code === 'CANOE' || code === 'KAYAK')) &&
+          !activityAtCapacity(slot.day, slot.session, code, key),
+        )
+        const preferredRepeat = repeatCandidates.find((code) => !usedOnDay.has(code)) ?? repeatCandidates[0]
+        if (preferredRepeat) next[key] = preferredRepeat
       }
     }
 
@@ -2226,9 +2244,29 @@ function ManagerApp({
   function updateWholeProgramme() {
     let next = { ...programmeBuilder.assignments }
     for (const school of programmeBuilder.schools) next = generateSchoolAssignments(school.id, true, next)
+
+    const missingSessions: string[] = []
+    for (const school of programmeBuilder.schools) {
+      const schoolGroups = builderGroups.filter((entry) => entry.school.id === school.id)
+      for (const { group } of schoolGroups) {
+        for (const dayInfo of builderDays) {
+          for (const session of BUILDER_SESSIONS) {
+            if (builderSchoolSessionState(school, dayInfo.date, session) !== 'activity') continue
+            const key = builderAssignmentKey(dayInfo.day, session, group)
+            if (!next[key]) missingSessions.push(`G${group} ${dayInfo.day} S${session}`)
+          }
+        }
+      }
+    }
+
     updateProgrammeBuilder({ assignments: next })
+    if (missingSessions.length) {
+      const preview = missingSessions.slice(0, 6).join(', ')
+      setProgrammeBuilderMessage(`Programme updated, but ${missingSessions.length} session${missingSessions.length === 1 ? '' : 's'} could not be filled: ${preview}${missingSessions.length > 6 ? '…' : ''}. Check activity capacity or locked cells.`)
+      return
+    }
     const backupSchools = programmeBuilder.schools.filter((school) => [school.backupOption1, school.backupOption2].some((code) => code && Object.values(next).includes(code)))
-    setProgrammeBuilderMessage(backupSchools.length ? `Programme updated. Backup activities are in use for: ${backupSchools.map((school) => school.name || 'School').join(', ')}.` : 'Programme updated. Your manual changes were kept and the remaining sessions were rearranged around them.')
+    setProgrammeBuilderMessage(backupSchools.length ? `Programme updated. Backup activities are in use for: ${backupSchools.map((school) => school.name || 'School').join(', ')}.` : 'Programme updated. All on-site sessions are filled, water blocks were kept together, and your manual changes were preserved.')
   }
 
   function resetProgrammeLocks() {
@@ -4787,7 +4825,7 @@ Do you want to build the rota anyway?`
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager v4</h1><span className="release-pill">v5.1</span></div><small>Norfolk Lakes</small></div></div>
+          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager v4</h1><span className="release-pill">v5.2</span></div><small>Norfolk Lakes</small></div></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">

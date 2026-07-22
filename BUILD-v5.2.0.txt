@@ -1,0 +1,8 @@
+Adventure Centre Manager v5.2.0
+
+Programme Builder fixes:
+- Fills earliest Canoe/Kayak blocks to capacity, keeping G1/G2 and G3/G4 together on the same preferred day where capacity allows.
+- Avoids moving a final water group onto departure morning when an earlier same-day block is available.
+- Update Programme now refills every unlocked on-site activity session.
+- Added final validation and a visible warning if any activity session cannot be filled because of capacity or locked cells.
+- Manual locks remain protected.
