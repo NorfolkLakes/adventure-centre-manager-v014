@@ -1,0 +1,8 @@
+Adventure Centre Manager v6.4.1
+
+Auto Fill scheduler fix:
+- Replaced greedy per-activity placement with whole-programme backtracking.
+- Prevents a valid programme from failing because an earlier activity consumed a later activity's only slot.
+- Supports an 8-session requested list plus a selected backup to fill a 9-session stay.
+- Candidate plans can omit non-protected requested activities when package session weighting exceeds the available slots.
+- Keeps package water blocks, evening-only activities, capacities and manual locks.

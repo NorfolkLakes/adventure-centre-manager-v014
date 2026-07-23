@@ -1,0 +1,9 @@
+Adventure Centre Manager v6.4.2
+
+Auto Fill scheduler fix:
+- Replaced the final-cell greedy scheduling path with constrained whole-school water/evening placement plus capacity-aware group rotations.
+- Bargain Canoe/Kayak can run in either order in S1-S2 or S3-S4.
+- Super Break and Outdoor Challenge Canoe and Kayak remain two-session blocks.
+- Campfire and Disco remain whole-school Session 5 activities.
+- Standard activities are rotated so every group receives the same activity set without duplicates or blanks.
+- Added repeatable integration tests for overlapping 5-day and 3-day schools.

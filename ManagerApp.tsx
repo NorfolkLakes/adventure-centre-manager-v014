@@ -27,6 +27,7 @@ import {
   X,
 } from 'lucide-react'
 import * as XLSX from 'xlsx'
+import { solveProgrammeTasks, solveRotatingGroupActivities, type ProgrammeTask } from './programmeTaskSolver'
 
 type ZipEntry = {
   name: string
@@ -2148,6 +2149,51 @@ function ManagerApp({
     return counts
   }
 
+
+  function activityPlanSessionCount(school: BuilderSchool, codes: string[]) {
+    return [...requiredActivityCounts(school, codes).values()].reduce((total, count) => total + count, 0)
+  }
+
+  function buildSchoolPlanCandidates(school: BuilderSchool, requested: string[]) {
+    const slotCount = schoolBuilderActivitySlots(school).length
+    const protectedCodes = requested.filter((code) => PROTECTED_PACKAGE_ACTIVITY_CODES.has(code))
+    const optionalRequested = requested.filter((code) => !PROTECTED_PACKAGE_ACTIVITY_CODES.has(code))
+    const backups = [school.backupOption1, school.backupOption2]
+      .filter((code): code is string => Boolean(code) && !requested.includes(code))
+
+    const candidates: Array<{ codes: string[]; substitutions: string[] }> = []
+    const allOptional = [...optionalRequested, ...backups]
+    const totalMasks = 1 << Math.min(allOptional.length, 20)
+    for (let mask = 0; mask < totalMasks; mask += 1) {
+      const chosen = [...protectedCodes]
+      const backupUsed: string[] = []
+      for (let index = 0; index < allOptional.length; index += 1) {
+        if (!(mask & (1 << index))) continue
+        const code = allOptional[index]
+        chosen.push(code)
+        if (backups.includes(code)) backupUsed.push(code)
+      }
+      if (new Set(chosen).size !== chosen.length) continue
+      if (activityPlanSessionCount(school, chosen) !== slotCount) continue
+      const omitted = optionalRequested.filter((code) => !chosen.includes(code))
+      const substitutions = backupUsed.map((backup, index) => {
+        const replaced = omitted[index]
+        return replaced
+          ? `${school.name || 'School'}: ${activities.find((a) => a.code === backup)?.name || backup} replaced ${activities.find((a) => a.code === replaced)?.name || replaced}`
+          : `${school.name || 'School'}: ${activities.find((a) => a.code === backup)?.name || backup} used to fill the available programme sessions`
+      })
+      if (omitted.length > backupUsed.length) substitutions.push(`${school.name || 'School'}: ${omitted.slice(backupUsed.length).map((code) => activities.find((a) => a.code === code)?.name || code).join(', ')} could not fit within the package session limit`)
+      candidates.push({ codes: chosen, substitutions })
+    }
+
+    return candidates.sort((a, b) => {
+      const aRequested = a.codes.filter((code) => requested.includes(code)).length
+      const bRequested = b.codes.filter((code) => requested.includes(code)).length
+      const aBackups = a.codes.filter((code) => backups.includes(code)).length
+      const bBackups = b.codes.filter((code) => backups.includes(code)).length
+      return bRequested - aRequested || aBackups - bBackups
+    })
+  }
   function schoolBuilderActivitySlots(school: BuilderSchool) {
     return builderDays.flatMap((dayInfo) => BUILDER_SESSIONS
       .filter((session) => builderSchoolSessionState(school, dayInfo.date, session) === 'activity')
@@ -2209,43 +2255,29 @@ function ManagerApp({
       }
 
       const requested = schoolRequestedActivities(school)
-      const expected = requiredActivityCounts(school, requested)
-      const allowedBackups = [school.backupOption1, school.backupOption2]
-        .filter((code): code is string => Boolean(code) && !requested.includes(code))
-      const missing: string[] = []
-      const extraBackups: string[] = []
+      const allowedCodes = new Set([
+        ...requested,
+        ...[school.backupOption1, school.backupOption2].filter((code): code is string => Boolean(code)),
+      ])
+      const activitySlotCount = schoolBuilderActivitySlots(school).length
+      const actualSessionCount = [...baseline.values()].reduce((total, count) => total + count, 0)
+      if (actualSessionCount !== activitySlotCount) issues.push(`${schoolName}: programme contains ${actualSessionCount} activity sessions but ${activitySlotCount} are required`)
 
-      for (const [code, required] of expected) {
-        const actual = baseline.get(code) ?? 0
-        if (actual < required) for (let index = actual; index < required; index += 1) missing.push(code)
-        if (actual > required) issues.push(`${schoolName}: ${activities.find((a) => a.code === code)?.name || code} appears ${actual} times but should appear ${required} time${required === 1 ? '' : 's'}`)
-      }
       for (const [code, actual] of baseline) {
-        if (expected.has(code)) continue
-        if (allowedBackups.includes(code)) {
-          for (let index = 0; index < actual; index += 1) extraBackups.push(code)
-        } else {
-          issues.push(`${schoolName}: ${activities.find((a) => a.code === code)?.name || code} was not requested and is not a selected backup`)
-        }
+        if (!allowedCodes.has(code)) issues.push(`${schoolName}: ${activities.find((a) => a.code === code)?.name || code} was not requested and is not a selected backup`)
+        const requiredForWater = (school.purchaseType === 'super' || school.purchaseType === 'outdoor') && (code === 'CANOE' || code === 'KAYAK') ? 2 : 1
+        if (actual > requiredForWater) issues.push(`${schoolName}: ${activities.find((a) => a.code === code)?.name || code} appears ${actual} times but should appear no more than ${requiredForWater}`)
       }
-
-      const protectedMissing = missing.filter((code) => PROTECTED_PACKAGE_ACTIVITY_CODES.has(code))
-      for (const code of protectedMissing) issues.push(`${schoolName}: required ${activities.find((a) => a.code === code)?.name || code} is missing`)
-      const replaceableMissing = missing.filter((code) => !PROTECTED_PACKAGE_ACTIVITY_CODES.has(code))
-      const substitutionCount = Math.min(replaceableMissing.length, extraBackups.length)
-      for (let index = 0; index < substitutionCount; index += 1) {
-        const requestedCode = replaceableMissing[index]
-        const backupCode = extraBackups[index]
-        substitutions.push(`${schoolName}: ${activities.find((a) => a.code === backupCode)?.name || backupCode} replaced ${activities.find((a) => a.code === requestedCode)?.name || requestedCode}`)
+      for (const code of requested.filter((item) => PROTECTED_PACKAGE_ACTIVITY_CODES.has(item))) {
+        const required = requiredActivityCounts(school, [code]).get(code) ?? 1
+        if ((baseline.get(code) ?? 0) !== required) issues.push(`${schoolName}: required ${activities.find((a) => a.code === code)?.name || code} is missing or incomplete`)
       }
-      for (const code of replaceableMissing.slice(substitutionCount)) issues.push(`${schoolName}: requested ${activities.find((a) => a.code === code)?.name || code} is missing`)
-      for (const code of extraBackups.slice(substitutionCount)) issues.push(`${schoolName}: backup ${activities.find((a) => a.code === code)?.name || code} was used without replacing a missing requested activity`)
 
       for (const { group } of schoolGroups) {
         const counts = groupCounts.get(group) ?? new Map<string, number>()
         for (const [code, count] of counts) {
-          const expectedCount = expected.get(code) ?? (allowedBackups.includes(code) ? 1 : 0)
-          if (count > Math.max(1, expectedCount)) issues.push(`${schoolName} G${group}: ${activities.find((a) => a.code === code)?.name || code} appears ${count} times`)
+          const expectedCount = (school.purchaseType === 'super' || school.purchaseType === 'outdoor') && (code === 'CANOE' || code === 'KAYAK') ? 2 : 1
+          if (count > expectedCount) issues.push(`${schoolName} G${group}: ${activities.find((a) => a.code === code)?.name || code} appears ${count} times`)
         }
 
         const waterBlocks: Array<[string, string]> = [['1', '2'], ['3', '4']]
@@ -2365,105 +2397,130 @@ function ManagerApp({
       return next[builderAssignmentKey(slot.day, slot.session, group)] === code
     }))
 
-    const placeSequenceForGroups = (sequence: string[], label: string) => {
-      let remaining = groupNumbers.filter((group) => !sequenceSatisfied(group, sequence))
-      for (const block of blocks) {
-        if (!remaining.length) break
-        const stillRemaining: number[] = []
-        for (const group of remaining) {
-          const slots = [block.first, block.second]
-          const compatible = sequence.every((code, index) => {
-            const slot = slots[index]
-            const key = builderAssignmentKey(slot.day, slot.session, group)
-            const current = next[key] ?? ''
-            return (!current || current === code) && canPlace(slot.day, slot.session, group, code)
-          })
-          if (!compatible) { stillRemaining.push(group); continue }
-          sequence.forEach((code, index) => {
-            const slot = slots[index]
-            place(slot.day, slot.session, group, code)
+    const tasks: ProgrammeTask[] = []
+    const taskCodes = new Set<string>()
+
+    // Campfire and Disco are whole-school evening tasks. They must be in S5 and
+    // every group from the school must attend together.
+    for (const code of [...requiredCounts.keys()].filter((item) => EVENING_ONLY_ACTIVITY_CODES.has(item))) {
+      const required = requiredCounts.get(code) ?? 1
+      if (required !== 1) return { success: false, assignments: baseAssignments, issues: [`${schoolName}: ${activities.find((a) => a.code === code)?.name || code} has an invalid session count`], substitutions: [] }
+      const alreadyTogether = activitySlots
+        .filter((slot) => slot.session === '5')
+        .some((slot) => groupNumbers.every((group) => next[builderAssignmentKey(slot.day, slot.session, group)] === code))
+      if (!alreadyTogether) {
+        tasks.push({
+          id: `${school.id}|evening|${code}`,
+          candidates: activitySlots
+            .filter((slot) => slot.session === '5')
+            .sort((a, b) => b.date.localeCompare(a.date))
+            .map((slot) => groupNumbers.map((group) => ({ key: builderAssignmentKey(slot.day, slot.session, group), code }))),
+        })
+      }
+      taskCodes.add(code)
+    }
+
+    // Package-specific Canoe and Kayak blocks.
+    if (school.purchaseType === 'super' || school.purchaseType === 'outdoor') {
+      for (const code of ['CANOE', 'KAYAK']) {
+        if ((requiredCounts.get(code) ?? 0) !== 2) continue
+        taskCodes.add(code)
+        for (const group of groupNumbers) {
+          if (sequenceSatisfied(group, [code, code])) continue
+          tasks.push({
+            id: `${school.id}|G${group}|${code}-block`,
+            candidates: blocks.map((block) => [
+              { key: builderAssignmentKey(block.first.day, block.first.session, group), code },
+              { key: builderAssignmentKey(block.second.day, block.second.session, group), code },
+            ]),
           })
         }
-        remaining = stillRemaining
-      }
-      if (remaining.length) return `${schoolName}: could not place ${label} for G${remaining.join(', G')} in a valid consecutive block before departure`
-      return ''
-    }
-
-    const eveningCodes = [...requiredCounts.keys()].filter((code) => EVENING_ONLY_ACTIVITY_CODES.has(code))
-    for (const code of eveningCodes) {
-      const groupsNeeding = groupNumbers.filter((group) => groupCount(group, code) < (requiredCounts.get(code) ?? 0))
-      if (!groupsNeeding.length) continue
-      const eveningSlots = activitySlots.filter((slot) => slot.session === '5').sort((a, b) => b.date.localeCompare(a.date))
-      let placedTogether = false
-      for (const slot of eveningSlots) {
-        const additions = groupsNeeding.filter((group) => next[builderAssignmentKey(slot.day, slot.session, group)] !== code).length
-        if (runningCount(slot.day, slot.session, code) + additions > activityCapacity(code)) continue
-        if (!groupsNeeding.every((group) => canPlace(slot.day, slot.session, group, code))) continue
-        groupsNeeding.forEach((group) => place(slot.day, slot.session, group, code))
-        placedTogether = true
-        break
-      }
-      if (!placedTogether) return { success: false, assignments: baseAssignments, issues: [`${schoolName}: ${activities.find((a) => a.code === code)?.name || code} must be placed for every group together in an available Session 5`], substitutions: [] }
-    }
-
-    if (school.purchaseType === 'super' || school.purchaseType === 'outdoor') {
-      if (requiredCounts.get('CANOE') === 2) {
-        const issue = placeSequenceForGroups(['CANOE', 'CANOE'], 'two-session Canoe')
-        if (issue) return { success: false, assignments: baseAssignments, issues: [issue], substitutions: [] }
-      }
-      if (requiredCounts.get('KAYAK') === 2) {
-        const issue = placeSequenceForGroups(['KAYAK', 'KAYAK'], 'two-session Kayak')
-        if (issue) return { success: false, assignments: baseAssignments, issues: [issue], substitutions: [] }
       }
     } else if (school.purchaseType === 'bargain' && requiredCounts.has('CANOE') && requiredCounts.has('KAYAK')) {
-      const issue = placeSequenceForGroups(['CANOE', 'KAYAK'], 'consecutive Canoe/Kayak')
-      if (issue) return { success: false, assignments: baseAssignments, issues: [issue], substitutions: [] }
-    }
-
-    const standardCodes = [...requiredCounts.keys()]
-      .filter((code) => !EVENING_ONLY_ACTIVITY_CODES.has(code) && !(code === 'CANOE' || code === 'KAYAK'))
-      .sort((a, b) => activityCapacity(a) - activityCapacity(b) || activityCodes.indexOf(a) - activityCodes.indexOf(b))
-
-    const placeSingleCodeForGroups = (code: string) => {
-      const required = requiredCounts.get(code) ?? 1
-      const groupsNeeding: number[] = []
-      for (const group of groupNumbers) for (let count = groupCount(group, code); count < required; count += 1) groupsNeeding.push(group)
-      if (!groupsNeeding.length) return true
-
-      const recurse = (remainingGroups: number[]): boolean => {
-        if (!remainingGroups.length) return true
-        const candidateMap = remainingGroups.map((group, index) => ({
-          group,
-          index,
-          slots: activitySlots.filter((slot) => {
-            const key = builderAssignmentKey(slot.day, slot.session, group)
-            return !next[key] && !(preserveManual && programmeBuilder.manualLocks[key]) && canPlace(slot.day, slot.session, group, code)
-          }),
-        })).sort((a, b) => a.slots.length - b.slots.length || a.group - b.group)
-        const selected = candidateMap[0]
-        if (!selected || !selected.slots.length) return false
-        const rest = [...remainingGroups]
-        rest.splice(remainingGroups.indexOf(selected.group), 1)
-        for (const slot of selected.slots) {
-          const key = builderAssignmentKey(slot.day, slot.session, selected.group)
-          next[key] = code
-          if (recurse(rest)) return true
-          next[key] = ''
-        }
-        return false
+      taskCodes.add('CANOE')
+      taskCodes.add('KAYAK')
+      for (const group of groupNumbers) {
+        if (sequenceSatisfied(group, ['CANOE', 'KAYAK']) || sequenceSatisfied(group, ['KAYAK', 'CANOE'])) continue
+        tasks.push({
+          id: `${school.id}|G${group}|canoe-kayak-pair`,
+          candidates: blocks.flatMap((block) => [
+            [
+              { key: builderAssignmentKey(block.first.day, block.first.session, group), code: 'CANOE' },
+              { key: builderAssignmentKey(block.second.day, block.second.session, group), code: 'KAYAK' },
+            ],
+            [
+              { key: builderAssignmentKey(block.first.day, block.first.session, group), code: 'KAYAK' },
+              { key: builderAssignmentKey(block.second.day, block.second.session, group), code: 'CANOE' },
+            ],
+          ]),
+        })
       }
-      return recurse(groupsNeeding)
     }
 
-    for (const code of standardCodes) if (!placeSingleCodeForGroups(code)) {
-      return { success: false, assignments: baseAssignments, issues: [`${schoolName}: could not place ${activities.find((a) => a.code === code)?.name || code} for every group within capacity and locked-session rules`], substitutions: [] }
+    // First solve the constrained whole-school evening and water-block tasks.
+    const specialPlacements = tasks.reduce((total, task) => total + (task.candidates[0]?.length ?? 0), 0)
+    const specialSolved = solveProgrammeTasks({
+      initialAssignments: next,
+      tasks,
+      capacityForCode: activityCapacity,
+    })
+    if (!specialSolved.success) {
+      return {
+        success: false,
+        assignments: baseAssignments,
+        issues: [`${schoolName}: no valid arrangement could be found for the required evening and water activity blocks`],
+        substitutions: [],
+      }
     }
+    Object.assign(next, specialSolved.assignments)
+
+    // Fill the standard one-session activities by rotating the same activity list
+    // across each group's remaining slots. This avoids the enormous search space
+    // and the old last-cell failure while still respecting capacities.
+    const rotationGroups = groupNumbers.map((group) => {
+      const slotKeys = activitySlots
+        .map((slot) => builderAssignmentKey(slot.day, slot.session, group))
+        .filter((key) => !next[key])
+      const activityCodes: string[] = []
+      for (const [code, required] of requiredCounts) {
+        if (taskCodes.has(code)) continue
+        const remaining = Math.max(0, required - groupCount(group, code))
+        for (let occurrence = 0; occurrence < remaining; occurrence += 1) activityCodes.push(code)
+      }
+      activityCodes.sort((a, b) => activityCapacity(a) - activityCapacity(b) || activityCodes.indexOf(a) - activityCodes.indexOf(b))
+      return { groupId: `G${group}`, slotKeys, activityCodes }
+    })
+
+    const expectedOpenSlots = rotationGroups.reduce((total, group) => total + group.slotKeys.length, 0)
+    const expectedActivities = rotationGroups.reduce((total, group) => total + group.activityCodes.length, 0)
+    if (expectedOpenSlots !== expectedActivities) {
+      return {
+        success: false,
+        assignments: baseAssignments,
+        issues: [`${schoolName}: ${expectedOpenSlots} programme places remain after special activities, but ${expectedActivities} standard activity sessions remain. Check the package total, backups and manual locks.`],
+        substitutions: [],
+      }
+    }
+
+    const standardSolved = solveRotatingGroupActivities({
+      initialAssignments: next,
+      groups: rotationGroups,
+      capacityForCode: activityCapacity,
+    })
+    if (!standardSolved.success) {
+      return {
+        success: false,
+        assignments: baseAssignments,
+        issues: [`${schoolName}: no complete rotation could be found within the configured activity capacities`],
+        substitutions: [],
+      }
+    }
+    Object.assign(next, standardSolved.assignments)
 
     for (const { group } of schoolGroups) {
       for (const slot of activitySlots) {
         const key = builderAssignmentKey(slot.day, slot.session, group)
-        if (!next[key]) return { success: false, assignments: baseAssignments, issues: [`${schoolName} G${group}: ${slot.label} S${slot.session} could not be filled without duplicating an activity`], substitutions: [] }
+        if (!next[key]) return { success: false, assignments: baseAssignments, issues: [`${schoolName} G${group}: ${slot.label} S${slot.session} is still blank after scheduling`], substitutions: [] }
       }
       const actual = countGroupActivities(next, school, group)
       for (const [code, required] of requiredCounts) if ((actual.get(code) ?? 0) !== required) {
@@ -2482,42 +2539,26 @@ function ManagerApp({
     const requested = schoolRequestedActivities(school)
     if (!requested.length) return { success: false, assignments: baseAssignments, issues: [`${school.name || 'School'}: select the requested activities before using Auto Fill`], substitutions: [] }
 
-    const original = attemptSchoolSchedule(school, requested, preserveManual, baseAssignments)
-    if (original.success) return original
-
-    const backups = [school.backupOption1, school.backupOption2]
-      .filter((code): code is string => Boolean(code) && !requested.includes(code))
-    const replaceable = requested.filter((code) => !PROTECTED_PACKAGE_ACTIVITY_CODES.has(code))
-    const alternatives: Array<{ codes: string[]; substitutions: string[] }> = []
-
-    for (const backup of backups) for (const replaced of replaceable) {
-      alternatives.push({
-        codes: requested.map((code) => code === replaced ? backup : code),
-        substitutions: [`${school.name || 'School'}: ${activities.find((a) => a.code === backup)?.name || backup} replaced ${activities.find((a) => a.code === replaced)?.name || replaced}`],
-      })
-    }
-    if (backups.length >= 2) {
-      for (let first = 0; first < replaceable.length; first += 1) for (let second = first + 1; second < replaceable.length; second += 1) {
-        alternatives.push({
-          codes: requested.map((code) => code === replaceable[first] ? backups[0] : code === replaceable[second] ? backups[1] : code),
-          substitutions: [
-            `${school.name || 'School'}: ${activities.find((a) => a.code === backups[0])?.name || backups[0]} replaced ${activities.find((a) => a.code === replaceable[first])?.name || replaceable[first]}`,
-            `${school.name || 'School'}: ${activities.find((a) => a.code === backups[1])?.name || backups[1]} replaced ${activities.find((a) => a.code === replaceable[second])?.name || replaceable[second]}`,
-          ],
-        })
+    const candidates = buildSchoolPlanCandidates(school, requested)
+    if (!candidates.length) {
+      const slots = schoolBuilderActivitySlots(school).length
+      const selected = activityPlanSessionCount(school, requested)
+      return {
+        success: false,
+        assignments: baseAssignments,
+        issues: [`${school.name || 'School'}: ${slots} on-site sessions are available, but the selected activities account for ${selected}. Select enough requested or backup activities to make exactly ${slots} sessions.`],
+        substitutions: [],
       }
     }
 
-    const seen = new Set<string>()
-    for (const alternative of alternatives) {
-      const key = alternative.codes.join('|')
-      if (seen.has(key) || new Set(alternative.codes).size !== alternative.codes.length) continue
-      seen.add(key)
-      const result = attemptSchoolSchedule(school, alternative.codes, preserveManual, baseAssignments)
-      if (result.success) return { ...result, substitutions: alternative.substitutions }
+    let firstFailure: ProgrammeGenerationResult | null = null
+    for (const candidate of candidates) {
+      const result = attemptSchoolSchedule(school, candidate.codes, preserveManual, baseAssignments)
+      if (result.success) return { ...result, substitutions: candidate.substitutions }
+      if (!firstFailure) firstFailure = result
     }
 
-    return original
+    return firstFailure ?? { success: false, assignments: baseAssignments, issues: [`${school.name || 'School'}: no valid programme could be generated`], substitutions: [] }
   }
 
   function autoFillProgrammeBuilder(schoolId: string) {
@@ -5115,7 +5156,7 @@ Do you want to build the rota anyway?`
       <header className="topbar">
         <div>
           <p className="eyebrow">Norfolk Lakes</p>
-          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager v6.3.1</h1><span className="release-pill">v6.3.1</span></div><small>Norfolk Lakes</small></div></div>
+          <div className="brand-lockup"><img src={`${import.meta.env.BASE_URL}manor-adventure-logo.png`} alt="Manor Adventure"/><div><div className="brand-title-row"><h1>Adventure Centre Manager v6.4.2</h1><span className="release-pill">v6.4.2</span></div><small>Norfolk Lakes</small></div></div>
           <small className="account-email">{accountEmail}</small>
         </div>
         <div className="account-actions">

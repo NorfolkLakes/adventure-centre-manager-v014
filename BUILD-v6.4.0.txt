@@ -1,0 +1,11 @@
+Adventure Centre Manager v6.4.0
+
+Auto Fill scheduler repair:
+- builds an exact session plan for each school from requested activities and backup options
+- automatically fits over-selected requests to the school package session limit
+- uses selected backups to fill spare on-site sessions instead of leaving blank cells
+- keeps package-protected Canoe, Kayak, Campfire and Disco rules
+- validates every group against the final fitted school plan
+- prevents the false “remove 1 activity session” / blank final session loop
+
+TypeScript check passed.
